@@ -4,7 +4,6 @@
   * Max Inden IndenML@gmail.com
 
 * **Implementation:** Implemented
-  * Implemented
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/alertmanager/pull/2237
