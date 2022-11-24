@@ -16,4 +16,4 @@ fmt: $(MDOX)
 check: ## Checks if doc is formatter and links are correct (don't check external links).
 check: $(MDOX)
 	@echo "Checking markdown files. If changes are detected, try running `make` and trying again."
-	$(MDOX) fmt --soft-wraps --check --links.validate.config-file=.mdox.validator.yaml *.md $(MD_FILES_TO_FORMAT)
+	$(MDOX) fmt --soft-wraps --check --links.validate.config-file=.github/.mdox.validator.yaml *.md $(MD_FILES_TO_FORMAT)
