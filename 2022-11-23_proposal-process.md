@@ -68,7 +68,8 @@ Given that, the process of proposing change with the design doc would look as fo
 4. The design is accepted if the PR is merged into this repository. It's ok to eventually decide to reject the proposal and close the PR with meaningful reasons for why it was rejected.
    1. If more eyes are needed, or no consensus was made: Propose and announce your idea on
       [Prometheus DevSummit](https://docs.google.com/document/d/11LC3wJcVk00l8w5P3oLQ-m3Y37iom6INAMEu2ZAGIIE/edit) or mailing list to gather more information. You are welcome to start working on the design doc before a bigger discussion--it is often easier to have a discussion with prior information provided. Be prepared that the idea might be rejected later--still, the record of the document in the Pull Request is useful even in rejected state to inform about past decisions and opportunities considered.
-   2. Optionally: Find a sponsor among Prometheus maintainers to get momentum on a change.
+   2. To merge the PR, we need approval (consensus) from the maintainers of the related component(s).
+   3. Optionally: Find a sponsor among Prometheus maintainers to get momentum on a change.
 
 Once PR get merged, the design doc can change, but it requires (less strict, but still) a PR with review and merge by a maintainer.
 
