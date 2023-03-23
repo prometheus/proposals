@@ -7,7 +7,7 @@
   * https://github.com/bwplotka/proposals/pull/1
 
 * **Implementation Status:**
-  * Not implemented: demo in https://github.com/bwplotka/proposals
+  * Implemented
 
 * **Other docs or links:**
   * https://github.com/openshift/enhancements/ (a bit too complex, too tedious to fight with Python linter)
