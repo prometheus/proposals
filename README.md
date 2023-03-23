@@ -3,9 +3,9 @@
 This repository holds all the past and current proposals for the Prometheus Ecosystem. It's the single place for
 reviewing, discovering and working on the design documents. It also a record of the past decisions and approvals.
 
-* TBD shows all the pending proposals.
+* [The PRs with proposal label](https://github.com/prometheus/proposals/pulls?q=is%3Aopen+is%3Apr+label%3Aproposal) shows all the pending proposals.
 * The [proposals directory](./proposals) shows all the accepted proposals. See the "Implementation Status" for details on the implementation.
-* TBD shows all the rejected proposals.
+* [The unmerged PRs with proposal label](https://github.com/prometheus/proposals/pulls?q=is%3Apr+label%3Aproposal+is%3Aclosed+is%3Aunmerged) shows all the rejected proposals.
 
 ## What's the Design Document?
 
