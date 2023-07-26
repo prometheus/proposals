@@ -1,4 +1,4 @@
-# proposals
+# Proposals
 
 This repository holds all the past and current proposals for the Prometheus Ecosystem. It’s the single place for
 reviewing, discovering, and working on the design documents. It is also a record of past decisions and approvals.
