@@ -74,6 +74,7 @@ For the mixed-format scenarios, at query time, we will to look for **all possibl
 1. UTF-8 (only if the tsdb version is newer)
 2. underscore-replaced: All unsupported characters are converted to underscores.
 3. U__ escaping:  As described in the UTF-8 proposal, strings with invalid characters can be escaped by prepending `U__` and replacing all invalid characters with `_[UTF8 value]_`.
+4. [Datadog proxy](https://github.com/grafana/mimir-proxies/blob/main/pkg/datadog/ddprom/naming.go#L30-L34) munging pattern: "`.`" becomes "`_dot_`" and "`_`" becomes "`__`".
 
 In PromQL, this would look something like:
 
@@ -86,9 +87,11 @@ Expanded queries:
 `{"my.utf8.metric", "my.label"="value"}`
 `{"my_utf8_metric", "my_label"="value"}`
 `{"U__my_2E_utf8_2E_metric", "U__my_2E__label"="value"}`
+`{"my_dot_utf8_dot_metric", "my_dot_label"="value"}`
 
-There will be configuration options to specify which of the replacement schemes might be in use.
+There will be a configuration setting to specify which of the replacement schemes might be in use.
 If an operator knows that no metrics will use the U__ pattern, it can be safely skipped.
+Hypothetically, if additional replacement patterns are found, they could be easily added to the list of possible configuration options as a minor update.
 
 Redundant lookups will increase query time, but the hope is that index lookups are fast enough that the penalty will be small.
 We will do performance testing to identify possible issues.
