@@ -41,7 +41,7 @@ The tsdb will know what versions of clients wrote those blocks based on a new en
 
 We must consider edge cases in which a blocks database has persisted metrics or labels that may have been written by different client versions. There are multiple ways this can (and will) happen:
 
-* A newer client persists names to an older database version. In this case, names would be escaped with the U__ syntax.  If the database is upgraded, newer blocks will be written in UTF-8.
+* A newer client persists names to an older Prometheus version. In this case, names would be escaped with the U__ syntax.  If Prometheus is upgraded, newer blocks will be written in UTF-8.
 * A newer database receives names from an older client, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8.
 * A newer database receives names from a mix of new and old clients, in which case the same block could contain munged and UTF-8 data representing the same intended names name.
 
@@ -51,25 +51,40 @@ In order to ensure consistent querying, the backwards-compatibility design must 
 
 All of these situations can be summarized as follows:
 
-1. Data written with old database code: all names are guaranteed not to be UTF-8.
-2. Data written with new database code by new clients: all names are guaranteed to be UTF-8-compatible.
-3. Data written with new database code by one or more old clients (and possibly new clients as well): No guarantees, some names could be escaped, others not.
+1. **Old Data** -- Data written with old Prometheus code: all names are guaranteed not to be UTF-8.
+2. **Mixed Data** -- Data written with new Prometheus code by one or more old clients (and possibly new clients as well): No guarantees, some names could be escaped, others not.
+3. **New Data** -- Data written with new Prometheus code by new clients: all names are guaranteed to be UTF-8-compatible.
+
+### Time Scope
+
+The issue of mixed-format blocks will persist for the retention period of the tsdb.
+For some deployments this means only 14 days, for others it may be on the order of years of persisted old data.
 
 ### Proposed Solution
 
-To help alleviate this confusion we first propose to bump the version number in the tsdb meta.json file. On a per-block basis, the query code can check the version number and know if the data was written with an old version of the database code. This helps distinguish the first case.
+To help alleviate this confusion we first propose to bump the version number in the tsdb meta.json file.
+On a per-block basis, the query code can check the version number and know if the data was written with an old version of the Prometheus code.
+This helps distinguish the first case.
 
-Secondly, we will add a new flag to meta.json that indicates the oldest client protocol version that was used to write data to this block.
-This is useful for distinguishing the second case from the third.
-If the oldest client version supports UTF-8, then all data in the block is UTF-8 compatible.
-But if an older client contributed to the block, then data could be mixed.
+Secondly we will add two new flags to help define the range of dates that are affected by mixed blocks and will be used to distinguish the second case from the third.
 
-Thankfully, during content negotiation, the write path knows whether the client doing the writing is capable of sending UTF-8 data.
-If it is not, then we can mark that block as having an old client and the querying code will know the block falls into the third case and can look for mixed names.
+* `-promql.utf8_migration.enabled`: This flag tells Prometheus that a migration is in progress, meaning that blocks with the newer tsdb version number may be mixed. If this flag is false, blocks with the newer version number are understood to not be mixed and are exclusively UTF-8.
+* `-promql.utf8_migration.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
+
+#### Timeline
+
+A Prometheus migration to UTF-8 will follow this timeline:
+
+1. Prometheus is upgraded and UTF-8 support enabled. The `-promql.utf8_migration.enabled` is turned on immediately.
+2. Clients are gradually upgraded to UTF-8.
+3. `-promql.utf8_migration.until` is set to the last date-time when a non-UTF-8 client was sending data.
+4. Wait for retention period to elapse such that the migration-until date is expired (could be years).
+5. Remove `-promql.utf8_migration.enabled` and `-promql.utf8_migration.until` as they are no longer needed.
 
 ### Query time
 
-For the mixed-format scenarios, at query time, we will to look for **all possible** escapings of a name in order to locate the correct data. We propose to do this by expanding a lookup for a UTF-8 metric or label name into a reasonable set of escapings:
+For the mixed-format scenarios, at query time, we will look for **all possible** escapings of a name in order to locate the correct data.
+We propose to do this by expanding a lookup for a UTF-8 metric or label name into a reasonable set of escapings:
 
 1. UTF-8 (only if the tsdb version is newer)
 2. underscore-replaced: All unsupported characters are converted to underscores.
@@ -90,7 +105,7 @@ Expanded queries:
 `{"my_dot_utf8_dot_metric", "my_dot_label"="value"}`
 
 There will be a configuration setting to specify which of the replacement schemes might be in use.
-If an operator knows that no metrics will use the U__ pattern, it can be safely skipped.
+If an administrator knows that no metrics will use the U__ pattern, it can be safely skipped.
 Hypothetically, if additional replacement patterns are found, they could be easily added to the list of possible configuration options as a minor update.
 
 Redundant lookups will increase query time, but the hope is that index lookups are fast enough that the penalty will be small.
@@ -127,6 +142,13 @@ As long as all the clients are new, users do not need to worry about collisions 
 This situation seems contrived-enough that we are comfortable not supporting it.
 
 ## Discarded Approaches
+
+### Record the oldest client version used to write data
+
+A previous draft suggested recording the oldest client version used to ingest data in order to determine which blocks might have mixed data.
+This approach was overly complicated and would require a lot of plumbing to make it work.
+There were also potential issues with block compaction and trying to make sure that the metadata is merged correctly.
+Ultimately we decided that having administrators declare transition dates was an easier approach.
 
 ### Rewrite Old Data
 
