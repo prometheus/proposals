@@ -35,7 +35,7 @@ In those instances, users may not be able to turn on UTF-8 support, or may need 
 
 Given a query for a UTF-8 metric or label name, the tsdb will look for that name in on-disk blocks whether those blocks were written in native UTF-8 or either of two supported name-munging patterns.
 Those series will be located even in cases when a single block has one metric written in more than one way.
-The tsdb will know what versions of clients wrote those blocks based on a new entry in the meta.json.
+The tsdb will differentiate those blocks based on entries in the meta.json and a new flag.
 
 ### Mixed-Format Scenarios
 
