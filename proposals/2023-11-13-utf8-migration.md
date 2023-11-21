@@ -33,7 +33,7 @@ In those instances, users may not be able to turn on UTF-8 support, or may need 
 
 ## How
 
-Given a query for a UTF-8 metric or label name, the tsdb will look for that name in on-disk blocks whether those blocks were written in native UTF-8 or either of two supported name-munging patterns.
+Given a query for a UTF-8 metric or label name, the tsdb will look for that name in on-disk blocks whether those blocks were written in native UTF-8 or either of two supported name-escaping patterns.
 Those series will be located even in cases when a single block has one metric written in more than one way.
 The tsdb will differentiate those blocks based on entries in the meta.json and a new flag.
 
@@ -42,8 +42,8 @@ The tsdb will differentiate those blocks based on entries in the meta.json and a
 We must consider edge cases in which a blocks database has persisted metrics or labels that may have been written by different client versions. There are multiple ways this can (and will) happen:
 
 * A newer client persists names to an older Prometheus version. In this case, names would be escaped with the U__ syntax.  If Prometheus is upgraded, newer blocks will be written in UTF-8.
-* A newer database receives names from an older client, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8.
-* A newer database receives names from a mix of new and old clients, in which case the same block could contain munged and UTF-8 data representing the same intended names name.
+* A newer Prometheus receives names from an older client, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8. This will often happen when Prometheus is receiving Open Telemetry metrics.
+* A newer Prometheus receives names from a mix of new and old clients, in which case the same block could contain escaped and UTF-8 data representing the same intended names name.
 
 At query time, there will be a problem: some data may be written with UTF-8 and other data was written with an escaping format.
 The query code will not know which encoding to look for.
@@ -62,7 +62,7 @@ For some deployments this means only 14 days, for others it may be on the order 
 
 ### Proposed Solution
 
-To help alleviate this confusion we first propose to bump the version number in the tsdb meta.json file.
+For queries to return correct data we must differentiate the three cases above, and to do that we first propose to bump the version number in the tsdb meta.json file.
 On a per-block basis, the query code can check the version number and know if the data was written with an old version of the Prometheus code.
 This helps distinguish the first case.
 
@@ -71,27 +71,28 @@ Secondly we will add two new flags to help define the range of dates that are af
 * `-promql.utf8_migration.enabled`: This flag tells Prometheus that a migration is in progress, meaning that blocks with the newer tsdb version number may be mixed. If this flag is false, blocks with the newer version number are understood to not be mixed and are exclusively UTF-8.
 * `-promql.utf8_migration.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
 
-#### Timeline
+#### Migration Timeline
 
 A Prometheus migration to UTF-8 will follow this timeline:
 
 1. Prometheus is upgraded and UTF-8 support enabled. The `-promql.utf8_migration.enabled` is turned on immediately.
 2. Clients are gradually upgraded to UTF-8.
-3. `-promql.utf8_migration.until` is set to the last date-time when a non-UTF-8 client was sending data.
-4. Wait for retention period to elapse such that the migration-until date is expired (could be years).
-5. Remove `-promql.utf8_migration.enabled` and `-promql.utf8_migration.until` as they are no longer needed.
+3. `-promql.utf8_migration.until` is set to the last date-time when a non-UTF-8 client sent data.
+4. Wait for the retention period to elapse such that the migration-until date is expired (could be years).
+5. The migration is complete. Remove `-promql.utf8_migration.enabled` and `-promql.utf8_migration.until` as they are no longer needed.
 
-### Query time
+### Querying Mixed Blocks
 
+The last major challenge is correctly returning data for queries of blocks that contain mixed data.
 For the mixed-format scenarios, at query time, we will look for **all possible** escapings of a name in order to locate the correct data.
-We propose to do this by expanding a lookup for a UTF-8 metric or label name into a reasonable set of escapings:
+We propose to do this by expanding a lookup for a UTF-8 metric or label name into a limited set of possible escapings:
 
-1. UTF-8 (only if the tsdb version is newer)
-2. underscore-replaced: All unsupported characters are converted to underscores.
-3. U__ escaping:  As described in the UTF-8 proposal, strings with invalid characters can be escaped by prepending `U__` and replacing all invalid characters with `_[UTF8 value]_`.
-4. [Datadog proxy](https://github.com/grafana/mimir-proxies/blob/main/pkg/datadog/ddprom/naming.go#L30-L34) munging pattern: "`.`" becomes "`_dot_`" and "`_`" becomes "`__`".
+1. **UTF-8**
+2. **underscore-replaced**: All unsupported characters are converted to underscores.
+3. **U__ escaping**:  As described in the UTF-8 proposal, strings with invalid characters can be escaped by prepending `U__` and replacing all invalid characters with `_[UTF8 value]_`.
+4. **[Datadog proxy](https://github.com/grafana/mimir-proxies/blob/main/pkg/datadog/ddprom/naming.go#L30-L34) escaping pattern**: "`.`" becomes "`_dot_`" and "`_`" becomes "`__`".
 
-In PromQL, this would look something like:
+In PromQL, the expansion would look something like this under the hood:
 
 User-generated query:
 
@@ -99,13 +100,13 @@ User-generated query:
 
 Expanded queries:
 
-`{"my.utf8.metric", "my.label"="value"}`
-`{"my_utf8_metric", "my_label"="value"}`
-`{"U__my_2E_utf8_2E_metric", "U__my_2E__label"="value"}`
-`{"my_dot_utf8_dot_metric", "my_dot_label"="value"}`
+* `{"my.utf8.metric", "my.label"="value"}`
+* `{"my_utf8_metric", "my_label"="value"}`
+* `{"U__my_2E_utf8_2E_metric", "U__my_2E__label"="value"}`
+* `{"my_dot_utf8_dot_metric", "my_dot_label"="value"}`
 
 There will be a configuration setting to specify which of the replacement schemes might be in use.
-If an administrator knows that no metrics will use the U__ pattern, it can be safely skipped.
+If an administrator knows that no metrics will use the `U__` pattern, it can be safely skipped.
 Hypothetically, if additional replacement patterns are found, they could be easily added to the list of possible configuration options as a minor update.
 
 Redundant lookups will increase query time, but the hope is that index lookups are fast enough that the penalty will be small.
@@ -120,24 +121,24 @@ Since regex queries on metrics names are relatively rare and the domain of advan
 
 ### Name Collisions
 
-In most cases, we do not anticipate bad query results due to name collisions in the case where names are munged by an old client using the underscore method.
+In most cases, we do not anticipate bad query results due to name collisions in the case where names are escaped by an old client using the underscore method.
 This is because collisions would occur at write time, when the colliding names are written to the database.
 Any problems with collisions will occur well before a migration to UTF-8 support takes place.
 Therefore, behavior due to name collisions due to underscore replacement is undefined.
 
 Hypothetically, there could be collisions in the following situation:
 
-1. A database has incoming names generated by an old client that munges names with underscores.
+1. A database has incoming names generated by an old client that escapes names with underscores.
 2. That database also has incoming names written in UTF-8 by a new client.
 3. There is a UTF-8 name that collides with a similar name sent by the old client.
 
-For example, an old client is sending "service.name", and that is getting munged to "service_name" by that client at write time.
+For example, an old client is sending "service.name", and that is getting escaped to "service_name" by that client at write time.
 And then, a newer client is sending "service/name" as native UTF-8.
 The error occurs when the user tries to query for "service/name": because an old client was writing to the same blocks as the new one, the query will be expanded to look for "service_name" and will accidentally grab the metrics meant for "service.name".
 
 The short answer to avoiding this scenario is **don't do that**. Specifically: If possible, if there are any old clients present, do not construct metrics or labels which could cause collisions; and if that is unavoidable, don't mix old and new clients together.
 
-As long as all the clients are new, users do not need to worry about collisions -- "service.name" and "service/name" will be stored separately and the queries will never have to be expanded to include the munged "service_name" possibility.
+As long as all the clients are new, users do not need to worry about collisions -- "service.name" and "service/name" will be stored separately and the queries will never have to be expanded to include the escaped "service_name" possibility.
 
 This situation seems contrived-enough that we are comfortable not supporting it.
 
@@ -152,7 +153,7 @@ Ultimately we decided that having administrators declare transition dates was an
 
 ### Rewrite Old Data
 
-We could have required that users rewrite their tsdb blocks to "upgrade" them to UTF-8 and undo the munging.
+We could have required that users rewrite their tsdb blocks to "upgrade" them to UTF-8 and undo the escaping.
 This approach seems tedious, difficult, and dangerous -- what if something goes wrong during rewriting?
 Requiring massive data rewrites is not a reasonable ask of users.
 
@@ -166,7 +167,7 @@ Because names are stored in the index, query expansion is not expensive enough t
 ### No Migration -- Write Both Versions
 
 We very briefly considered the idea of having the tsdb write all names for a name as long as the user configured it that way.
-That way queries for both the native UTF-8 name and the munged name would succeed.
+That way queries for both the native UTF-8 name and the escaped name would succeed.
 When the migration was complete, users could turn off double-writing and only write UTF-8.
 
 This approach would cause an explosion of on-disk usage.
