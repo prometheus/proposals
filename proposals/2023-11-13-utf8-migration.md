@@ -41,7 +41,7 @@ The tsdb will differentiate those blocks based on entries in the meta.json and a
 
 We must consider edge cases in which a blocks database has persisted metrics or labels that may have been written by different client versions. There are multiple ways this can (and will) happen:
 
-* A newer client persists names to an older Prometheus version. In this case, names would be escaped with the U__ syntax.  If Prometheus is upgraded, newer blocks will be written in UTF-8.
+* A newer client persists names to an older Prometheus version. In this case, names would be escaped with the U__ syntax or with replace-with-underscores method (or any other).  If Prometheus is upgraded, newer blocks will be written in UTF-8.
 * A newer Prometheus receives names from an older client, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8. This will often happen when Prometheus is receiving Open Telemetry metrics.
 * A newer Prometheus receives names from a mix of new and old clients, in which case the same block could contain escaped and UTF-8 data representing the same intended names name.
 
