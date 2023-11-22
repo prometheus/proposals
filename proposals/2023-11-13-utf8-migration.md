@@ -41,9 +41,9 @@ The tsdb will differentiate those blocks based on entries in the meta.json and a
 
 We must consider edge cases in which a blocks database has persisted metrics or labels that may have been written by different client versions. There are multiple ways this can (and will) happen:
 
-* A newer client persists names to an older Prometheus version. In this case, names would be escaped with the U__ syntax or with replace-with-underscores method (or any other).  If Prometheus is upgraded, newer blocks will be written in UTF-8.
+* A newer client persists names to an older Prometheus version. In this case, names would be escaped with any of the available escaping methods.  If Prometheus is upgraded, newer blocks will be written in UTF-8.
 * A newer Prometheus receives names from an older client, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8. This will often happen when Prometheus is receiving Open Telemetry metrics.
-* A newer Prometheus receives names from a mix of new and old clients, in which case the same block could contain escaped and UTF-8 data representing the same intended names name.
+* A newer Prometheus receives names from a mix of new and old clients, in which case the same block could contain escaped and UTF-8 data representing the same intended names.
 
 At query time, there will be a problem: some data may be written with UTF-8 and other data was written with an escaping format.
 The query code will not know which encoding to look for.
@@ -68,18 +68,18 @@ This helps distinguish the first case.
 
 Secondly we will add two new flags to help define the range of dates that are affected by mixed blocks and will be used to distinguish the second case from the third.
 
-* `-promql.utf8_broad_lookup.escape_formats`: This flag tells PromQL engine what escaping methods might have been previously used to escape UTF-8 characters. This is then used to transparently repeat series lookups for metric names or label names when UTF-8 characters are spotted, for each escaping format. Available values: ...
+* `-promql.utf8_broad_lookup.escape_formats`: This flag tells PromQL engine what escaping methods might have been previously used to escape UTF-8 characters. This is then used to transparently repeat series lookups for metric names or label names when UTF-8 characters are spotted, for each escaping format. Available values will be a short enum representing underscores, U__, or dots-only escaping.
 * `-promql.utf8_migration.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
 
 #### Migration Timeline
 
 A Prometheus migration to UTF-8 will follow this timeline:
 
-1. Prometheus is upgraded and UTF-8 support enabled. The `-promql.utf8_migration.enabled` is turned on immediately.
+1. Prometheus is upgraded and UTF-8 support enabled. The `-promql.utf8_broad_lookup.escape_formats` is turned on immediately, enabling the multi-lookup behavior and listing the possible escaping schemes.
 2. Clients are gradually upgraded to UTF-8.
 3. `-promql.utf8_migration.until` is set to the last date-time when a non-UTF-8 client sent data.
 4. Wait for the retention period to elapse such that the migration-until date is expired (could be years).
-5. The migration is complete. Remove `-promql.utf8_migration.enabled` and `-promql.utf8_migration.until` as they are no longer needed.
+5. The migration is complete. Remove `-promql.utf8_broad_lookup.escape_formats` and `-promql.utf8_migration.until` as they are no longer needed.
 
 ### Querying Mixed Blocks
 
@@ -105,7 +105,7 @@ Expanded queries:
 * `{"U__my_2E_utf8_2E_metric", "U__my_2E__label"="value"}`
 * `{"my_dot_utf8_dot_metric", "my_dot_label"="value"}`
 
-There will be a configuration setting to specify which of the replacement schemes might be in use.
+The escape_formats flag mentioned above enables the behavior and specifies which of the escaping schemes might be in use.
 If an administrator knows that no metrics will use the `U__` pattern, it can be safely skipped.
 Hypothetically, if additional replacement patterns are found, they could be easily added to the list of possible configuration options as a minor update.
 
