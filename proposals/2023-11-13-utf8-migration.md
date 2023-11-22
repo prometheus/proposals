@@ -68,7 +68,7 @@ This helps distinguish the first case.
 
 Secondly we will add two new flags to help define the range of dates that are affected by mixed blocks and will be used to distinguish the second case from the third.
 
-* `-promql.utf8_migration.enabled`: This flag tells Prometheus that a migration is in progress, meaning that blocks with the newer tsdb version number may be mixed. If this flag is false, blocks with the newer version number are understood to not be mixed and are exclusively UTF-8.
+* `-promql.utf8_broad_lookup.escape_formats`: This flag tells PromQL engine what escaping methods might have been previously used to escape UTF-8 characters. This is then used to transparently repeat series lookups for metric names or label names when UTF-8 characters are spotted, for each escaping format. Available values: ...
 * `-promql.utf8_migration.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
 
 #### Migration Timeline
