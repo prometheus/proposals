@@ -69,7 +69,7 @@ This helps distinguish the first case.
 Secondly we will add two new flags to help define the range of dates that are affected by mixed blocks and will be used to distinguish the second case from the third.
 
 * `-promql.utf8_broad_lookup.escape_formats`: This flag tells PromQL engine what escaping methods might have been previously used to escape UTF-8 characters. This is then used to transparently repeat series lookups for metric names or label names when UTF-8 characters are spotted, for each escaping format. Available values will be a short enum representing underscores, U__, or dots-only escaping.
-* `-promql.utf8_migration.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
+* `-promql.utf8_broad_lookup.until=<date-time>`: This flag indicates the latest date-time (inclusive) for blocks that may contain mixed data. Any data after this moment are exclusively UTF-8.
 
 #### Migration Timeline
 
@@ -77,9 +77,9 @@ A Prometheus migration to UTF-8 will follow this timeline:
 
 1. Prometheus is upgraded and UTF-8 support enabled. The `-promql.utf8_broad_lookup.escape_formats` is turned on immediately, enabling the multi-lookup behavior and listing the possible escaping schemes.
 2. Clients are gradually upgraded to UTF-8.
-3. `-promql.utf8_migration.until` is set to the last date-time when a non-UTF-8 client sent data.
-4. Wait for the retention period to elapse such that the migration-until date is expired (could be years).
-5. The migration is complete. Remove `-promql.utf8_broad_lookup.escape_formats` and `-promql.utf8_migration.until` as they are no longer needed.
+3. `-promql.utf8_broad_lookup.until` is set to the last date-time when a non-UTF-8 client sent data.
+4. Wait for the retention period to elapse such that the broad-lookup-until date is expired (could be years).
+5. The migration is complete. Remove `-promql.utf8_broad_lookup.escape_formats` and `-promql.utf8_broad_lookup.until` as they are no longer needed.
 
 ### Querying Mixed Blocks
 
