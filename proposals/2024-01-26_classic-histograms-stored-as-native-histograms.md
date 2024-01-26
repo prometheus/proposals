@@ -69,7 +69,7 @@ The counters for the custom buckets should be stored as integer values if possib
 
 ### Option 4 no suffix in series name
 
-> Options 1,2,3 are in the original Google [doc](https://docs.google.com/document/d/1aWNKUagsqUNlZWNjowOItx9JPueyuZ0ZWPyAhq6M8I8/edit#heading=h.es6bovk9enxw).
+> Options 1,2,3 are at the back of the document.
 
 In this option only instrumentation backwards compatibility is guaranteed(*). The user needs to switch to native histogram style queries, which makes this solution forward compatible with exponential histograms. Documented for example [here](https://grafana.com/docs/mimir/latest/visualize/native-histograms/#prometheus-query-language). In a later stage we could add an emulation layer on top of this to get backwards compatible queries.
 
@@ -168,7 +168,7 @@ No change to interface. The raw chunk iterator can load the custom bucket defini
 
 ## Open questions
 
-* How to enable the feature, what should be the name of the flags / configuration. Relation to native histograms feature.
+None.
 
 ## Answered questions
 
