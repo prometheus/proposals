@@ -87,6 +87,8 @@ Scenarios provided that the native histograms feature is enabled:
   * If the scrape histogram has exponential buckets, no effect. Exponential buckets have higher priority.
   * Otherwise the new custom histograms are scraped in a series without suffix.
 
+> Note: enabling native histograms comes with all notes and warnings described in the documentation, in particular the impact on the `le` label for the classic histograms for certain clients. See "Note about the format of le and quantile label values" in [Native Histograms](https://prometheus.io/docs/prometheus/latest/feature_flags/#native-histograms).
+
 ### Scrape
 
 * Create the new representation in a series named `<metric>` without the `le` label. The resulting series name would be the same as if the user enabled exponential histograms. For example `http_request_latency_seconds_bucket`, `http_request_latency_seconds_count` and `http_request_latency_seconds_sum` will simply be stored as a one metric called `http_request_latency_seconds` from now on.
@@ -137,6 +139,12 @@ Use case: custom histograms feature is off, but exponential histograms (current 
 
 * For histograms that have no exponential histogram version, the same applies as above.
 * For histograms that have exponential histogram version, nothing happens, exponential histograms will be kept.
+
+### Documentation
+
+* Feature should be marked as experimental, it depends on another experimental feature, namely native histograms.
+* Configuration option to be documented.
+* Impact on queries and PromQL functions to be specified.
 
 ### Data structures
 
