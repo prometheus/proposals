@@ -75,6 +75,18 @@ In this option only instrumentation backwards compatibility is guaranteed(*). Th
 
 *: there is still the option to keep scraping classic histograms series beside custom histograms to be able to use the old queries, in fact it’s a recommended migration tactic, see later.
 
+### Scrape configuration
+
+1. The feature is disabled if the feature flag [`native-histograms`](https://prometheus.io/docs/prometheus/latest/feature_flags/#native-histograms) is disabled.
+2. If native histograms feature is enabled, custom histograms can be enabled in `scrape_config` by setting the configration option `scrape_custom_histograms` to `true`.
+
+Scenarios provided that the native histograms feature is enabled:
+* If the scraped metric has custom bucket definitions and `scrape_classic_histograms` is enabled, the original classic histogram series with suffixes shall be generated. This is independent of the setting for custom histograms.
+* If `scrape_custom_histograms` is disabled, no effect.
+* If `scrape_custom_histograms` is enabled:
+  * If the scrape histogram has exponential buckets, no effect. Exponential buckets have higher priority.
+  * Otherwise the new custom histograms are scraped in a series without suffix.
+
 ### Scrape
 
 * Create the new representation in a series named `<metric>` without the `le` label. The resulting series name would be the same as if the user enabled exponential histograms. For example `http_request_latency_seconds_bucket`, `http_request_latency_seconds_count` and `http_request_latency_seconds_sum` will simply be stored as a one metric called `http_request_latency_seconds` from now on.
@@ -84,6 +96,10 @@ In this option only instrumentation backwards compatibility is guaranteed(*). Th
   * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory.
   * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
   * In the Prometheus/OpenMetrics ProtoBuf [format](https://github.com/prometheus/client_model/blob/d56cd794bca9543da8cc93e95432cd64d5f99635/io/prometheus/client/metrics.proto#L115-L122) float and integer numbers are explicitly transferred in different fields.
+
+### Exemplars
+
+* Reuse the same logic as with exponential histograms. Roughly: parse the exemplars from the classic histogram, discard exemplars without timestamp and sort by timestamp before forwarding.
 
 ### Writing/storage
 
