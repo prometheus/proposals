@@ -78,7 +78,8 @@ In this option only instrumentation backwards compatibility is guaranteed(*). Th
 ### Scrape
 
 * Create the new representation in a series named `<metric>` without the `le` label. The resulting series name would be the same as if the user enabled exponential histograms. For example `http_request_latency_seconds_bucket`, `http_request_latency_seconds_count` and `http_request_latency_seconds_sum` will simply be stored as a one metric called `http_request_latency_seconds` from now on.
-* Resulting samples at scrape time reuse the existing data structures for native histograms, but use a special schema number to indicate custom buckets. A sample would have either custom bucket definitions or exponential schema and buckets, but not both. It would be the exponential buckets that would be preferred by scrape if both are present and custom buckets would be dropped.
+* Resulting samples at scrape time reuse the existing data structures for native histograms, but use a special schema number to indicate custom buckets. A sample would have either custom bucket definitions or exponential schema and buckets, but not both.
+* If the histogram has exponential buckets during scrape then only the exponential buckets are kept and the custom buckets would be dropped.
 * If all bucket counters and the overall counter of the histogram is determined to be a whole number, use integer histogram, otherwise use float histogram.
   * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory.
   * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
@@ -149,13 +150,14 @@ No change to interface. The raw chunk iterator can load the custom bucket defini
 
 * Would we ever want to store the old representation and the new one at the same time?
   *Answer:* YES. Already should work via the `existing scrape_classic_histograms` option.
-* What to do in queries if custom bucket and native histogram meet?
-  *Answer:* same as today with float vs native histogram.
+* What to do in queries if custom histogram and exponential histogram meet or customer histogram and float sample?
+  *Answer:* same as today with float vs native histogram, that is calculate the result if it makes mathematical sense. For example multiplying a custom histogram with the number 2.0 makes sense. In case of histograms they need to rescaled to match their schema.
 * Should we use a bigger chunk size for such custom histograms? To offset that we’d want to store the bucket layout in the chunk header. ~4K?
   *Answer:* NO. Classic histograms typically have less buckets than exponential native histograms which should offset any additional information encoded in the chunk.
-* Do we allow custom buckets to be stored in the **same samples** where exponential buckets are stored?
-  *Answer:* NO. Prefer exponential buckets if present.
+* Do we allow custom histogram to be stored in the **same samples** where exponential histograms are stored?
+  *Answer:* NO. Prefer exponential histogram if present.
   Does not affect the migration path since we’d require changing the queries first before turning on the feature.
+  In case of out of order ingestion it may happen that upon read we still have different type samples for the same timestamp, in this case prefer exponential histogram over customer histogram. Similarly compaction should drop the custom histogram.
 * Do we allow custom buckets to be stored in the **same series** but different samples, for example the arriving samples until timestamp T have custom buckets and then from T have exponential buckets.
   *Answer:* Yes, custom histograms are native histograms like exponential histograms. Switching between them is nothing else than a schema change, which is already happening now, i.e. we just have to cut a new chunk. Just that the “custom bucket boundary” schema doesn’t provide a mergeability guarantee.
 * Do we add a metric relabel config to govern the feature on a metric level?
@@ -167,7 +169,106 @@ No change to interface. The raw chunk iterator can load the custom bucket defini
 
 ## Alternatives
 
-> Options 1,2,3 and a comparision is in the original Google [doc](https://docs.google.com/document/d/1aWNKUagsqUNlZWNjowOItx9JPueyuZ0ZWPyAhq6M8I8/edit#heading=h.kdvznfdr2b0o).
+### Option 1 with suffix in series name (discarded option)
+
+In this idea, the resulting series has an extra suffix to distinguish from exponential native histograms. Compatibility with current queries is supported.
+
+#### Writing
+
+* Store the new representation in a series name called `<metric>_bucket` without the `le` label (e.g. `http_request_latency_seconds_bucket`, `http_request_latency_seconds_count` and `http_request_latency_seconds_sum` will simply be stored as a one metric `http_request_latency_seconds_bucket`) According to some not so scientific measurement, `_count` and `_bucket` is most queried in our environment, `_sum` lagging behind. But _bucket has higher cardinality, so it makes sense to target that. Probably due to RED metrics requiring rate (count) and percentile (buckets).
+* Introduce two new kinds of chunk types that can store the custom bucket layout information at the beginning, but otherwise can reuse the same technology of existing exponential bucket native histograms.
+
+#### Reading via PromQL
+
+* Direct series selection of `metric{}` would look up `metric{}` and only return the exponential histograms.
+* Regex series selector of `__name__=~”metric.*”` would return `metric{}` and `metric_bucket{}` by default. What about `le` labels? `_count`, `_sum` ?
+  * When listing postings, every time we hit a metric called metric_bucket we could generate the corresponding metric_count and metric_sum, but what if we are lying? This sounds bad.
+  * We could store postings for the `_bucket`, `_count`, `_sum` series but they would point to the same chunks. Basically keep the reverse index for all labels.
+* Direct series selection of `metric_bucket{}` would look up `metric_bucket{}` and load the resulting floats or decode custom histograms.
+* Direct series selection of `metric_count{}` would look up `metric_count{}` and `metric_bucket{}`.
+* Direct series selection of `metric_sum{}` would look up `metric_sum{}` and `metric_bucket{}`.
+  * For any lookup for a metric name that ends in `_count`, `_sum` also select the metric name ending in `_bucket`. This can be done inside TSDB (e.g. Queryable Select will return “old” classic histogram series, even though TSDB would store those as native histograms).
+
+For remote write receivers who would like to receive new native histograms with custom bucketing, they can create a similar algorithm to the above for initial migration purposes.
+
+#### Reading via remote read API
+
+For timeseries/samples : as above, convert at select for sample return.
+For chunks: return raw chunk.
+
+#### Metadata
+
+Not considering weird cases where series names are overlapped by users.
+APIs: should return the original series names and label values, including “le”
+
+```
+/api/v1/series
+/api/v1/labels
+/api/v1/label/<label_name>/values
+/api/v1/metadata
+```
+
+Type query: given a metric selector we could return a single type: float series , custom histogram, exponential histogram.
+
+### Option 2 all suffixes (discarded option)
+
+This is the same as option 1, but we keep the count and sum as separate series. So only `metric_bucket{}` series are merged.
+
+The advantage being that looking up with a regex matcher on the metric name will just work.
+
+### Option 3 no suffix in series name (discarded option)
+
+Does not use the same series as classic histograms, rather the same as the native histograms, but compatibility with current queries is supported.
+
+#### Writing
+
+* Store the new representation in a series named `<metric>` without the `le` label. (e.g. `http_request_latency_seconds_bucket`, `http_request_latency_seconds_count` and `http_request_latency_seconds_sum` will simply be stored as a one metric `http_request_latency_seconds`).
+  * The resulting series name would be the same as if the user enabled exponential native histogram buckets.
+* Resulting samples would have custom bucket definitions and exponential schema and other information; as well as integer counters delta encoded for the exponential histograms and absolute float counters for the custom buckets.
+  * We don’t have a chunk format for integer+float mixed together so this would have to be implemented.
+
+#### Reading via PromQL
+
+* Direct series selection of `metric{}` would look up `metric{}` and only return the exponential histograms.
+  This can happen behind the select interface, but select will need a hint to know which data to return to avoid decoding data that’s not relevant.
+* Regex series selector of `__name__=~”metric.*”` would return `metric{}` by default. What about `le` labels? `_bucket`, `_count`, `_sum` ?
+  * When listing postings, every time we hit a metric called metric_bucket we could generate the corresponding metric_count and metric_sum, but what if we are lying? This sounds bad.
+  * We could store postings for the `_bucket`, `_count`, `_sum` series but they would point to the same chunks.
+* Direct series selection of `metric_bucket{}` would have to look up `metric_bucket{}` and `metric{}` and return the float buckets decoded directly or from the custom histogram.
+  * This can happen behind the select interface, but select will need a hint to know which data to return to avoid decoding data that’s not relevant.
+* Direct series selection of `metric_count{}` similar to buckets, look up both `metric{}` and `metric_count{}`.
+* Direct series selection of `metric_sum{}` similar to buckets, look up both `metric{}` and `metric_sum{}`.
+
+#### Reading via remote read API
+
+For timeseries/samples : as above, convert at select for sample return.
+For chunks: return raw chunk.
+
+#### Metadata
+
+Not considering weird cases where series names are overlapped by users.
+APIs: should return the original series names and label values, including “le”
+
+```
+/api/v1/series
+/api/v1/labels
+/api/v1/label/<label_name>/values
+/api/v1/metadata
+```
+
+For some series we’d have to say it’s both custom and exponential histogram.
+
+#### Comparing options
+
+Option 1, 2, 3 provide full compatibility however the index is kept as is, losing some performance benefits of native histograms. Gives no incentive for the user to move to native histograms and Prometheus would have to support this indefinitely.
+* Migration path to use the feature: 1. Enable feature.
+* Migration path to exponential native histograms: 1. Update queries to query both classic histograms and native histograms. 2. Start scraping exponential histograms along classic histograms. 3. Stop scraping classic histograms.
+
+Option 4 (stage1) provides backward compatible instrumentation for the legacy systems and when the user just wants to reduce TCO. The tradeoff is that the user has to update their queries.
+* Migration path to use the feature: 1. Update queries to query both classic histograms and native histograms. 2. Enable feature (if we reuse scrape_classic_histograms scrape option we could have the classic histograms as well). 3. Stop storing classic series after a transition period.
+* Migration path to exponential native histograms:
+* If feature is in use: 1. Enable native histograms.
+* If feature is not in use: skip custom buckets feature. 1. Update queries to query both classic histograms and native histograms. 2. Start scraping exponential histograms along classic histograms. 3. Stop scraping classic histograms.
 
 ## Action Plan
 
