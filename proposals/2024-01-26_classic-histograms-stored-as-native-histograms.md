@@ -69,7 +69,7 @@ The counters for the custom buckets should be stored as integer values if possib
 
 ### Option 4 no suffix in series name
 
-> Options 1,2,3 are in the original Google [doc](https://docs.google.com/document/d/1aWNKUagsqUNlZWNjowOItx9JPueyuZ0ZWPyAhq6M8I8/edit#heading=h.kdvznfdr2b0o).
+> Options 1,2,3 are in the original Google [doc](https://docs.google.com/document/d/1aWNKUagsqUNlZWNjowOItx9JPueyuZ0ZWPyAhq6M8I8/edit#heading=h.es6bovk9enxw).
 
 In this option only instrumentation backwards compatibility is guaranteed(*). The user needs to switch to native histogram style queries, which makes this solution forward compatible with exponential histograms. Documented for example [here](https://grafana.com/docs/mimir/latest/visualize/native-histograms/#prometheus-query-language). In a later stage we could add an emulation layer on top of this to get backwards compatible queries.
 
@@ -135,7 +135,7 @@ The `histogram.Histogram` and `histogram.FloatHistogram` types to get an additio
 
 Chunk representation
 
-TBD, leaving to [beorn](beorn@grafana.com), but we can assume that the current integer histogram and float histogram chunk is just expanded with custom bucket definitions encoded after headers if the schema is set.
+We propose that the current integer histogram and float histogram chunk is expanded with custom bucket field encoding (and type is encoded in schema). Leaving exact format to PR author.
 
 Chunk iterator
 
