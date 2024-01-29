@@ -13,6 +13,7 @@
   * [remote write 2.0 - explore histogram atomicity](https://github.com/prometheus/prometheus/issues/13410)
 
 * **Other docs or links:**
+  * [Epic](https://github.com/prometheus/prometheus/issues/13485) that contains the sub-tasks.
   * [Previous version of this proposal in Google doc](https://docs.google.com/document/d/1aWNKUagsqUNlZWNjowOItx9JPueyuZ0ZWPyAhq6M8I8/edit#heading=h.kdvznfdr2b0o)
   * [RW Self-Contained Histograms](https://docs.google.com/document/d/1mpcSWH1B82q-BtJza-eJ8xMLlKt6EJ9oFGH325vtY1Q/edit?pli=1#heading=h.ueg7q07wymku)
 
@@ -78,12 +79,12 @@ In this option only instrumentation backwards compatibility is guaranteed(*). Th
 ### Scrape configuration
 
 1. The feature is disabled if the feature flag [`native-histograms`](https://prometheus.io/docs/prometheus/latest/feature_flags/#native-histograms) is disabled.
-2. If native histograms feature is enabled, custom histograms can be enabled in `scrape_config` by setting the configration option `scrape_custom_histograms` to `true`.
+2. If native histograms feature is enabled, custom histograms can be enabled in `scrape_config` by setting the configration option `convert_classic_histograms` to `true`.
 
 Scenarios provided that the native histograms feature is enabled:
 * If the scraped metric has custom bucket definitions and `scrape_classic_histograms` is enabled, the original classic histogram series with suffixes shall be generated. This is independent of the setting for custom histograms.
-* If `scrape_custom_histograms` is disabled, no effect.
-* If `scrape_custom_histograms` is enabled:
+* If `convert_classic_histograms` is disabled, no effect.
+* If `convert_classic_histograms` is enabled:
   * If the scrape histogram has exponential buckets, no effect. Exponential buckets have higher priority.
   * Otherwise the new custom histograms are scraped in a series without suffix.
 
@@ -293,10 +294,3 @@ Option 4 (stage1) provides backward compatible instrumentation for the legacy sy
 * Migration path to exponential native histograms:
 * If feature is in use: 1. Enable native histograms.
 * If feature is not in use: skip custom buckets feature. 1. Update queries to query both classic histograms and native histograms. 2. Start scraping exponential histograms along classic histograms. 3. Stop scraping classic histograms.
-
-## Action Plan
-
-The tasks to do in order to migrate to the new idea.
-
-* [ ] Task one <GH issue>
-* [ ] Task two <GH issue> ...
