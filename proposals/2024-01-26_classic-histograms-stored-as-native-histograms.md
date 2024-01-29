@@ -54,7 +54,7 @@ Finally, fully custom bucket layouts is a larger project with wider scope. By re
 ### Naming convention
 
 For the sake of brevity will use the following wording:
-* Classic histogram = classic histogram implying separate series for buckets, count and sum.
+* Classic histogram = Original Prometheus histogram implemented by separate series of buckets metrics labeled by `le`, with separate `_count` and `_sum` metrics.
 * Native histogram = a histogram that uses a single series to store all relevant information in complex data type samples.
 * Exponential histogram = a native histogram with exponential buckets.
 * Custom histogram = a native histogram with custom (i.e. user defined) buckets.
