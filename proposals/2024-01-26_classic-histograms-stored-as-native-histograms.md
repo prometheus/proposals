@@ -68,9 +68,9 @@ Enhance the internal representation of histograms (both float and [integer](http
 
 The counters for the custom buckets should be stored as integer values if possible. To be compatible with existing precision of the classic histogram representation within a to be defined 𝜎. The GO statement `x == math.Trunc(x)` has an error of around `1e-16` - experimentally.
 
-### Option 4 no suffix in series name
+### Naming: no suffix in series name
 
-> Options 1,2,3 are at the back of the document.
+> Additional naming alternatives are at the end of the document.
 
 In this option only instrumentation backwards compatibility is guaranteed(*). The user needs to switch to native histogram style queries, which makes this solution forward compatible with exponential histograms. Documented for example [here](https://grafana.com/docs/mimir/latest/visualize/native-histograms/#prometheus-query-language). In a later stage we could add an emulation layer on top of this to get backwards compatible queries.
 
