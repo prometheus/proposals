@@ -101,9 +101,9 @@ Scenarios provided that the native histograms feature is enabled:
   * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
   * In the Prometheus/OpenMetrics ProtoBuf [format](https://github.com/prometheus/client_model/blob/d56cd794bca9543da8cc93e95432cd64d5f99635/io/prometheus/client/metrics.proto#L115-L122) float and integer numbers are explicitly transferred in different fields.
 * Conversion of classic buckets defined by `[le1, le2, ..., leM, leN]` upper boundaries:
-  * If there are no negative boundaries specified in the classic histogram, then the following conversion is made to positive buckets: `[0, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
-  * If there are negative boundaries, then the following conversion is made to *positive* buckets: `(-Inf, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
-  * The zero bucket of the native histogram is not used in either case.
+  * If there are only greater than 0 boundaries specified in the classic histogram, then the following conversion is made to positive buckets: `[0, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
+  * If there is negative or zero boundary, then the following conversion is made to *positive* buckets: `(-Inf, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
+  * The zero bucket of the native histogram is not used in either case as the buckets cover the full interval in question.
 
 ### Exemplars
 
