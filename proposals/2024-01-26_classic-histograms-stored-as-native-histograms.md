@@ -100,10 +100,7 @@ Scenarios provided that the native histograms feature is enabled:
   * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory. After parsing the value `x` if the GO statement `x == math.Trunc(x)` is true, then use integer counters, otherwise switch to floats.
   * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
   * In the Prometheus/OpenMetrics ProtoBuf [format](https://github.com/prometheus/client_model/blob/d56cd794bca9543da8cc93e95432cd64d5f99635/io/prometheus/client/metrics.proto#L115-L122) float and integer numbers are explicitly transferred in different fields.
-* Conversion of classic buckets defined by `[le1, le2, ..., leM, leN]` upper boundaries:
-  * If there are only greater than 0 boundaries specified in the classic histogram, then the following conversion is made to positive buckets: `[0, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
-  * If there is negative or zero boundary, then the following conversion is made to *positive* buckets: `(-Inf, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
-  * The zero bucket of the native histogram is not used in either case as the buckets cover the full interval in question.
+* The custom bucket definitions are to be stored by expanding the existing data structures, see later.
 
 ### Exemplars
 
@@ -125,6 +122,10 @@ Scenarios provided that the native histograms feature is enabled:
 * Direct series selection of `metric_bucket{}`, `metric_count{}` and `metric_sum{}` would return nothing as these won’t exist.
 * The function histogram_quantile, histogram_fraction, histogram_stddev, histogram_stdvar would now potentially select custom bucket and exponential histogram samples at the same time.
   * This is a pure math problem to find a good approximation when this happens. Will be worked out in the implementation.
+  * Interpretation of classic buckets defined by `[le1, le2, ..., leM, leN]` upper boundaries:
+    * If there are only greater than 0 boundaries specified in the classic histogram, then the following conversion is made : `[0, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`. This is mirroring how `histogram_quantile` works now.
+    * If there is negative or zero boundary, then the following conversion is made: `(-Inf, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
+    * The zero bucket of the native histogram is not used in either case as the buckets cover the full interval in question.
 * The function histogram_count would now potentially select custom bucket and exponential histogram samples at the same time. The interpretation of count is the same for custom and exponential histograms so this is not a problem.
 * The function histogram_sum would now potentially select custom bucket and exponential histogram samples at the same time. The interpretation of count is the same for custom and exponential histograms so this is not a problem.
 
@@ -154,13 +155,13 @@ Use case: custom histograms feature is off, but exponential histograms (current 
 
 ### Data structures
 
-New constant to define the schema number to mean custom buckets (e.g. 127 ?).
+New constant to define the schema number to mean custom buckets (e.g. 127 ?). In general the schema number dictates the interpretation of the rest of the fields. In particular for custom buckets the negative spans/deltas/counts and zero bucket can be ignored.
 
 *Remote write protocol*
 
 The `message.Histogram` type to be expanded with nullable `repeated double custom_buckets` field that lists the custom bucket definitions. The list contains the classic histogram upper bounds, except `+Inf`, which is implicit. There should be a comment which specifies which schema number means that we need to even look at this field. It should be a validation error to find this field null if the custom bucket schema number is used.
 
-Bucket counts (both positive and negative) shall be stored in the `positive_spans` and `positive_deltas` (or `positive_counts`) fields in the same manner as for exponential histograms. The `offset` in the span shall mean the index/gap in the `custom_buckets` field.
+Bucket counts (for both positive and negative buckets) shall be stored in the `positive_spans` and `positive_deltas` (or `positive_counts`) fields in the same manner as for exponential histograms. The `offset` in the span shall mean the index/gap in the `custom_buckets` field.
 
 *Internal representation*
 
