@@ -22,7 +22,7 @@
 
 ## Why
 
-To support [RW Self-Contained Histograms](https://docs.google.com/document/d/1mpcSWH1B82q-BtJza-eJ8xMLlKt6EJ9oFGH325vtY1Q/edit?pli=1#heading=h.ueg7q07wymku) which is about the need to make writing histograms atomic, in particular to avoid a situation when series of a classic histogram are partially written to (remote) storage. For more information consult the referenced design document.
+To support [RW Self-Contained Histograms](https://docs.google.com/document/d/1mpcSWH1B82q-BtJza-eJ8xMLlKt6EJ9oFGH325vtY1Q/edit?pli=1#heading=h.ueg7q07wymku), which is about the need to make writing histograms atomic, in particular to avoid a situation when series of a classic histogram are partially written to (remote) storage. For more information consult the referenced design document.
 
 To make storing classic histograms more efficient by taking advantage of the design of native histograms.
 
@@ -36,8 +36,9 @@ Finally, fully custom bucket layouts is a larger project with wider scope. By re
 ## Goals
 
 * No change to instrumentation.
-* No change to the query side. *Might not be achieved in the first iteration/ever. The ingestion and storage part can be fully implemented without any changes to the query part. A compatibility layer for querying can be introduced later as needed.*
 * Classic histogram emitted by the application must be written to (local/remote) storage in the efficient native histogram representation.
+* The query syntax for interogating classic histograms stored as native histogram will be the same as the syntax for the existing (exponential) native histograms.
+* Reasonable interoperability with (exponential bucket) native histograms. Reasonable meaning that only such queries would be supported where the bucket layouts can be merged with a low overhead. In other cases the query shall return nothing.
 * Allow future extension for other bucket layouts that have already been requested multiple times (linear, log-linear, …).
 
 ### Audience
@@ -48,7 +49,7 @@ Finally, fully custom bucket layouts is a larger project with wider scope. By re
 ## Non-Goals
 
 * New instrumentation for defining the custom buckets.
-* Interoperability with (exponential bucket) native histograms.
+* Keeping backwards compatibility with existing classic histogram queries, that is queries on the series with `_bucket`, `_count`, `_sum` suffixes. *In the future a compatibility layer may be added to support this use case.*
 
 ## How
 
@@ -66,7 +67,7 @@ This proposal aims to minimize the changes needed to achieve the goals, but also
 
 Enhance the internal representation of histograms (both float and [integer](https://github.com/prometheus/prometheus/blob/main/model/histogram/histogram.go)) with a nil-able slice of custom bucket definitions. No need to change spans/deltas/values slices.
 
-The counters for the custom buckets should be stored as integer values if possible. To be compatible with existing precision of the classic histogram representation within a to be defined 𝜎. The GO statement `x == math.Trunc(x)` has an error of around `1e-16` - experimentally.
+The counters for the custom buckets should be stored as integer values if possible.
 
 ### Naming: no suffix in series name
 
@@ -79,7 +80,7 @@ In this option only instrumentation backwards compatibility is guaranteed(*). Th
 ### Scrape configuration
 
 1. The feature is disabled if the feature flag [`native-histograms`](https://prometheus.io/docs/prometheus/latest/feature_flags/#native-histograms) is disabled.
-2. If native histograms feature is enabled, custom histograms can be enabled in `scrape_config` by setting the configration option `convert_classic_histograms` to `true`.
+2. If native histograms feature is enabled, custom histograms can be enabled in the `global` section (or per `scrape_config`) by setting the configration option `convert_classic_histograms` to `true`.
 
 Scenarios provided that the native histograms feature is enabled:
 * If the scraped metric has custom bucket definitions and `scrape_classic_histograms` is enabled, the original classic histogram series with suffixes shall be generated. This is independent of the setting for custom histograms.
@@ -96,9 +97,10 @@ Scenarios provided that the native histograms feature is enabled:
 * Resulting samples at scrape time reuse the existing data structures for native histograms, but use a special schema number to indicate custom buckets. A sample would have either custom bucket definitions or exponential schema and buckets, but not both.
 * If the histogram has exponential buckets during scrape then only the exponential buckets are kept and the custom buckets would be dropped.
 * If all bucket counters and the overall counter of the histogram is determined to be a whole number, use integer histogram, otherwise use float histogram.
-  * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory.
+  * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory. After parsing the value `x` if the GO statement `x == math.Trunc(x)` is true, then use integer counters, otherwise switch to floats.
   * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
   * In the Prometheus/OpenMetrics ProtoBuf [format](https://github.com/prometheus/client_model/blob/d56cd794bca9543da8cc93e95432cd64d5f99635/io/prometheus/client/metrics.proto#L115-L122) float and integer numbers are explicitly transferred in different fields.
+* The custom bucket definitions are to be stored by expanding the existing data structures, see later.
 
 ### Exemplars
 
@@ -120,6 +122,10 @@ Scenarios provided that the native histograms feature is enabled:
 * Direct series selection of `metric_bucket{}`, `metric_count{}` and `metric_sum{}` would return nothing as these won’t exist.
 * The function histogram_quantile, histogram_fraction, histogram_stddev, histogram_stdvar would now potentially select custom bucket and exponential histogram samples at the same time.
   * This is a pure math problem to find a good approximation when this happens. Will be worked out in the implementation.
+  * Interpretation of classic buckets defined by `[le1, le2, ..., leM, leN]` upper boundaries:
+    * If there are only greater than 0 boundaries specified in the classic histogram, then the following conversion is made : `[0, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`. This is mirroring how `histogram_quantile` works now.
+    * If there is negative or zero boundary, then the following conversion is made: `(-Inf, le1], (le1, le2], ..., (leM, leN], (leN, +Inf]`.
+    * The zero bucket of the native histogram is not used in either case as the buckets cover the full interval in question.
 * The function histogram_count would now potentially select custom bucket and exponential histogram samples at the same time. The interpretation of count is the same for custom and exponential histograms so this is not a problem.
 * The function histogram_sum would now potentially select custom bucket and exponential histogram samples at the same time. The interpretation of count is the same for custom and exponential histograms so this is not a problem.
 
@@ -129,7 +135,7 @@ Related CNCF slack [thread](https://cloud-native.slack.com/archives/C02KR205UMU/
 
 Use case: neither custom histograms nor exponential histograms in use (i.e. both features are off).
 
-* Enable feature to store custom bucket native histograms, scrape them in parallel to classic (via `scrape_classic_histograms` option), and do nothing else for a while (i.e. production usage still uses classic, change no dashboards and alerts.
+* Enable feature to store custom bucket native histograms, scrape them in parallel to classic (via `scrape_classic_histograms` option), and do nothing else for a while (i.e. production usage still uses classic, change no dashboards and alerts).
 * Let it sit for as long as your longest range in any query.
 * Then, at will, switch over/duplicate dashboards, alerts, ... to native histogram queries.
 
@@ -149,23 +155,31 @@ Use case: custom histograms feature is off, but exponential histograms (current 
 
 ### Data structures
 
-New constant to define the schema number to mean custom buckets (e.g. 127 ?).
+New constant to define the schema number to mean custom buckets (e.g. 127 ?). In general the schema number dictates the interpretation of the rest of the fields. In particular for custom buckets the negative spans/deltas/counts and zero bucket can be ignored.
 
-Remote write protocol
+*Remote write protocol*
 
-The `message.Histogram` type to be expanded with nullable repeated custom_buckets field that list the custom bucket definitions (except `+Inf`, which is implicit). There should be a comment which specifies which schema number means that we need to even look at this field. It should be a validation error to find this field null if the custom bucket schema number is used.
+The `message.Histogram` type to be expanded with nullable `repeated double custom_buckets` field that lists the custom bucket definitions. The list contains the classic histogram upper bounds, except `+Inf`, which is implicit. There should be a comment which specifies which schema number means that we need to even look at this field. It should be a validation error to find this field null if the custom bucket schema number is used.
 
-Internal representation
+Bucket counts (for both positive and negative buckets) shall be stored in the `positive_spans` and `positive_deltas` (or `positive_counts`) fields in the same manner as for exponential histograms. The `offset` in the span shall mean the index/gap in the `custom_buckets` field.
 
-The `histogram.Histogram` and `histogram.FloatHistogram` types to get an additional field that has the custom bucket definitions or reference id for interned custom bucket definition. Doesn’t matter as it should be accessible via getter interface. (We’d have to see how the PromQL engine uses the bucket definitions to nail down what exact interface to put here.)
+*Internal representation*
 
-Chunk representation
+The `histogram.Histogram` and `histogram.FloatHistogram` types to get an additional field that has the custom bucket definitions or reference id for interned custom bucket definition. As opposed to the remote write protocol, do store the `+Inf` boundary in memory for simplicity. Doesn’t matter as it should be accessible via getter interface. (We’d have to see how the PromQL engine uses the bucket definitions to nail down what exact interface to put here.)
 
-We propose that the current integer histogram and float histogram chunk is expanded with custom bucket field encoding (and type is encoded in schema). Leaving exact format to PR author.
+*Chunk representation*
 
-Chunk iterator
+We propose that the current integer histogram and float histogram chunk is expanded with custom bucket field encoding, the additional data will only be read/written if the schema number matches. Leaving exact format to PR author. The boundary `+Inf` can be implicit in storage.
+
+*Chunk iterator*
 
 No change to interface. The raw chunk iterator can load the custom bucket definitions once and reuse that (like it does with counter reset hint header).
+
+## Future expansions for other schema types
+
+The current proposal optimizes for storing classic histograms where the boundaries are upper limits and buckets are adjacent. This is reflected in the fact that in storage we don't store lower, upper limits and rules of boundary inclusion, just the upper bounds without `+Inf`.
+
+For different kind of schemas, such as linear, exponential with an offset, etc. We can later use different schema numbers and repurpose the list of floats as needed.
 
 ## Open questions
 
@@ -175,10 +189,10 @@ None.
 
 * Would we ever want to store the old representation and the new one at the same time?
   *Answer:* YES. Already should work via the `existing scrape_classic_histograms` option.
-* What to do in queries if custom histogram and exponential histogram meet or customer histogram and float sample?
-  *Answer:* same as today with float vs native histogram, that is calculate the result if it makes mathematical sense. For example multiplying a custom histogram with the number 2.0 makes sense. In case of histograms they need to rescaled to match their schema.
+* What to do in queries if a custom histogram and an exponential histogram or a custom histogram with different layout meet or custom histogram and float sample?
+  *Answer:* same as today with float vs native histogram, that is calculate the result if it makes mathematical sense. For example multiplying a custom histogram with the number 2.0 makes sense. In case of histograms their buckets may need merging to match each other's schema. The implementation will issue a warning if the result may be not precise or return no result if approximation is not possible or way off.
 * Should we use a bigger chunk size for such custom histograms? To offset that we’d want to store the bucket layout in the chunk header. ~4K?
-  *Answer:* NO. Classic histograms typically have less buckets than exponential native histograms which should offset any additional information encoded in the chunk.
+  *Answer:* NO. Classic histograms typically have fewer buckets than exponential native histograms, which should offset any additional information encoded in the chunk.
 * Do we allow custom histogram to be stored in the **same samples** where exponential histograms are stored?
   *Answer:* NO. Prefer exponential histogram if present.
   Does not affect the migration path since we’d require changing the queries first before turning on the feature.
