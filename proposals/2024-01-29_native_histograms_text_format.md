@@ -15,7 +15,7 @@
 
 ## Why
 
-Today it is only possible to export native histograms using the protobuf scrape format. Many users prefer the text format, and some client libraries, such as the Python client, want to avoid adding a dependency on protobuf. 
+Today it is only possible to export native histograms using the Protocol Buffers (protobuf) scrape format. Many users prefer the text format, and some client libraries, such as the Python client, want to avoid adding a dependency on protobuf. 
 
 During a [dev summit in 2022](https://docs.google.com/document/d/11LC3wJcVk00l8w5P3oLQ-m3Y37iom6INAMEu2ZAGIIE/edit#bookmark=id.c3e7ur6rn5d2) there was consensus we would continue to support the text format. Including native histograms as part of the text format shows commitment to that consensus.
 
@@ -23,7 +23,7 @@ See the linked design doc in Google Docs for additional background information.
 
 ### Pitfalls of the current solution
 
-Prometheus client libraries such as Python do not want to require a dependency on protobuf in order to expose native histograms, and in some languages protobuf is painful to use. Gating native histograms only to clients/users willing to use protobuf hurts adoption of native histograms, therefore, we would like a way to represent a histogram in the text based format.
+Prometheus client libraries such as Python do not want to require a dependency on protobuf in order to expose native histograms, and in some languages protobuf is painful to use. Gating native histograms only to clients/users willing to use protobuf hurts adoption of native histograms, therefore, we would like a way to represent a native histogram in the text based format.
 
 ## Goals
 
