@@ -54,6 +54,7 @@ Details can be found in the [Remote Write 2.0 Draft Specification](https://docs.
 The section stating potential alternatives. Highlight the objections reader should have towards your proposal as they read it. Tell them why you still think you should take this path [[ref](https://twitter.com/whereistanya/status/1353853753439490049)]
 
 1. (See some comments in the [Remote Write 2.0 Draft Specification](https://docs.google.com/document/d/1PljkX3YLLT-4f7MqrLt7XCVPG3IsjRREzYrUzBxCPV0/edit#heading=h.3p42p5s8n0ui).)
+2. The use of `HEAD` to probe the remote receiver for protocol support was certainly a point that caused some discussion. The alternative is to follow [the existing 1.0 spec](https://prometheus.io/docs/concepts/remote_write_spec/) and `Senders who wish to send in a format >1.x MUST start by sending an empty 1.x, and see if the response says the receiver supports something else.`. This is still possible under this 2.0 proposal but (IMHO) the availibility of the `HEAD` makes for a "cleaner" interface as `HEAD` implies an idempotent operation that, barring separate metric updates, should have no other side effects.
 
 ## Action Plan
 
