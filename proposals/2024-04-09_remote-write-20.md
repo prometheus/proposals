@@ -151,11 +151,15 @@ For this reason we propose to call this spec change 2.0. Other reasons are clean
 
 ### String Interning
 
-TBD
+String interning was the impetus for creating the new version of the protocol in first place. We always knew the 1.0 protobuf format was inefficient in terms of string duplication. If we imagine a Prometheus instance in a Kubernetes cluster scraping all the pods in every namespace, there are going to be a lot of duplicated label names and strings on the series that end up in Write Requests. For example; container, namespace, HTTP method or status codes, repeated metric names, etc. In the 1.0 format we would include the full string labelset for each series.
+
+With the intial PoC version of the 2.0 format the goal was to reduce CPU compression time and reduce the overall amount of bytes that need to be sent over the wire by interning all strings for label names and values in a single symbol table per remote Write Request. The series in the Write Request then have integer references into the symbol table intead of duplicating the string data. While the snappy compression was we use was already fast, by interning the strings data prior to compression we significantly reduce the amount of time we need to spend on compression. And as an end result, we saw as much as 60% reduction in the network wire bytes. For a deeper dive see Callum's talk from Tokyo DevOpsDays [here](https://youtu.be/xJlZpCbT3To?list=PL-bvtmk0kdw5JSayDScD7Y6XMdyANyQmB&t=6388).
 
 ### Always-on Metadata
 
-TBD
+In the 1.0 format metadata was added at a later date than the original remote write implementation. In addition, Prometheus itself didn't have nice handling of metadata for persistence or series differentiation. Metadata was actually cached in memory on a per-metric name basis. That meant that if two targets exported the same metric name with different metadata, whichever was scraped most recently would have it's metadata cached. We also couldn't nicely gather metadata from the WAL until very recently like we do for all other data types, so metadata could only be sent *separately* from samples data on a periodic basis by checking the scrape subsystems cached metadata.
+
+With the 2.0 format we're suggesting that metadata SHOULD always be included for every series in a remote write request, some reciever systems require metadata information like metric type for their storage to work optimally. This means that within the spec recievers would be allowed to reject data if metadata is not present. A TBD question is whether we should require metadata to be present on the senders side as well and just remove the chance of recievers not getting Metadata in the 2.0 format when they need it. One argument against doing so is that some metrics generating systems/libraries do not currently generate the same metadata that Prometheus client libraries do. We could just say this is part of being RW 2.0 compliant.
 
 ### Native Histograms
 
@@ -167,11 +171,13 @@ TBD)
 
 #### Samples vs Native Histogram Samples
 
-TBD
+In the new 2.0 format we are saying that a write request MUST only contain float 64 samples or native histogram samples within a single time series. While the proto format currently allows for both to be present, mostly because the code to handle a proto `oneof` field is a bit unwieldly, part of being compliant would be that a sender never builds write requests that have both samples and histogram samples within the same time series.
+
+The reason for this is as follows; while it technically possible for Prometheus to scrape both samples and histogram samples for the same metric name, these should result in separate time series in both TSDB and Remote Write. Whether via client library misuse or two separate versions of the same application (one of which has been updated to use native histograms while the other is still using classic histograms), a native histogram series will have different labels than a classic histogram which would have labels like `le`. TSDB would see these as different series, and generated different series reference IDs, which in turn would be picked up by remote write via separate WAL series records.
 
 ### Exemplars
 
-TBD
+Exemplars were already present in the 1.0 proto format, but in 2.0 we can take advantage of the symbols table and string interning to further reduce the amount of network bytes when exemplars are being generated. An exemplar consists of yet another label set that would contain more duplicated strings data. That's exacerbated by the fact that multiple series for classic histograms or counter vectors could all have exemplars on every scrape.
 
 ### Created Timestamp
 
@@ -185,9 +191,9 @@ TBD(bwplotka)
 
 The section stating potential alternatives we considered, not mentioned in "How" section.
 
-1. Deprecate remotw re, double down on the OTLP protocol support in Prometheus
+1. Deprecate remote write, double down on the OTLP protocol support in Prometheus
 
-TBD
+Not explored much, OTLP is designed to support multiple telemetry signal types while remote write is optimized to handle metrics data only.
 
 1. Use gRPC for 2.0
 
