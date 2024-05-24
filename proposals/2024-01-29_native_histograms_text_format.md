@@ -41,7 +41,7 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 
 ## Non-Goals
 
-* Requiring backwards compatability (OpenMetrics 2.0 would be ok)
+* Requiring backwards compatability (OpenMetrics 2.0 would be ok), and especially forwards compatability (not required in the OpenMetrics spec).
 
 ## How
 
@@ -66,6 +66,10 @@ A bucket span is the combination of an `int32` offset and a `uint32` length. It 
 Positive infinity, negative infinity, and non number values will be represented as case insensitive versions of `+Inf`, `-Inf`, and `NaN` respectively in any field. This is the same behavior for values in OpenMetrics today.
 
 Note that in this initial implementation float histograms are not supported.
+
+### Backwards compatability and semantic versioning
+
+After discussions with a few people it is believed that these changes can be made in a 1.x release of OpenMetrics. OpenMetrics 1.x parsers that support native histograms will still be able to read OpenMetrics 1.0 responses, therefore this change is backwards compatible. However, this change is not forwards compatible, i.e. an OpenMetrics 1.0 parser will not be able to read an OpenMetrics >= 1.1 response. Any producers implementing native histograms MUST also implement content negotiation and fall back to OpenMetrics 1.0.0, and therefore not expose native histograms, if a supported version cannot be negotiated. Note that the behavior to fall back to 1.0.0 is already part of the [OpenMetrics spec](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#protocol-negotiation).
 
 ## Alternatives
 
