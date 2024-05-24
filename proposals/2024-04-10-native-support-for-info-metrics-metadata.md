@@ -65,7 +65,22 @@ Goals and use cases for the solution as proposed in [How](#how):
 * Track when info metrics' set of identifying labels changes. This shouldn't be a frequent occurrence, but it should be handled.
 * Automatically treat the old version of an info metric as stale for query result enriching purposes, when its data labels change (producing a new time series, but with same identity).
 * Add TSDB API for, given a certain time series and a certain timestamp, getting data labels, potentially filtered by certain matchers, from info metrics with identifying labels in common with the time series in question.
-* Simplify enriching of query results with info metric labels in PromQL, e.g. via a new function.
+  * If no data label matchers are provided, _all_ the data labels of found info metrics are added to the resulting time series.
+  * If data label matchers are provided, only info metrics with matching data labels are considered.
+  * If data label matchers are provided, _precisely_ the data labels specified by the label matchers are added to the returned time series.
+  * If data label matchers are provided, time series are only included in the result if matching data labels from info metrics were found.
+  * A data label matcher like `k8s_cluster_name=~".+"` guarantees that each returned time series has a non-empty `k8s_cluster_name` label, implying that time series for which no matching info metrics have a data label named `k8s_cluster_name` (including the case where no matching info metric exists at all) will be excluded from the result.
+  * A special case: If a data label matcher allows empty labels (equivalent to missing labels, e.g. `k8s_cluster_name=~".*"`), it will not exclude time series from the result even if there's no matching info metric.
+  * A data label matcher like `__name__="target_info"` can be used to restrict the info metrics used.
+    However, the `__name__` label itself will not be copied.
+  * Label collisions: The input instant vector could already contain labels that are also part of the data labels of a matching info metric.
+    Furthermore, since the info function might find multiple differently named info metrics with matching identifying labels, those might have overlapping data labels.
+    In this case, the info function has to check if the values of the affected labels match or are different.
+    The former case is not really a label collision and therefore causes no problem.
+    In the latter case, however, the function has to return an error.
+    The collision can be resolved by constraining the labels via the optional label-selector argument of the info function.
+    And of course, the user always has the option to go back to the original join syntax (or, even better, avoiding ingesting conflicting info metrics in the first place).
+* Simplify enriching of query results with info metric data (non-identifying) labels in PromQL, e.g. via a new function, based on aforementioned TSDB API.
 
 ### Audience
 
