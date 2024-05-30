@@ -16,9 +16,9 @@
 
 ## Why
 
-Today it is only possible to export native histograms using the Protocol Buffers (protobuf) scrape format. Many users prefer the text format, and some client libraries, such as the Python client, want to avoid adding a dependency on protobuf. 
+Today it is only possible to export native histograms using the classic (not OpenMetrics) Protocol Buffers (protobuf) scrape format. Many users prefer the text format, and some client libraries, such as the Python client, want to avoid adding a dependency on protobuf. Prometheus content negotiation prefers OpenMetrics to the classic Prometheus text based format, therefore to support native histograms in Prometheus the OpenMetrics text format will also need to support native histograms.
 
-During a [dev summit in 2022](https://docs.google.com/document/d/11LC3wJcVk00l8w5P3oLQ-m3Y37iom6INAMEu2ZAGIIE/edit#bookmark=id.c3e7ur6rn5d2) there was consensus we would continue to support the text format. Including native histograms as part of the text format shows commitment to that consensus.
+There is already an open pull request (see Related Issues and PRs above) to add support for native histograms to OpenMetrics, and during a [dev summit in 2022](https://docs.google.com/document/d/11LC3wJcVk00l8w5P3oLQ-m3Y37iom6INAMEu2ZAGIIE/edit#bookmark=id.c3e7ur6rn5d2) there was consensus we would continue to support the text format for new features as well. Including native histograms as part of the text format shows commitment to that consensus.
 
 ### Pitfalls of the current solution
 
@@ -42,13 +42,24 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 ## Non-Goals
 
 * Requiring backwards compatability (OpenMetrics 2.0 would be ok), and especially forwards compatability (not required in the OpenMetrics spec).
+* Support for multiple exemplars (this will be done in a future proposal).
 
 ## How
 
-Extend the OpenMetrics text format to allow structured values instead of only float values. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/OpenObservability/OpenMetrics/pull/256). Starting with an example and then breaking up the format:
+Extend the OpenMetrics text format to allow structured values instead of only float values. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/prometheus/client_model/blob/master/io/prometheus/client/metrics.proto). Starting with examples and then breaking up the format:
 ```
 # TYPE nativehistogram histogram
-nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_span:[0:2,1:2],negative_span:[0:2,1:2],positive_delta:[2,1,-2,3],negative_delta:[2,1,-2,3]}
+nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
+
+# TYPE hist_with_labels histogram
+hist_with_labels{foo="bar",baz="qux"} {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
+
+# TYPE hist_with_classic_buckets histogram
+hist_with_classic_buckets {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
+hist_with_classic_buckets_bucket{le="0.001"} 4
+hist_with_classic_buckets_bucket{le="+Inf"} 24
+hist_with_classic_buckets_count 24
+hist_with_classic_buckets_sum 100
 ```
 The metric will have no "magic" suffixes, then the value for each series is a custom struct format with the following fields:
 * `sum: float64` - The sum of all observations for this histogram. Could be negative in cases with negative observations.
@@ -56,20 +67,29 @@ The metric will have no "magic" suffixes, then the value for each series is a cu
 * `schema: int32` - The schema used for this histogram, currently supported values are -4 -> 8.
 * `zero_threshold: float64` - The width of the zero bucket.
 * `zero_count: uint64` - The number of observations inside the zero bucket.
-* `negative_span: []BucketSpan` - The buckets corresponding to negative observations, optional.
-* `negative_delta: []int64` - The delta of counts compared to the previous bucket. 
-* `positive_span: []BucketSpan` - The buckets corresponding to negative observations, optional.
-* `positive_delta: []int64` - The delta of counts compared to the previous bucket. 
+* `negative_spans: []BucketSpan` - The buckets corresponding to negative observations, optional.
+* `negative_deltas: []int64` - The delta of counts compared to the previous bucket. 
+* `positive_spans: []BucketSpan` - The buckets corresponding to negative observations, optional.
+* `positive_deltas: []int64` - The delta of counts compared to the previous bucket. 
 
 A bucket span is the combination of an `int32` offset and a `uint32` length. It is encoded as `<offset>:<length>`. Lists/arrays are encoded within square brackets with elements separated by commas. Compared to JSON this avoids consistently repeating keys and curly braces.
 
 Positive infinity, negative infinity, and non number values will be represented as case insensitive versions of `+Inf`, `-Inf`, and `NaN` respectively in any field. This is the same behavior for values in OpenMetrics today.
 
-Note that in this initial implementation float histograms are not supported.
+Note that in this initial implementation float histograms are not supported. Float histograms are rarely used in exposition, and OpenMetrics does not support classic float histograms either. Support could be added in the future by adding fields for `count_float`, `zero_count_float`, `negative_counts`, and `positive_counts`.
 
-### Backwards compatability and semantic versioning
+### Backwards compatibility and semantic versioning
 
 After discussions with a few people it is believed that these changes can be made in a 1.x release of OpenMetrics. OpenMetrics 1.x parsers that support native histograms will still be able to read OpenMetrics 1.0 responses, therefore this change is backwards compatible. However, this change is not forwards compatible, i.e. an OpenMetrics 1.0 parser will not be able to read an OpenMetrics >= 1.1 response. Any producers implementing native histograms MUST also implement content negotiation and fall back to OpenMetrics 1.0.0, and therefore not expose native histograms, if a supported version cannot be negotiated. Note that the behavior to fall back to 1.0.0 is already part of the [OpenMetrics spec](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#protocol-negotiation).
+
+Until a version of OpenMetrics is released that contains a stable version of native histograms consumers can determine if native histograms may be present by asking for a `nativehistogram` pre-release identifier. For example,
+```
+Accept: application/openmetrics-text;version=1.1.0-nativehistogram.*,application/openmetrics-text;version=1.0.0,text/plain;version=0.0.4
+```
+would mean the consumer can accept any nativehistogram enabled pre-release version of OpenMetrics 1.1.0, the base 1.0.0 version of OpenMetrics, or the 0.0.4 version of the classic Prometheus text format. Producers must include the proper content type for their version, such as the first nativehistogram pre-release:
+```
+Content-Type: application/openmetrics-text;version=1.1.0-nativehistogram.0
+```
 
 ## Alternatives
 
