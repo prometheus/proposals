@@ -1,4 +1,4 @@
-# Add 1st class feature to PromQL for handling info type metrics
+# Simplify joins with info metrics in PromQL
 
 * **Owners:**
   * Arve Knudsen [@aknuds1](https://github.com/aknuds1) [arve.knudsen@grafana.com](mailto:arve.knudsen@grafana.com)
@@ -13,7 +13,7 @@
   * [Special treatment of info metrics in Prometheus](https://docs.google.com/document/d/1ebhGNLs3uhdeprJCullM-ywA9iMRDg_mmnuFAQCloqY/edit#heading=h.2rmzk7oo6tu8)
   * [Scenarios scratch pad](https://docs.google.com/document/d/1nV6N3pDfvZhmG2658huNbFSkz2rsM6SpkHabp9VVpw0/edit#heading=h.luf3yapzr29e)
 
-> This proposal collects the requirements and implementation proposals for adding a 1st class feature to PromQL for handling info type metrics.
+> This proposal collects the requirements and implementation proposals for simplifying joins with info type metrics in PromQL.
 
 ## Why
 
