@@ -31,7 +31,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 * Support native histograms in the text format
 * (Secondary) Encode/decode efficiency
 * (Secondary) Ease of implementation for client libraries
-* (Secondary) Human readibility of the format
+* (Secondary) Human readability of the format
 
 Note that the goals of efficiency and human readability are commonly at odds with each other.
 
@@ -46,7 +46,7 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 
 ## How
 
-Extend the OpenMetrics text format to allow structured values instead of only float values. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/prometheus/client_model/blob/master/io/prometheus/client/metrics.proto). Starting with examples and then breaking up the format:
+Extend the OpenMetrics text format to allow structured values instead of only float values for specific series of a histogram type. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/prometheus/client_model/blob/master/io/prometheus/client/metrics.proto). Starting with examples and then breaking up the format:
 ```
 # TYPE nativehistogram histogram
 nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
@@ -61,18 +61,21 @@ hist_with_classic_buckets_bucket{le="+Inf"} 24
 hist_with_classic_buckets_count 24
 hist_with_classic_buckets_sum 100
 ```
-The metric will have no "magic" suffixes, then the value for each series is a custom struct format with the following fields:
+
+Native histograms will share the "histogram" type with classic histograms. Classic and native histograms can be differentiated by looking at the "magic" suffixes for classic histogram series (`_bucket`, `_count`, `_sum`), and no suffix for native histogram series. This allows producers to expose native histograms and classic histograms together if desired, such as desiring custom bucket boundaries. An optional `_created` series can be created if desired just like a classic histogram as well.
+
+The value for each series of a native histogram is a custom struct format with the following fields inside curly braces:
 * `sum: float64` - The sum of all observations for this histogram. Could be negative in cases with negative observations.
 * `count: uint64` - The number of samples that were observed for this histogram.
 * `schema: int32` - The schema used for this histogram, currently supported values are -4 -> 8.
 * `zero_threshold: float64` - The width of the zero bucket.
 * `zero_count: uint64` - The number of observations inside the zero bucket.
 * `negative_spans: []BucketSpan` - The buckets corresponding to negative observations, optional.
-* `negative_deltas: []int64` - The delta of counts compared to the previous bucket. 
+* `negative_deltas: []int64` - The delta of counts compared to the previous bucket, optional.
 * `positive_spans: []BucketSpan` - The buckets corresponding to negative observations, optional.
-* `positive_deltas: []int64` - The delta of counts compared to the previous bucket. 
+* `positive_deltas: []int64` - The delta of counts compared to the previous bucket, optional.
 
-A bucket span is the combination of an `int32` offset and a `uint32` length. It is encoded as `<offset>:<length>`. Lists/arrays are encoded within square brackets with elements separated by commas. Compared to JSON this avoids consistently repeating keys and curly braces.
+A bucket span is the combination of an `int32` offset and a `uint32` length. It is encoded as `<offset>:<length>`. Lists/arrays are encoded within square brackets with elements separated by commas. Compared to JSON this avoids consistently repeating keys and curly braces. White space is not allowed inside of the structure to make a value as easy as possible to parse.
 
 Positive infinity, negative infinity, and non number values will be represented as case insensitive versions of `+Inf`, `-Inf`, and `NaN` respectively in any field. This is the same behavior for values in OpenMetrics today.
 
