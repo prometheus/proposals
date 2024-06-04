@@ -49,12 +49,15 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 Extend the OpenMetrics text format to allow structured values instead of only float values for specific series of a histogram type. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/prometheus/client_model/blob/master/io/prometheus/client/metrics.proto). Starting with examples and then breaking up the format:
 ```
 # TYPE nativehistogram histogram
+# HELP nativehistogram Is a basic example of a native histogram.
 nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
 
 # TYPE hist_with_labels histogram
+# HELP hist_with_labels Is an example of a native histogram with labels.
 hist_with_labels{foo="bar",baz="qux"} {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
 
 # TYPE hist_with_classic_buckets histogram
+# HELP hist_with_classic_buckets Is an example of native and classic histograms together.
 hist_with_classic_buckets {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
 hist_with_classic_buckets_bucket{le="0.001"} 4
 hist_with_classic_buckets_bucket{le="+Inf"} 24
@@ -80,6 +83,24 @@ A bucket span is the combination of an `int32` offset and a `uint32` length. It 
 Positive infinity, negative infinity, and non number values will be represented as case insensitive versions of `+Inf`, `-Inf`, and `NaN` respectively in any field. This is the same behavior for values in OpenMetrics today.
 
 Note that in this initial implementation float histograms are not supported. Float histograms are rarely used in exposition, and OpenMetrics does not support classic float histograms either. Support could be added in the future by adding fields for `count_float`, `zero_count_float`, `negative_counts`, and `positive_counts`.
+
+If native histograms and a classic histogram are exposed simultaneously the native histogram must come first for any labelset. For example:
+```
+# TYPE hist_with_classic_buckets histogram
+# HELP hist_with_classic_buckets Is an example of combining native and classic histograms for two labelsets.
+hist_with_classic_buckets{foo="bar"} {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
+hist_with_classic_buckets_bucket{foo="bar",le="0.001"} 4
+hist_with_classic_buckets_bucket{foo="bar",le="+Inf"} 24
+hist_with_classic_buckets_count{foo="bar"} 24
+hist_with_classic_buckets_sum{foo="bar"} 100
+hist_with_classic_buckets_created{foo="bar"} 1717536092
+hist_with_classic_buckets{foo="baz"} {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]}
+hist_with_classic_buckets_bucket{foo="baz",le="0.001"} 4
+hist_with_classic_buckets_bucket{foo="baz",le="+Inf"} 24
+hist_with_classic_buckets_count{foo="baz"} 24
+hist_with_classic_buckets_sum{foo="baz"} 100
+hist_with_classic_buckets_created{foo="baz"} 1717536098
+```
 
 ### Backwards compatibility and semantic versioning
 
