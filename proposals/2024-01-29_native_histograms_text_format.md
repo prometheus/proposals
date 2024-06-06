@@ -42,7 +42,6 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 ## Non-Goals
 
 * Requiring backwards compatability (OpenMetrics 2.0 would be ok), and especially forwards compatability (not required in the OpenMetrics spec).
-* Support for multiple exemplars (this will be done in a future proposal).
 
 ## How
 
@@ -100,6 +99,13 @@ hist_with_classic_buckets_bucket{foo="baz",le="+Inf"} 24
 hist_with_classic_buckets_count{foo="baz"} 24
 hist_with_classic_buckets_sum{foo="baz"} 100
 hist_with_classic_buckets_created{foo="baz"} 1717536098
+```
+
+Finally, multiple exemplars will also be supported in the exposition format by providing a list of exemplars at the end of any line, separated by `#`. Note that having spaces around the hashes is required and matches the [ABNF specification in OpenMetrics](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#abnf). For example:
+```
+# TYPE exemplar_example histogram
+# HELP exemplar_example Is an example of a native histogram with exemplars.
+nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,positive_spans:[0:2,1:2],negative_spans:[0:2,1:2],positive_deltas:[2,1,-2,3],negative_deltas:[2,1,-2,3]} # {trace_id="KOO5S4vxi0o"} 0.67 # {trace_id="oHg5SJYRHA0"} 9.8 1520879607.789
 ```
 
 ### Backwards compatibility and semantic versioning
