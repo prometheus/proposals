@@ -1,9 +1,10 @@
 ## Remote-Write 2.0
 
 * **Owners:**
-  * Alex Greenbank [@alexgreenbank](https://github.com/alexgreenbank/) [alex.greenbank@grafana.com](mailto:alex.greenbank@grafana.com)
-  * Bartłomiej (Bartek) Płotka [@bwplotka](https://github.com/bwplotka) [bwplotka@gmail.com](mailto:bwplotka@gmail.com)
-  * Callum Styan [@cstyan](https://github.com/cstyan) [callumstyan@gmail.com](callumstyan@gmail.com)
+  * Alex Greenbank [@alexgreenbank](https://github.com/alexgreenbank/) ([alex.greenbank@grafana.com](alex.greenbank@grafana.com))
+  * Bartłomiej (Bartek) Płotka [@bwplotka](https://github.com/bwplotka) ([contact](https://www.bwplotka.dev/))
+  * Callum Styan [@cstyan](https://github.com/cstyan) ([callumstyan@gmail.com](callumstyan@gmail.com))
+  * Nicolás Pazos [@npazosmendez](https://github.com/npazosmendez)
 
 * **Implementation Status:** `Partially implemented`
 
@@ -38,7 +39,7 @@ However, PRW 1.0 is not as efficient is it could be in terms of its network band
 
 Some features like [metadata](https://github.com/prometheus/prometheus/blob/remote-write-2.0/prompb/remote.proto#L27), [exemplars](https://github.com/prometheus/prometheus/blob/remote-write-2.0/prompb/types.proto#L128) and [histograms](https://github.com/prometheus/prometheus/blob/remote-write-2.0/prompb/types.proto#L129) are in-officially added to PRW as an experimental feature.
 
-Notably for metadata, it is currently deduplicated per metric `family` (unique `__name__` value) rather than per series. This leads to incorrect metadata being passed on to the receiving server if the metadata was not consistent across different labels for series with the same `__name__` label value. Furthemore, current protocol for metadata is to send it in a separate message leading to stateful protocol trade-offs.
+Notably for metadata, it is currently deduplicated per metric `family` (unique `__name__` value) rather than per series. This leads to incorrect metadata being passed on to the receiving server if the metadata was not consistent across different labels for series with the same `__name__` label value. Furthermore, current protocol for metadata is to send it in a separate message leading to stateful protocol trade-offs.
 
 The other problem is that proto definition is integrated with the Remote Read protocol which is a bit less adopted and follows entirely different semantics and negotiation. We might want to decouple those for different protocol lifecycle between write and read.
 
@@ -69,7 +70,7 @@ This proposal is for all the existing and potential users of the PRW protocol, s
 
 ## How (Decision Trail)
 
-The exact proposed PRW 2.0 specification can be found in https://github.com/prometheus/docs/pull/2462. Please see it there first. Feel free to give feedback around typos, wording choice and definitions there. 
+The exact proposed PRW 2.0 specification can be found in https://github.com/prometheus/docs/pull/2462. Please see it there first. Feel free to give feedback around typos, wording choice and definitions there.
 
 This proposal, however, focuses on rationales and alternatives the team went through when designing PRW 2.0.
 
@@ -322,12 +323,9 @@ The section stating potential alternatives we considered, not mentioned in "How"
 
 1. Deprecate Remote-Write, double down on the OTLP protocol support in Prometheus
 
-(Copying what we shared in spec FAQ itself:)
-> [OpenTelemetry OTLP](https://github.com/open-telemetry/opentelemetry-proto/blob/a05597bff803d3d9405fcdd1e1fb1f42bed4eb7a/docs/specification.md) is a protocol for transporting of telemetry data (such as metrics, logs, traces and profiles) between telemetry sources, intermediate nodes and telemetry backends. The recommended transport involves gRPC with protobuf, but HTTP with protobuf or JSON are also described. It was designed from scratch with the intent to support variety of different observability signals, data types and extra information. For [metrics](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto) that means additional non-identifying labels, flags, temporal aggregations types, resource or scoped metrics, schema URLs and more. OTLP also requires [the semantic convention](https://opentelemetry.io/docs/concepts/semantic-conventions/) to be used.
-> 
-> Remote-Write was designed for simplicity, efficiency and organic growth. First version was officially released in 2023, when already [dozens of battle-tested adopters in the CNCF ecosystem](https://prometheus.io/docs/concepts/remote_write_spec/#compatible-senders-and-receivers) were using it for years. Remote-Write 2.0 iterates on the previous protocol by adding a few new elements (metadata, exemplars, created timestamp and native histograms) and string interning. Remote-Write 2.0 is always stateless, focuses only on metrics and is opinionated -- it is scoped down to elements that by Prometheus community, is all you need to have robust metric solution. We believe Remote-Write 2.0 proposes an export transport, for metrics, that is a magnitude simpler to adopt and use, and often more efficient than competitors.
+Explained in [the spec's FAQ](https://deploy-preview-2462--prometheus-docs.netlify.app/docs/concepts/remote_write_spec_2_0/#faq:~:text=What%20are%20the%20differences%20between%20Remote%2DWrite%202.0%20and%20OpenTelemetry%27s%20OTLP%20protocol%3F).
  
-Generally, there is a lot of frictions to adopt OTLP given complexity, so we want to provide simpler to use and adopt, organically grown and more efficient alternative.
+Generally, we want to make sure there is a simple to use and adopt, organically grown and efficient metric transmission protocol in the open.
 
 1. Use gRPC for 2.0
 
