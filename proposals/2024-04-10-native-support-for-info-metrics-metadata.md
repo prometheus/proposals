@@ -38,8 +38,8 @@ Based on user demand, it would be preferable if Prometheus were to have better U
 There are other problems with Prometheus' current method of including info metric labels in queries, beyond just the technical barrier:
 * Explicit knowledge of each info metric's identifying labels must be embedded in join queries for when you wish to enrich queries with data (non-identifying) labels from info metrics.
   * A certain pair of OTel resource attributes (`service.name` and `service.instance.id`) are currently assumed to be the identifying pair and mapped to `target_info`'s `job` and `instance` labels respectively, but this may become a dynamic property of the OTel model.
-  * Both attributes are in reality optional, so either of them might be empty (`service.name` is only mandatory for OTel SDK clients).
-  * If both identifying attributes are empty, `target_info` isn't generated (there being no identifying labels to join against).
+  * Both attributes are in reality optional, so either of them might be missing (`service.name` is only mandatory for OTel SDK clients).
+  * If both identifying attributes are missing, `target_info` isn't generated (there being no identifying labels to join against).
 * If an info metric's data (non-identifying) labels change (a situation that should become more frequent with OTel in the future, as the model will probably start allowing for non-identifying resource attribute mutations), join queries against the info metric (e.g. `target_info`) will temporarily fail due to resolving the join keys to two different metrics, until the old metric is marked stale (by default after five minutes).
 
 If Prometheus could persist info metrics' identifying labels (e.g. `job` and `instance` for `target_info`), human knowledge of the correct identifying labels may become unnecessary when "joining" with info metrics.
@@ -61,9 +61,11 @@ Neither can you build dedicated UI for OTel resource attributes (or other info m
 
 Goals and use cases for the solution as proposed in [How](#how):
 
-* Persist info metrics with labels categorized as either identifying or non-identifying.
+* Persist info metrics with labels categorized as either identifying or non-identifying (i.e. data labels).
 * Track when info metrics' set of identifying labels changes. This shouldn't be a frequent occurrence, but it should be handled.
-* Automatically treat the old version of an info metric as stale for query result enriching purposes, when its data labels change (producing a new time series, but with same identity).
+  * When enriching a query result's labels with data labels from info metrics, it should be considered per timestamp what are each potentially matching info metric's identifying labels (since the identifying label set may change over time).
+* Automatically treat the old version of an info metric as stale for query result enriching purposes, when its data labels change (producing a new time series, but with same identity from an info metric perspective).
+  * When enriching a query result's labels with data labels from info metrics, and there are several matches with equally named info metrics (e.g. `target_info`) for a timestamp, the one with the newest sample wins (others are considered stale).
 * Add TSDB API for, given a certain time series and a certain timestamp, getting data labels, potentially filtered by certain matchers, from info metrics with identifying labels in common with the time series in question.
   * If no data label matchers are provided, _all_ the data labels of found info metrics are added to the resulting time series.
   * If data label matchers are provided, only info metrics with matching data labels are considered.
@@ -74,11 +76,11 @@ Goals and use cases for the solution as proposed in [How](#how):
   * A data label matcher like `__name__="target_info"` can be used to restrict the info metrics used.
     However, the `__name__` label itself will not be copied.
   * Label collisions: The input instant vector could already contain labels that are also part of the data labels of a matching info metric.
-    Furthermore, since the info function might find multiple differently named info metrics with matching identifying labels, those might have overlapping data labels.
-    In this case, the info function has to check if the values of the affected labels match or are different.
+    Furthermore, since multiple differently named info metrics with matching identifying labels might be found, those might have overlapping data labels.
+    In this case, the implementation has to check if the values of the affected labels match or are different.
     The former case is not really a label collision and therefore causes no problem.
-    In the latter case, however, the function has to return an error.
-    The collision can be resolved by constraining the labels via the optional label-selector argument of the info function.
+    In the latter case, however, an error has to be returned to the user.
+    The collision can be resolved by constraining the labels via data label matchers.
     And of course, the user always has the option to go back to the original join syntax (or, even better, avoiding ingesting conflicting info metrics in the first place).
 * Simplify enriching of query results with info metric data (non-identifying) labels in PromQL, e.g. via a new function, based on aforementioned TSDB API.
 
@@ -92,7 +94,15 @@ Prometheus maintainers.
 
 * Introduce a new info metric sample type, to track the info metric's identifying label set over time (in case it changes).
 * Augment the head and block indexes with indexes of info metrics, for easy finding of info metrics matching time series.
+  * The TSDB head and every block register their respective info metrics in a corresponding index, with the different identifying label sets each info metric has had over its lifetime.
+* Augment the OTLP endpoint to specify `target_info`'s identifying labels when ingesting write requests, and to store it as the native info metric type.
 * Add a method to the TSDB API for matching info metric data labels to a time series, given a certain timestamp and potentially data label matchers - the method will use the aforementioned head and block info metric indexes.
+  * Candidate info metrics are found by searching the info metric index for info metrics with identifying labels contained in the input label set.
+    * Each candidate info metric's identifying label set _for the timestamp in question_, is obtained from the info metric's samples.
+    * If that identifying label set is not a match, the info metric is ignored.
+    * If several info metrics with the same name are found, the one with the latest sample is chosen (i.e., older metrics are considered stale).
+  * Data labels are picked from the found info metrics according to the rules defined in the Goals section.
+    * Each info metric's data labels are determined by taking those of the metric's labels which are not in the identifying label set.
 * Simplify the inclusion of info metric labels in PromQL through a new `info` function: `info(v instant-vector[, ls label-selector])`.
   This function will be UI for the aforementioned TSDB API.
 
@@ -108,10 +118,8 @@ sum by (k8s_cluster_name, http_status_code) (
 ```
 
 TODO:
-* Make it concise and **simple**; put diagrams; be concrete, avoid using “really”, “amazing” and “great” (:
-* How you will test and verify?
-* How you will migrate users, without downtime. How we solve incompatibilities?
-* What open questions are left? (“Known unknowns”)
+
+* Specify detection of info metric identifying labels for other ingestion methods than OTLP.
 
 ## Alternatives
 
