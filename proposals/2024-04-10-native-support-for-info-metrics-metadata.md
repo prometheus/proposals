@@ -120,6 +120,7 @@ sum by (k8s_cluster_name, http_status_code) (
 TODO:
 
 * Specify detection of info metric identifying labels for other ingestion methods than OTLP.
+* Define how this functionality would work together with OOO samples.
 
 ## Alternatives
 
