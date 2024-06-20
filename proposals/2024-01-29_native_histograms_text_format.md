@@ -42,6 +42,8 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 ## Non-Goals
 
 * Requiring backwards compatability (OpenMetrics 2.0 would be ok), and especially forwards compatability (not required in the OpenMetrics spec).
+* Support for custom buckets as part of the native histogram structure. If needed by a consumer, custom buckets will need to be parsed from classic buckets.
+* Changing created timestamp semantics. Created timestamps will continue to be exposed as an additional series as with OpenMetrics 1.0.
 
 ## How
 
