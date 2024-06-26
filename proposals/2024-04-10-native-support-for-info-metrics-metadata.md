@@ -88,8 +88,6 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 Prometheus maintainers.
 
-## Non-Goals
-
 ## How
 
 * Introduce a new info metric sample type, to track the info metric's identifying label set over time (in case it changes).
