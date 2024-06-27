@@ -83,6 +83,8 @@ Goals and use cases for the solution as proposed in [How](#how):
     The collision can be resolved by constraining the labels via data label matchers.
     And of course, the user always has the option to go back to the original join syntax (or, even better, avoiding ingesting conflicting info metrics in the first place).
 * Simplify enriching of query results with info metric data (non-identifying) labels in PromQL, e.g. via a new function, based on aforementioned TSDB API.
+* Ensure backwards compatibility with current Prometheus usage.
+* Minimize potential conflicts with existing metric labels.
 
 ### Audience
 
