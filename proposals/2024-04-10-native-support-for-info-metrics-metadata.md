@@ -17,6 +17,11 @@
 
 ## Why
 
+Info metrics are [defined by the OpenMetrics specification](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#info) as "used to expose textual information which SHOULD NOT change during process lifetime".
+Furthermore the OpenMetrics specification states that info metrics ["MUST have the suffix `_info`"](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#info-1).
+Despite the latter OpenMetrics requirement, there are metrics with the info metric usage pattern that don't have the `_info` suffix, e.g. `kube_pod_labels`.
+In this proposal, we shall include the latter in the definition of info metrics.
+
 Currently, enriching Prometheus query results with corresponding labels from info metrics is challenging.
 More specifically, it requires writing advanced PromQL to join with the info metric in question.
 Take as an example querying HTTP request rates per K8s cluster and status code, while having to join with the `target_info` metric to obtain the `k8s_cluster_name` label:
