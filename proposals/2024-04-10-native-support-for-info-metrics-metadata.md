@@ -50,6 +50,7 @@ There are other problems with Prometheus' current method of including info metri
 If Prometheus could persist info metrics' identifying labels (e.g. `job` and `instance` for `target_info`), human knowledge of the correct identifying labels may become unnecessary when "joining" with info metrics.
 Information about info metric identifying labels is present in at least the OpenMetrics protobuf exposition format (the OpenMetrics text exposition format unfortunately lacks this capability).
 It can also easily be deduced when ingesting metrics from OTLP (OTel Protocol).
+Most info metrics' identifying labels will be `job` and `instance`, but there are some exceptions (e.g. `kube_pod_labels`).
 Intrinsic knowledge of info metrics' identifying labels could also help in solving temporary conflicts between old and new versions of info metrics, when data (non-identifying) labels change.
 Another possible positive outcome might be dedicated support in UIs (e.g. Grafana) for visualizing the resource attributes of OTel metrics.
 
