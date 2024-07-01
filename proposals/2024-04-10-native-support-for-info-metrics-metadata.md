@@ -130,9 +130,20 @@ TODO:
 
 ## Alternatives
 
-The section stating potential alternatives. Highlight the objections reader should have towards your proposal as they read it. Tell them why you still think you should take this path [[ref](https://twitter.com/whereistanya/status/1353853753439490049)]
+### Add metadata as prefixed labels
 
-1. This is why not solution Z...
+Instead of encoding metadata, e.g. OTel resource attributes, as info metric labels, add them directly as labels to corresponding metrics.
+
+#### Pros
+
+* Simplicity, removes need for joining with info metrics
+
+#### Cons
+
+* Metrics will have potentially far more labels than what's strictly necessary to identify them
+* Temporary series churn when migrating existing metrics to this new scheme
+* Increased series churn when metadata labels change
+* More labels per metric increases CPU/memory usage
 
 ## Action Plan
 
