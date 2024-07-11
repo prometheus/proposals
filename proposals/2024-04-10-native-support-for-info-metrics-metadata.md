@@ -98,17 +98,18 @@ Prometheus maintainers.
 
 ## How
 
-* Introduce a new info metric sample type, to track the info metric's identifying label set over time (in case it changes).
-* Augment the head and block indexes with indexes of info metrics, for easy finding of info metrics matching time series.
-  * The TSDB head and every block register their respective info metrics in a corresponding index, with the different identifying label sets each info metric has had over its lifetime.
-* Augment the OTLP endpoint to specify `target_info`'s identifying labels when ingesting write requests, and to store it as the native info metric type.
-* Add a method to the TSDB API for matching info metric data labels to a time series, given a certain timestamp and potentially data label matchers - the method will use the aforementioned head and block info metric indexes.
-  * Candidate info metrics are found by searching the info metric index for info metrics with identifying labels contained in the input label set.
-    * Each candidate info metric's identifying label set _for the timestamp in question_, is obtained from the info metric's samples.
+* Track the info metric's identifying label set over time (in case it changes) - storage model details to be elaborated in separate proposal.
+* Keep info metric indexes in storage - storage model details to be elaborated in separate proposal.
+  * Info metric indexes maintaining per info metric the different identifying label sets it has had over its lifetime.
+  * Indexing the different identifying label sets an info metric has had over its lifetime allows determining which are potential matches for a given metric, before considering the time dimension.
+* Add a method to the TSDB API for matching info metric data labels to a time series, given a certain timestamp and potentially data label matchers - the method will use the aforementioned info metric indexes.
+  * Candidate info metrics are found by searching info metric indexes for info metrics with identifying labels contained in the input label set.
+    * Each candidate info metric's identifying label set is obtained _for the timestamp in question_ - storage model details to be elaborated in separate proposal.
     * If that identifying label set is not a match, the info metric is ignored.
     * If several info metrics with the same name are found, the one with the latest sample is chosen (i.e., older metrics are considered stale).
   * Data labels are picked from the found info metrics according to the rules defined in the Goals section.
     * Each info metric's data labels are determined by taking those of the metric's labels which are not in the identifying label set.
+* Augment the OTLP endpoint to specify `target_info`'s identifying labels when ingesting write requests.
 * Simplify the inclusion of info metric labels in PromQL through a new `info` function: `info(v instant-vector[, ls label-selector])`.
   This function will be UI for the aforementioned TSDB API.
 
