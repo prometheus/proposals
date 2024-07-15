@@ -16,7 +16,7 @@
 
 Currently, Prometheus encodes OpenTelemetry (OTel for short) [resource attributes](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/resource/sdk.md) as labels of the `target_info` metric.
 OTel resource attributes model metadata about the environment producing metrics received by the backend (e.g. Prometheus).
-Typically, OTel users want to include some of these attributes (as `target_info` labels) in their Prometheus query results, to correlate them with entities of theirs (e.g. K8s pods).
+Typically, OTel users want to include some of these attributes (as `target_info` labels) in their Prometheus query results, to correlate them with entities of theirs (e.g. K8s pods). This is similar to copying target labels from Service Discovery attributes. For example, users commonly copy `namespace`, `deployment`, etc. labels to make it easier to query the metrics. They should be able to copy over similar attributes when ingesting OTLP, i.e, `k8s.namespace.name`, `k8s.deployment.name`, etc.
 
 Based on user demand, it would be preferable if Prometheus were to have better UX for including OTel resource attributes in query results.
 The current solution is to join with `target_info in queries, to pick also the labels one is interested in (corresponding to OTel resource attributes).
