@@ -146,6 +146,18 @@ Instead of encoding metadata, e.g. OTel resource attributes, as info metric labe
 * Increased series churn when metadata labels change
 * More labels per metric increases CPU/memory usage
 
+### Make the `info` function require specifying the info metric(s)
+
+Instead of letting `info` by default join with all matching info metrics, have it require specifying the info metric name(s).
+
+#### Pros
+
+* The user won't be confused about data labels being included from info metrics they didn't expect
+
+#### Cons
+
+* The UX becomes more complex, as the user is required to specify which info metric(s) to join with
+
 ## Action Plan
 
 The tasks to do in order to migrate to the new idea.
