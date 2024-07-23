@@ -150,5 +150,5 @@ Instead of encoding metadata, e.g. OTel resource attributes, as info metric labe
 
 The tasks to do in order to migrate to the new idea.
 
-* [ ] Task one <GH issue>
-* [ ] Task two <GH issue> ...
+* [ ] [Add experimental PromQL `info` function MVP](https://github.com/prometheus/prometheus/pull/14495)
+* [ ] Extend `info` function MVP with the ability to support `info` metrics in general, with persistence of info metrics metadata
