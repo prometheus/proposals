@@ -72,23 +72,7 @@ Goals and use cases for the solution as proposed in [How](#how):
   * When enriching a query result's labels with data labels from info metrics, it should be considered per timestamp what are each potentially matching info metric's identifying labels (since the identifying label set may change over time).
 * Automatically treat the old version of an info metric as stale for query result enriching purposes, when its data labels change (producing a new time series, but with same identity from an info metric perspective).
   * When enriching a query result's labels with data labels from info metrics, and there are several matches with equally named info metrics (e.g. `target_info`) for a timestamp, the one with the newest sample wins (others are considered stale).
-* Add TSDB API for, given a certain time series and a certain timestamp, getting data labels, potentially filtered by certain matchers, from info metrics with identifying labels in common with the time series in question.
-  * If no data label matchers are provided, _all_ the data labels of found info metrics are added to the resulting time series.
-  * If data label matchers are provided, only info metrics with matching data labels are considered.
-  * If data label matchers are provided, _precisely_ the data labels specified by the label matchers are added to the returned time series.
-  * If data label matchers are provided, time series are only included in the result if matching data labels from info metrics were found.
-  * A data label matcher like `k8s_cluster_name=~".+"` guarantees that each returned time series has a non-empty `k8s_cluster_name` label, implying that time series for which no matching info metrics have a data label named `k8s_cluster_name` (including the case where no matching info metric exists at all) will be excluded from the result.
-  * A special case: If a data label matcher allows empty labels (equivalent to missing labels, e.g. `k8s_cluster_name=~".*"`), it will not exclude time series from the result even if there's no matching info metric.
-  * A data label matcher like `__name__="target_info"` can be used to restrict the info metrics used.
-    However, the `__name__` label itself will not be copied.
-  * Label collisions: The input instant vector could already contain labels that are also part of the data labels of a matching info metric.
-    Furthermore, since multiple differently named info metrics with matching identifying labels might be found, those might have overlapping data labels.
-    In this case, the implementation has to check if the values of the affected labels match or are different.
-    The former case is not really a label collision and therefore causes no problem.
-    In the latter case, however, an error has to be returned to the user.
-    The collision can be resolved by constraining the labels via data label matchers.
-    And of course, the user always has the option to go back to the original join syntax (or, even better, avoiding ingesting conflicting info metrics in the first place).
-* Simplify enriching of query results with info metric data (non-identifying) labels in PromQL, e.g. via a new function, based on aforementioned TSDB API.
+* Simplify enriching of query results with info metric data (non-identifying) labels in PromQL, e.g. via a new function.
 * Ensure backwards compatibility with current Prometheus usage.
 * Minimize potential conflicts with existing metric labels.
 
@@ -98,20 +82,28 @@ Prometheus maintainers.
 
 ## How
 
-* Track the info metric's identifying label set over time (in case it changes) - storage model details to be elaborated in separate proposal.
+* Simplify the inclusion of info metric labels in PromQL through a new `info` function: `info(v instant-vector[, ls data-label-selector])`.
+  * If no data label matchers are provided, _all_ the data labels of found info metrics are added to the resulting time series.
+  * If data label matchers are provided, only info metrics with matching data labels are considered.
+  * If data label matchers are provided, _precisely_ the data labels specified by the label matchers are added to the returned time series.
+  * If data label matchers are provided, time series are only included in the result if matching data labels from info metrics were found.
+  * A data label matcher like `k8s_cluster_name=~".+"` guarantees that each returned time series has a non-empty `k8s_cluster_name` label, implying that time series for which no matching info metrics have a data label named `k8s_cluster_name` (including the case where no matching info metric exists at all) will be excluded from the result.
+  * A special case: If a data label matcher allows empty labels (equivalent to missing labels, e.g. `k8s_cluster_name=~".*"`), it will not exclude time series from the result even if there's no matching info metric.
+  * A data label matcher like `__name__="target_info"` can be used to restrict the info metrics used.
+    However, the `__name__` label itself will not be copied.
+  * In the case of multiple versions of the same info metric being found (with the same identifying labels), the one with the newest sample wins.
+  * Label collisions: The input instant vector could already contain labels that are also part of the data labels of a matching info metric.
+    Furthermore, since multiple differently named info metrics with matching identifying labels might be found, those might have overlapping data labels.
+    In this case, the implementation has to check if the values of the affected labels match or are different.
+    The former case is not really a label collision and therefore causes no problem.
+    In the latter case, however, an error has to be returned to the user.
+    The collision can be resolved by constraining the labels via data label matchers.
+    And of course, the user always has the option to go back to the original join syntax (or, even better, avoiding ingesting conflicting info metrics in the first place).
+* Track each info metric's identifying label set over time (in case it changes) - storage model details to be elaborated in separate proposal.
+  * This allows determining on a per-timestamp basis, which are an identifying metric's identifying labels.
 * Keep info metric indexes in storage - storage model details to be elaborated in separate proposal.
   * Info metric indexes maintaining per info metric the different identifying label sets it has had over its lifetime.
   * Indexing the different identifying label sets an info metric has had over its lifetime allows determining which are potential matches for a given metric, before considering the time dimension.
-* Add a method to the TSDB API for matching info metric data labels to a time series, given a certain timestamp and potentially data label matchers - the method will use the aforementioned info metric indexes.
-  * Candidate info metrics are found by searching info metric indexes for info metrics with identifying labels contained in the input label set.
-    * Each candidate info metric's identifying label set is obtained _for the timestamp in question_ - storage model details to be elaborated in separate proposal.
-    * If that identifying label set is not a match, the info metric is ignored.
-    * If several info metrics with the same name are found, the one with the latest sample is chosen (i.e., older metrics are considered stale).
-  * Data labels are picked from the found info metrics according to the rules defined in the Goals section.
-    * Each info metric's data labels are determined by taking those of the metric's labels which are not in the identifying label set.
-* Augment the OTLP endpoint to specify `target_info`'s identifying labels when ingesting write requests.
-* Simplify the inclusion of info metric labels in PromQL through a new `info` function: `info(v instant-vector[, ls label-selector])`.
-  This function will be UI for the aforementioned TSDB API.
 
 Using the `info` function, we can simplify the previously given PromQL join example as follows:
 
