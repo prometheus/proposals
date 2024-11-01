@@ -66,7 +66,7 @@ When a query for a metric returns multiple metrics with a different `__type__` o
 
 ### Prometheus UI Changes
 
-When displaying a metric's labels in the table or in the graph views, the UI will hide the `__type__` and `__unit__` labels, similar to the current handling of `__name__`. If present, the `__unit__` label will be displayed to the right of the value of the metric: e.g. "1.25 seconds". The type will not be displayed.
+When displaying a metric's labels in the table or in the graph views, the UI will hide labels starting with `__` (double underscore) by default, similar to the current handling of `__name__`. A "Show System Labels" check-box will be added, which shows hidden labels when checked.
 
 ### Prometheus Server Ingestion
 
@@ -132,6 +132,7 @@ One obvious extension of this proposal would be for Prometheus clients to start 
 
 * Allow mixing metrics with the same name, but different types and units in the same endpoint (an explicit non-goal of this proposal).
 * Allow sending unit metadata in the text exposition format, which doesn't support `# UNIT` metadata.
+    * Counter-point: It would be easier to add `# UNIT` metadata to the text exposition format.
 
 This is excluded from this proposal because:
 
@@ -145,8 +146,8 @@ OpenTelemetry has lots of other metadata that may be a good fit for this "metada
 
 If the pattern of adding `__type__` and `__unit__` works well for this metadata, we could consider making the pattern more generic:
 
-* UIs should hide labels starting with `__` by default, with an option to show them.
-* Introduce a mechanism to allow OTel libraries to provide additional metadata labels. However, this has the potential to introduce collisions, since `__` has been reserved thus far.  Maybe a specific allowlist could work.
+* UIs should hide _all_ labels starting with `__` by default, not just `__name__`, `__type__`, and `__unit__`.
+* Introduce a mechanism to allow OTel libraries to provide additional metadata labels. However, this has the potential to introduce collisions, since `__` has been reserved thus far. Maybe a specific allowlist (e.g. `__otel`-prefixed labels) could work.
 
 ## Action Plan
 
