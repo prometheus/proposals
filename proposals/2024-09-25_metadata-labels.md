@@ -30,7 +30,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 * [Required] OpenTelemetry users can query for the original names of their metrics.
 * [Required] Users can filter by the metric type or unit in PromQL queries.
-* [Required] PromQL returns a warning when querying across metrics with different units or types.
+* [Required] PromQL returns a warning when querying across metrics with different units or types, or when using "inappropriate" operations for a metric type.
 * [Nice to have] OpenTelemetry users can grep for the original names in the text exposition.
 
 ### Audience
