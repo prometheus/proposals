@@ -62,7 +62,7 @@ Users see no difference to exposition formats.
 
 ### PromQL Changes
 
-When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, a warning annotation will be returned with the PromQL response.
+When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, an info annotation will be returned with the PromQL response, which is otherwise unmodified.
 
 ### Prometheus UI Changes
 
