@@ -131,8 +131,6 @@ This solution is not chosen because:
 One obvious extension of this proposal would be for Prometheus clients to start sending `__type__` and `__unit__` labels with the exposition format. This would:
 
 * Allow mixing metrics with the same name, but different types and units in the same endpoint (an explicit non-goal of this proposal).
-* Allow sending unit metadata in the text exposition format, which doesn't support `# UNIT` metadata.
-    * Counter-point: It would be easier to add `# UNIT` metadata to the text exposition format.
 
 This is excluded from this proposal because:
 
