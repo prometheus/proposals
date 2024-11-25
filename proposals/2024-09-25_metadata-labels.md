@@ -18,7 +18,7 @@ This document proposes adding the metric type and unit as labels on metrics.
 
 ## Why
 
-Per [dev-summit consensus](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit#bookmark=id.q6upqm7itl24), we would like to avoid adding type and unit suffixes to metric names when translating from OpenTelemetry to Prometheus. These suffixes are currently required by the [compatibility specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/compatibility/prometheus_and_openmetrics.md). However, OpenTelemetry currently considers the metric type and unit identifying, whereas Prometheus does not. Simply removing suffixes might result in "collisions" between distinct OpenTelemetry metrics which have the same name, but different types (less commonly) or units.
+Per [dev-summit consensus](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit#bookmark=id.q6upqm7itl24), we would like to avoid adding type and unit suffixes to metric names when translating from OpenTelemetry to Prometheus. These suffixes are currently required by the [compatibility specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/compatibility/prometheus_and_openmetrics.md). However, OpenTelemetry currently considers the metric type and unit identifying, whereas Prometheus does not. Simply removing suffixes might result in "collisions" between distinct OpenTelemetry metrics which have the same name, but different types (less commonly) or units. Additionally, it is possible in Prometheus to metrics with the same name, but different value types (float64 vs native histogram).
 
 ### Pitfalls of the current solution
 
@@ -123,6 +123,14 @@ This solution is not chosen because:
 * It deviates from the current handling of the `__name__` label.
 * We expect metadata, like type and unit to be useful to display in the UI, and want to enable these use-cases.
 * It should be a small amount of effort to hide these labels.
+
+### Omit __unit__ label from counting series for summaries and histograms
+
+The unit of a `_count` or `_bucket` series of a histogram is always `1`, since these are counts.  Applying a `__unit__` label of `seconds`, for example, is confusing because the series themselves measure a counts of observations. Alternatively, we could only apply `__unit__` labels to the `_sum` series of histograms and summaries, and the quantile series of summaries.
+
+However, this would re-introduce part of the problem we are trying to solve. Histogram buckets' `le` label's value is in the units of the metric. If the unit is not included in the labels of the histogram bucket series, series with `le=1000` in seconds, for example, would collide with series with `le=1000` in milliseconds. We could include the unit in the `le` label (e.g. `le=1000s`), but that would be much more disruptive to users without much additional benefit.
+
+The `_count` series of histograms and summaries could omit the `__unit__` label without this consequence, since the count does not have any relation to the unit. This proposal includes the `__unit__` label for consistency so that users can always query for metrics that have a specific unit.
 
 ## Potential Future Extensions
 
