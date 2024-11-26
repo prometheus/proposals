@@ -54,7 +54,7 @@ For example:
 
 When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, users see a warning in the UI.
 
-Users don't see the `__type__` or `__unit__` labels in the Prometheus UI next to other labels, but the unit displayed next to the value.
+Users don't see the `__type__` or `__unit__` labels in the Prometheus UI next to other labels by default.
 
 Users see no difference to exposition formats.
 
@@ -113,6 +113,15 @@ This solution is not chosen because:
   * Mitigation: users just stay with {foo_seconds.seconds/histogram}
 * Users might be surprised by, or dislike the additional suffixes and delimiters in the metric name results
   * Mitigation: Opt-in for query engines?
+
+### Type and Unit in complex value types
+
+Unlike other metric types, native histograms are a complex type and contain many fields in a single value. The metric type and unit could be added as fields of a complex value type in a similar way.
+
+This solution is not chosen because:
+
+* Requires intrusive changes to all formats (text, proto, etc.).
+* Requires new PromQL syntax for querying the type and unit.
 
 ### "Hide" __type__ and __unit__ labels in PromQL, instead of UI
 
