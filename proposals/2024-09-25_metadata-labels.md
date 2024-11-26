@@ -64,6 +64,8 @@ Users see no difference to exposition formats.
 
 When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, an info annotation will be returned with the PromQL response, which is otherwise unmodified.
 
+Aggregations and label matches ignore `__unit__` and `__type__` and any operation would remove the `__unit__` and `__type__` label (with the exception of label_replace).
+
 ### Prometheus UI Changes
 
 When displaying a metric's labels in the table or in the graph views, the UI will hide labels starting with `__` (double underscore) by default, similar to the current handling of `__name__`. A "Show System Labels" check-box will be added, which shows hidden labels when checked.
