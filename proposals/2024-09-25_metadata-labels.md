@@ -78,15 +78,15 @@ PRW 1.0 is omitted because metadata is sent separately from timeseries, making i
 
 #### Milestone 1: Feature flag for adding labels
 
-Add a feature flag: `--enable-feature=metadata-labels`. When enabled `__type__` and `__unit__` labels are added when receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats.
+Add a feature flag: `--enable-feature=identifying-type-and-unit`. When enabled `__type__` and `__unit__` labels are added when receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats.
 
 #### Milestone 2: UI and PromQL changes
 
-During this stage, implement the UI and PromQL changes above. Iterate based on feedback. Changes should have no effect unless the metadata-labels feature flag is enabled.
+During this stage, implement the UI and PromQL changes above. Iterate based on feedback. Changes should have no effect unless the identifying-type-and-unit feature flag is enabled.
 
 #### Milestone 3: Add NoNameChanges option for OTLP translation
 
-Add an option, `NoNameChanges` for the OTLP translation strategy. When enabled, it disables UTF-8 sanitization and the addition of suffixes. In the documentation for this option, recommend that `--enable-feature=metadata-labels` is enabled.
+Add an option, `NoNameChanges` for the OTLP translation strategy. When enabled, it disables UTF-8 sanitization and the addition of suffixes. In the documentation for this option, recommend that `--enable-feature=identifying-type-and-unit` is enabled.
 
 ## Alternatives
 
