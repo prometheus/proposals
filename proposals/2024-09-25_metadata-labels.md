@@ -64,7 +64,7 @@ Users see no difference to exposition formats.
 
 When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, an info annotation will be returned with the PromQL response, which is otherwise unmodified.
 
-Aggregations and label matches ignore `__unit__` and `__type__` and any operation would remove the `__unit__` and `__type__` label (with the exception of label_replace).
+Aggregations and label matches ignore `__unit__` and `__type__` and any operation removes the `__unit__` and `__type__` label (with the exception of `label_replace`).
 
 ### Prometheus UI Changes
 
@@ -146,6 +146,10 @@ However, this would re-introduce part of the problem we are trying to solve. His
 The `_count` series of histograms and summaries could omit the `__unit__` label without this consequence, since the count does not have any relation to the unit. This proposal includes the `__unit__` label for consistency so that users can always query for metrics that have a specific unit.
 
 ## Potential Future Extensions
+
+### Handle __type__ and __unit__ in PromQL operations
+
+Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all PromQL operations remove the `__unit__` and `__type__` label (with the exception of `label_replace`). Over time, we can update each function to keep these labels by implementing the appropriate logic.  For example, adding two gauges together should yeild a gauge.
 
 ### __type__ and __unit__ from client libraries
 
