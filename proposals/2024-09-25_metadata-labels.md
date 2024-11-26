@@ -74,11 +74,13 @@ When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats,
 
 PRW 1.0 is omitted because metadata is sent separately from timeseries, making it infeasible to add the labels at ingestion time.
 
+Users can modify the type and unit of a metric at ingestion time by using `metric_relabel_configs`, and relabeling the `__type__` and `__unit__` labels.
+
 ### Implementation Plan
 
 #### Milestone 1: Feature flag for adding labels
 
-Add a feature flag: `--enable-feature=identifying-type-and-unit`. When enabled `__type__` and `__unit__` labels are added when receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats.
+Add a feature flag: `--enable-feature=identifying-type-and-unit`. When enabled, `__type__` and `__unit__` labels are added when receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats. Implement any changes required to allow relabeling `__type__` and `__unit__` in `metric_relabel_configs`.
 
 #### Milestone 2: UI and PromQL changes
 
