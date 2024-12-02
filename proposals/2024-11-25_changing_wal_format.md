@@ -90,7 +90,7 @@ We recommend the [Two-Fold Migration Strategy](#two-fold-migration-strategy) wit
 
 We propose to add a string `--storage.tsdb.stateful.write-wal-version` flag, with the default to `v1` that has a "stateful" consequence -- once new version is used, users will be able to revert only to certain Prometheus versions. Help of this flag will explain clearly what's possible and what Prometheus version you will be able to revert to.
  
-In other words, we propose to add a TSDB flag `--storage.tsdb.stateful.write-wal-version=(v1 or v2)` that tells Prometheus to use a particular WAL format for both WAL and WBL. This kind of flag will change its default to a new version ONLY when (at least) one previous Prometheus version can read that version (while writing the old one).
+In other words, we propose to add a TSDB flag `--storage.tsdb.stateful.write-wal-version=<version>` that tells Prometheus to use a particular WAL format for both WAL and WBL. This kind of flag will change its default to a new version ONLY when (at least) one previous Prometheus version can read that version (while writing the old one). The initial version would be `v1`.
 
 There are two reasons for this flag:
 
