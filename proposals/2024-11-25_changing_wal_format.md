@@ -111,8 +111,7 @@ To achieve WAL versioning we also propose to start versioning the WAL, as [a who
 
 We propose the addition of a `meta.json` file in the wal directory, similar to [block meta.json](https://github.com/prometheus/prometheus/blob/5e124cf4f2b9467e4ae1c679840005e727efd599/tsdb/block.go#L171), with Version field set to `1` for the current format and `2` for new changes e.g. when we start to write [new records](https://github.com/prometheus/prometheus/pull/15467/files). No `meta.json` is equivalent to `{"version":1} `meta.json` file.
 
-We propose to also store the new WALs in separate directories e.g. `wal.v2`. Thanks to that the rewrite from one version to another is eventual and can be done segment by segment.
-The additional advantage of this way of versioning is that it's clear when your WAL fully migrated to a certain version.
+We propose to also store the new WALs in separate directories e.g. `wal.v2`. Thanks to that the rewrite from one version to another is **eventual** and can be done segment by segment without any forcible rewrite. The WAL will be rewritten within the next 2h of a normal operation. The additional advantage of this way of versioning is that it's clear when your WAL fully migrated to a certain version.
 
 Finally, we propose that all Prometheus releases will contain the following table:
 
@@ -138,18 +137,17 @@ Given the following example:
 
 While this example shows only one version where of forward compatibility (when Y and Y+1 are supported, but Y is still written), in practice there could be more "forward compatible releases" within this strategy.
 
+Technically we have to keep old format read (and write) support until the next major release.
 Pros:
 * Users have a durable rollout path back and forth.
 * Dev has clarity on how to develop "breaking revert" changes.
 * In theory, it allows revert to X from X+2, by going through X+1 and ensuring all data was migrated (eventually) to Y version. In practice however that eventuality is long, or hard to discover.
 
 Cons:
-* It can catch users by surprise
+* It can catch users by surprise.
   * **Mitigation**: We also plan guide and documentation.
 * It takes time to rollout new changes if you want them fast.
-  * **Mitigation**: We plan to add a flag to opt-in sooner
-* It is a breaking change which shouldn't be made in a major release.
-* **Mitigation**: We accept that fact, given precedence and no other way to support both formats in the same time without major performance penalties.
+  * **Mitigation**: We plan to add a flag to opt-in sooner.
 
 ## Alternatives
 
@@ -201,6 +199,9 @@ Cons:
 
 ### Don't version WAL, don't introduce a flag
 
+Pro:
+* One issue with a flag is that we lose "automatic" rollout for some users e.g. what if we will have another v3 WAL version, but users sets an explicit `--storage.tsdb.stateful.write-wal-version=v3` option? For those users they will need to make a manual choice and there might be not aware of benefits of a new WAL or do any work to test new WAL for their setup. With raw two-fold strategy format is forced, but also transparent (if without issues).
+
 Cons:
 * Takes more time for features to be available to users
 * Demotivating for format changes (long feedback loop)
@@ -243,6 +244,8 @@ Pros:
 Cons:
 * No clear logic for defaulting here
 * No clear ability to force Prometheus to write to wal v1 here unless we add a "feature flag value" for v1, which is odd.
+
+
 
 ## Action Plan
 
