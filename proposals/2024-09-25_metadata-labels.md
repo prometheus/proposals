@@ -47,12 +47,12 @@ This document is for Prometheus server maintainers, PromQL maintainers, and anyo
 
 When querying for a metric, users can filter for a type or unit by specifying a filter on the `__unit__` or `__type__` labels, which use the reserved `__` prefix to ensure they do not collide with user-provided labels.
 
-For example:
+For example, querying the query API for:
 
 * `my_metric{}` returns all series with any type or unit, including `__type__` and `__unit__` labels.
 * `my_metric{__unit__="seconds", __type__="counter"}` returns only series with the specified type and unit.
 
-When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, users see a warning in the UI.
+When a query for a metric returns multiple metrics with a different `__type__` or `__unit__` label, but the same `__name__`, the query returns an info annotation, which is surfaced to the user in the UI.
 
 Users don't see the `__type__` or `__unit__` labels in the Prometheus UI next to other labels by default.
 
@@ -150,6 +150,10 @@ The `_count` series of histograms and summaries could omit the `__unit__` label 
 ### Handle __type__ and __unit__ in PromQL operations
 
 Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all PromQL operations remove the `__unit__` and `__type__` label (with the exception of `label_replace`). Over time, we can update each function to keep these labels by implementing the appropriate logic.  For example, adding two gauges together should yeild a gauge.
+
+### Support PromQL operations on timeseries with the same base unit, but different scale
+
+A PromQL query which sums a metric in "seconds" and a metric in "milliseconds" 
 
 ### __type__ and __unit__ from client libraries
 
