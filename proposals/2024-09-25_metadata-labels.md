@@ -56,7 +56,7 @@ When a query for a metric returns multiple metrics with a different `__type__` o
 
 Users don't see the `__type__` or `__unit__` labels in the Prometheus UI next to other labels by default.
 
-Users see no difference to exposition formats.
+Users see no change to exposition formats as a result of this proposal.
 
 ## How
 
