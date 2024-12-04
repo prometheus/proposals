@@ -86,7 +86,7 @@ No docs or formal strategy was developed, but Prometheus generally follow the ["
 We recommend the [Two-Fold Migration Strategy](#two-fold-migration-strategy) with two details:
 
 * A new flag that tells Prometheus what WAL version to write.
-* There can be multiple "forward compatible" version, but the official minimum is one (see, the rejected [LTS idea](#require-lts-support))
+* There can be multiple "forward compatible" version, but the official minimum is one (see, the [LTS idea](#require-lts-support))
 
 We propose to add a string `--storage.tsdb.stateful.write-wal-version` flag, with the default to `v1` that has a "stateful" consequence -- once new version is used, users will be able to revert only to certain Prometheus versions. Help of this flag will explain clearly what's possible and what Prometheus version you will be able to revert to.
  
@@ -133,7 +133,7 @@ Given the following example:
 ![twofold.png](../assets/2024-11-25_changing_wal_format/twofold.png)
 
 1. We release Prometheus X+1 version that supports both Y and Y+1 data but still writes Y.
-2. We release Prometheus X+2 version that supports both Y and Y+1 data, but now it writes new data as Y.
+2. We release Prometheus X+2 version that supports both Y and Y+1 data, but now it writes new data as Y+1.
 
 While this example shows only one version where of forward compatibility (when Y and Y+1 are supported, but Y is still written), in practice there could be more "forward compatible releases" within this strategy.
 
@@ -151,7 +151,7 @@ Cons:
 
 ## Alternatives
 
-### Require LTS support
+### Extension: Require LTS support
 
 We could add a variation to the [Two-Fold Migration Strategy](#two-fold-migration-strategy) (let's call it a "LTS migration strategy") where both X+1 and the last LTS (long time support version) before X+1, is able to read Y+1 version. Only then we are allowed to release X+2 that switches the default.
 
@@ -167,11 +167,11 @@ Pros:
 * Gives a bit more stability to users and less surprises.
 
 Cons:
-* Extremely heavy process that will make us afraid/refuse to make improvements to WAL, because it's too much work. It might fails our goal of `Balancing development velocity with user data stability risks`
+* Extremely heavy process that will make us afraid/refuse to make improvements to WAL, because it's too much work. It might fail our goal of `Balancing development velocity with user data stability risks`
   * One mitigation would be an LTS retroactive strategy e.g. LTS 3.1 only supports WALv1, 3.3 adds WALv2, we do 3.1.1 with WALv2 too, 3.4 can now switch to WALv2, 4.0 can remove WALv1 support. It gives us more flexibility, but it's not very realistic to do patch release of LTS with risky feature like a new WAL.
-* We literally have no formal process for LTS versions and we don't do them regularly.
+* We have no formal process for LTS versions, but we do this [typically yearly](https://prometheus.io/docs/introduction/release-cycle/).
 
-### Add a CLI tool that rewrites WAL to a specific version
+### Alternative: Add a CLI tool that rewrites WAL to a specific version
 
 We could add a `promtool` command that rewrites WAL segments to a given version.
 
@@ -186,7 +186,7 @@ Cons:
 * We need to write migration code and ensure it's efficient enough for bigger data
 * A bit painful to use on scale and remotely (e.g. on Kubernetes)
 
-### Rewrite WAL before/during replay
+### Alternative: Rewrite WAL before/during replay
 
 Instead of supporting multiple directories for WAL for various versions, we could rewrite WAL on the start.
 
@@ -197,7 +197,7 @@ Cons:
 * We already suffer from replay problems, so I propose an eventual rewrite.
 * Rewrite is more risking than read-only WAL (of previous version)
 
-### Don't version WAL, don't introduce a flag
+### Alternative: Don't version WAL, don't introduce a flag
 
 Pro:
 * One issue with a flag is that we lose "automatic" rollout for some users e.g. what if we will have another v3 WAL version, but users sets an explicit `--storage.tsdb.stateful.write-wal-version=v3` option? For those users they will need to make a manual choice and there might be not aware of benefits of a new WAL or do any work to test new WAL for their setup. With raw two-fold strategy format is forced, but also transparent (if without issues).
@@ -207,7 +207,7 @@ Cons:
 * Demotivating for format changes (long feedback loop)
 * Harder to communicate what exactly changed in each Prometheus version or even implement backward compatibility?
 
-### Record-based or segment based WAL versioning
+### Alternative: Record-based or segment based WAL versioning
 
 Given we usually change WAL by changing its records, the WAL version could be simply [max number of types](https://github.com/prometheus/prometheus/blob/5e124cf4f2b9467e4ae1c679840005e727efd599/tsdb/record/record.go#L54) we write to WAL.
 Alternatively, it could be per segment e.g. introduce a special version record type that is only in the front of the segment file.
@@ -221,18 +221,17 @@ Cons:
   * changes that merge records 
   * sharding?
 
-### Maintain two WALs (well four, with WBL)
+### Alternative: Maintain two WALs (well four, with WBL)
 
 Duplicating records would be too expensive for already painful latency and CPU/mem usage for e.g. replay.
-
-However, we could write an entirely new WAL with only a disk latency and space penalty.
+However, we could write an entirely new WAL with only a disk latency and space penalty, on top of writing old one, for compatibility.
 
 Cons:
 * Disk space increased
 * Inconsistent with the TSDB format strategy.
 * Complex to implement.
 
-### Use feature flag instead
+### Alternative: Use feature flag instead
 
 Instead of `--storage.tsdb.stateful.write-wal-version` we could add a feature flag like logic.
 
@@ -244,7 +243,6 @@ Pros:
 Cons:
 * No clear logic for defaulting here
 * No clear ability to force Prometheus to write to wal v1 here unless we add a "feature flag value" for v1, which is odd.
-
 
 
 ## Action Plan
