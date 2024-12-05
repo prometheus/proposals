@@ -98,23 +98,23 @@ Add an option, `NoNameChanges` for the OTLP translation strategy. When enabled, 
 
 Similar to suffixes of _<unit> and _<type/total> but make it an explicit suffix using a delimiter not currently permitted in metric names. Specifying suffixes is optional when querying for a metric. When the type or unit suffix is omitted from a query, it would (design TBD) return results which include any type or unit suffix which exists for that name.
 
-NOTE: Dot for units and slash for type is just one example, there might be better operators/characters to use.
+NOTE: `~` for units and `.` for type is just one example, there might be better operators/characters to use.
 
 Writing queries that include the type and unit would be recommended as a best-practice by the community.
 
 For example:
 
-* Querying for foo/histogram would return results that include both foo.seconds/histogram and foo.milliseconds/histogram.
-* Querying for foo.seconds would return results that include both foo.seconds/histogram and foo.seconds/counter.
-* Querying for http_server_duration would return results that include both foo.seconds/histogram and foo.milliseconds/counter.
-* Querying for an OpenTelemetry metric, such as http.server.duration, with suffixes would require querying for ”http.server.duration”.seconds/histogram. Note that suffixes are outside of quotes.
+* Querying for `foo.histogram` would return results that include both `foo~seconds.histogram` and `foo~milliseconds.histogram`.
+* Querying for `foo~seconds` would return results that include both `foo~seconds.histogram` and `foo~seconds.counter`.
+* Querying for `http_server_duration` would return results that include both `foo~seconds.histogram` and `foo~milliseconds.counter`.
+* Querying for an OpenTelemetry metric, such as `http.server.duration`, with suffixes would require querying for `”http.server.duration”~seconds.histogram`. Note that suffixes are outside of quotes.
 
 This solution is not chosen because:
 
 * Requires PromQL changes (intrusive), touches on “dot” operator ideas.
-* Adding suffixes outside of quotes looks strange: {“http.server.duration”.seconds/histogram}
-* Rolling this out would be breaking for existing Prometheus users: E.g. {foo_seconds} becomes {foo.seconds/histogram}. Could this be part of OM 2.0?
-  * Mitigation: users just stay with {foo_seconds.seconds/histogram}
+* Adding suffixes outside of quotes looks strange: `{“http.server.duration”~seconds.histogram}`
+* Rolling this out would be breaking for existing Prometheus users: E.g. `{foo_seconds}` becomes `{foo~seconds.histogram}`. Could this be part of OM 2.0?
+  * Mitigation: users just stay with `{foo_seconds~seconds.histogram}`
 * Users might be surprised by, or dislike the additional suffixes and delimiters in the metric name results
   * Mitigation: Opt-in for query engines?
 
