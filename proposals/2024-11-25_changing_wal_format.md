@@ -134,7 +134,22 @@ For example, following filenames would be now valid: `00000010`, `00000010-v1`, 
 * Quick glance over `wal` or `wbl` directory tells if the migration to a next version happened or not.
 * We can extend the filename format in future segment version, cleanly e.g. another suffix for sharding.
 
-See [the alternatives](#alternatives) the related, considered ideas.
+The mixed situation could look as follows:
+
+```
+wal/ 
+├── 00000000
+├── 00000001-v2
+├── 00000002-v2
+├── 00000003-v2
+├── 00000004
+├── checkpoint.00000001
+│   └── 00000000
+├── checkpoint.00000003
+│   └── 00000000-v2
+└── checkpoint.00000004
+    └── 00000000
+```
 
 We propose to document that behaviour in:
 
