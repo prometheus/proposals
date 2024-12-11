@@ -122,7 +122,7 @@ To achieve WAL versioning we also propose to start versioning the WAL. This is n
  
 Given the WAL [format](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md) is technically a "WAL Segment format" (WAL consists of list of segments), we propose to version WAL per segment. We propose capturing the version in the filename. This changes the segment filename format as follows:
 
-```go
+```
 <8 digit sequence> => <8 digit sequence>[-v<version>]
 ```
 
@@ -192,13 +192,41 @@ Cons:
 
 ## Alternatives
 
-### Alternative: Capture segment version in a special record
+### Alternative: Different separator than `-v`
 
-TBD
+We might want to use different format than
+
+```
+<8 digit sequence>[-v<version>]
+```
+
+For example, `.` would be perhaps more visually appealing. 
+
+Cons:
+* `.` might be confused with the file extension.
 
 ### Alternative: Capture segment version in a segment header
 
-TBD 
+Instead of the filename we could capture the segment version in the preamble or header in the binary format.
+This would be more consistent with other files e.g. [`chunks`](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/chunks.md#chunks-disk-format) or [`index`](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/index.md).
+
+Header might be also easier to implement (less LOCs) and a bit more efficient.
+
+Cons:
+* Breaks the design of WAL segment being and array of records with preamble, which was inspired by LevelDB.
+* You have to parse each segment programmatically to know what it's version. This will make debugging much harder in case of errors. Additionally, it would be hard to tell when the migration fully completed in the user's directory.
+* Accidental use of old Prometheus on new format would result in the corruption error, which is not ideal (it's hard to debug such errors in the future)
+
+### Alternative: Capture segment version in a special record
+
+Instead of special header or filename, we could specify a segment version in the special new record type that has to be first in the segment.
+
+This has a nice benefit of clean handling of new records for old Prometheus.
+
+Cons:
+* Similar cons to [header](#alternative-capture-segment-version-in-a-segment-header) around debuggability.
+* Introduces snowflake, special record, which is not technically a proper record (e.g. it has to be first)
+* Perhaps failing fast is better (e.g. when parsing filename) vs treating new records as empty?
 
 ### Alternative: Version WAL per directory.
 
