@@ -6,7 +6,7 @@
 * **Contributors:**
   * [@krajorama](https://github.com/krajorama)
   * [@bboreham](https://github.com/bboreham)
-  * [carrieedwards](https://github.com/carrieedwards)
+  * [@carrieedwards](https://github.com/carrieedwards)
 
 * **Implementation Status:** Not implemented [prototype](https://github.com/prometheus/prometheus/pull/15565)
 
