@@ -17,8 +17,8 @@
 
 ## Why
 
-Info metrics are [defined by the OpenMetrics specification](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#info) as "used to expose textual information which SHOULD NOT change during process lifetime".
-Furthermore the OpenMetrics specification states that info metrics ["MUST have the suffix `_info`"](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#info-1).
+Info metrics are [defined by the OpenMetrics specification](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#info) as "used to expose textual information which SHOULD NOT change during process lifetime".
+Furthermore the OpenMetrics specification states that info metrics ["MUST have the suffix `_info`"](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#info-1).
 Despite the latter OpenMetrics requirement, there are metrics with the info metric usage pattern that don't have the `_info` suffix, e.g. `kube_pod_labels`.
 In this proposal, we shall include the latter in the definition of info metrics.
 

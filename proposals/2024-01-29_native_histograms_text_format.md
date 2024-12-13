@@ -103,7 +103,7 @@ hist_with_classic_buckets_sum{foo="baz"} 100
 hist_with_classic_buckets_created{foo="baz"} 1717536098
 ```
 
-Finally, multiple exemplars will also be supported in the exposition format by providing a list of exemplars at the end of any line, separated by `#`. Note that having spaces around the hashes is required and matches the [ABNF specification in OpenMetrics](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#abnf). For example:
+Finally, multiple exemplars will also be supported in the exposition format by providing a list of exemplars at the end of any line, separated by `#`. Note that having spaces around the hashes is required and matches the [ABNF specification in OpenMetrics](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#abnf). For example:
 ```
 # TYPE exemplar_example histogram
 # HELP exemplar_example Is an example of a native histogram with exemplars.
@@ -112,7 +112,7 @@ nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,pos
 
 ### Backwards compatibility and semantic versioning
 
-After discussions with a few people it is believed that these changes can be made in a 1.x release of OpenMetrics. OpenMetrics 1.x parsers that support native histograms will still be able to read OpenMetrics 1.0 responses, therefore this change is backwards compatible. However, this change is not forwards compatible, i.e. an OpenMetrics 1.0 parser will not be able to read an OpenMetrics >= 1.1 response. Any producers implementing native histograms MUST also implement content negotiation and fall back to OpenMetrics 1.0.0, and therefore not expose native histograms, if a supported version cannot be negotiated. Note that the behavior to fall back to 1.0.0 is already part of the [OpenMetrics spec](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#protocol-negotiation).
+After discussions with a few people it is believed that these changes can be made in a 1.x release of OpenMetrics. OpenMetrics 1.x parsers that support native histograms will still be able to read OpenMetrics 1.0 responses, therefore this change is backwards compatible. However, this change is not forwards compatible, i.e. an OpenMetrics 1.0 parser will not be able to read an OpenMetrics >= 1.1 response. Any producers implementing native histograms MUST also implement content negotiation and fall back to OpenMetrics 1.0.0, and therefore not expose native histograms, if a supported version cannot be negotiated. Note that the behavior to fall back to 1.0.0 is already part of the [OpenMetrics spec](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#protocol-negotiation).
 
 Until a version of OpenMetrics is released that contains a stable version of native histograms consumers can determine if native histograms may be present by asking for a `nativehistogram` pre-release identifier. For example,
 ```

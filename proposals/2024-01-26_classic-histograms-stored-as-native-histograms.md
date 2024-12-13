@@ -98,7 +98,7 @@ Scenarios provided that the native histograms feature is enabled:
 * If the histogram has exponential buckets during scrape then only the exponential buckets are kept and the custom buckets would be dropped.
 * If all bucket counters and the overall counter of the histogram is determined to be a whole number, use integer histogram, otherwise use float histogram.
   * In the Prometheus text exposition format values are represented as floats. The dot (`.`) is not mandatory. After parsing the value `x` if the GO statement `x == math.Trunc(x)` is true, then use integer counters, otherwise switch to floats.
-  * In the OpenMetrics text exposition [format](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
+  * In the OpenMetrics text exposition [format](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#numbers) floats and integers are explicitly distinguished by the dot (`.`) sign being present or not in the value.
   * In the Prometheus/OpenMetrics ProtoBuf [format](https://github.com/prometheus/client_model/blob/d56cd794bca9543da8cc93e95432cd64d5f99635/io/prometheus/client/metrics.proto#L115-L122) float and integer numbers are explicitly transferred in different fields.
 * The custom bucket definitions are to be stored by expanding the existing data structures, see later.
 
