@@ -98,7 +98,10 @@ Add an option, `NoNameChanges` for the OTLP translation strategy. When enabled, 
 
 Similar to suffixes of _<unit> and _<type/total> but make it an explicit suffix using a delimiter not currently permitted in metric names. Specifying suffixes is optional when querying for a metric. When the type or unit suffix is omitted from a query, it would (design TBD) return results which include any type or unit suffix which exists for that name.
 
-NOTE: `~` for units and `.` for type is just one example, there might be better operators/characters to use.
+NOTES:
+
+* `~` for units and `.` for type is just one example, there might be better operators/characters to use.
+* This proposal is fully compatible with the proposal above. `http_request_duration{__unit__="seconds", __type__="histogram"}` could just be another syntax for `http_request_duration~seconds.histogram`. It would make it much easier to add units and/or types to the metric name, so it would address the concern that you cannot see the unit and type anymore by looking at a PromQL expression without supporting tooling. If we allowed `.total` as an alias of `.counter`, we would have very little visible change. `http_requests_total` would become `http_requests.total`.
 
 Writing queries that include the type and unit would be recommended as a best-practice by the community.
 
@@ -111,9 +114,9 @@ For example:
 
 This solution is not chosen because:
 
-* Requires PromQL changes (intrusive), touches on “dot” operator ideas.
-* Adding suffixes outside of quotes looks strange: `{“http.server.duration”~seconds.histogram}`
-* Rolling this out would be breaking for existing Prometheus users: E.g. `{foo_seconds}` becomes `{foo~seconds.histogram}`. Could this be part of OM 2.0?
+* Adding suffixes outside of quotes looks strange: `{“http.server.duration”~seconds.histogram}`.
+  * Alternatives: `{“http.server.duration”}~seconds.histogram` or `{“http.server.duration”}{seconds,histogram}`
+* Rolling this out may be breaking for existing Prometheus users: E.g. `{foo_seconds}` becomes either `{foo~seconds.histogram}` or `{foo_seconds~seconds.histogram}`. Could this be part of OM 2.0?
   * Mitigation: users just stay with `{foo_seconds~seconds.histogram}`
 * Users might be surprised by, or dislike the additional suffixes and delimiters in the metric name results
   * Mitigation: Opt-in for query engines?
