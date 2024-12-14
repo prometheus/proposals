@@ -140,7 +140,7 @@ foo_total{le="c"} 21.0
 foo_total{le="1"} 10.0
 ```
 
-When the same MetricFamily has multiple label sets with their own CTs we'd have to place all the timestamps in a single line with the additional labels and separate them with delimiters. This does mitigate the increased verbosity described in the [Summaries and Histograms section](#summaries-and-histograms) but it still requires storing all the timestamps in memory for the lifetime of the MetricFamily. Even if we store the CT only for the first label set in a MetricFamily, we only need to keep a single timestamp in memory at a time for each label set in a summary or histogram until the next label set is encountered.
+When the same MetricFamily has multiple label sets with their own CTs we'd have to place all the timestamps in a single line with the additional labels and separate them with delimiters. This does mitigate the increased verbosity described in the [Summaries and Histograms section](#summaries-and-histograms) but it still requires storing all the timestamps in memory for the lifetime of the MetricFamily. Even if we store the CT only for the first label set in a MetricFamily, we only need to keep a single timestamp in memory at a time for each label set in a summary or histogram until the next label set is encountered (assuming metrics with the same label sets are grouped together).
 
 ## Action Plan
 
