@@ -45,8 +45,8 @@ As stated above, `_created`  lines can appear anywhere after its associated metr
 
 ## Non-Goals
 
-* Require backwards compatibility. While this can be a step towards an OM 2.0 this proposal only deals with created timestamps which is small subset of the specification.
-* Storing CTs in metadata storage or the WAL (we're only dealing with parsing here).
+* Require backwards compatibility. While this can be a step towards an OM 2.0 this proposal only deals with created timestamps which is a small subset of the specification.
+* Dealing with the storage of CTs.
 * Add CT support to additional metric types like guages.
 
 ## How
@@ -112,19 +112,23 @@ rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05 ct@1.726
 rpc_durations_seconds_count{service="exponential"} 22 ct@1.7268398130168908e+09
 ```
 
+### Backwards compatibility and semantic versioning
+
+This change is not backwards compatible and would break existing parsers that expect the `_created` line. OpenMetrics 1.x parsers that support `_created` lines would not be able to parse the new syntax. This would require a new major version of the OpenMetrics specification to be released, i.e, OpenMetrics 2.0. Any client libraries or tools that expose OpenMetrics text would also need to be updated to support the new syntax.
+
 ## Alternatives
 
 ### Do nothing
 
-Continue using the OM text format in its current state and further optimize CPU usage through PRs that build on [﻿github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823) . This is desirable if we wish to keep backwards compatibility but we would have to live with an inefficient solution.
+Continue using the OM text format in its current state and further optimize CPU usage through PRs that build on [github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823). This is desirable if we wish to keep backwards compatibility and avoids breaking changes but we would have to live with an inefficient solution.
 
 ### Storing CTs Using a `# HELP`-Like Syntax
 
 In addition to the `TYPE`, `UNIT`, and `HELP` fields, we can introduce a `# CREATED` line for metrics that have an associated creation timestamp (CT). This approach allows us to quickly determine whether a CT exists for a given metric, eliminating the need for a more time-consuming search process. By parsing the `# CREATED` line, we can associate it with a specific hash corresponding to the metric's label set, thereby mapping each CT to the correct metric.
 
-However, this method still involves the overhead of storing the CT until we encounter the relevant metric line. A more efficient solution would be to place the CT inline with the metric itself, streamlining the process and reducing the need for intermediate storage.
+However, this method still involves the overhead of storing potentially multiple CTs in memory until we encounter the relevant metric line. Furthermore the `CREATED` line itself might look somewhat convoluted compared to `TYPE` , `UNIT` , and `HELP`  which are very human readable. 
 
-Furthermore the `CREATED`  line itself might look somewhat convoluted compared to `TYPE` , `UNIT` , and `HELP`  which are very human readable. This new `CREATED`  line can end up looking something like this:
+An example of how this might look:
 
 ```
 # HELP foo Counter with and without labels to certify CT is parsed for both cases
@@ -136,7 +140,7 @@ foo_total{le="c"} 21.0
 foo_total{le="1"} 10.0
 ```
 
-When the same MetricFamily has multiple label sets with their own CTs we'd have to cram all the timestamps with the additional labels with a delimiter in between.
+When the same MetricFamily has multiple label sets with their own CTs we'd have to place all the timestamps in a single line with the additional labels and separate them with delimiters. This does mitigate the increased verbosity described in the [Summaries and Histograms section](#summaries-and-histograms) but it still requires storing all the timestamps in memory for the lifetime of the MetricFamily. Even if we store the CT only for the first label set in a MetricFamily, we only need to keep a single timestamp in memory at a time for each label set in a summary or histogram until the next label set is encountered.
 
 ## Action Plan
 
