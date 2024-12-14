@@ -40,6 +40,7 @@ As stated above, `_created`  lines can appear anywhere after its associated metr
 ### Audience
 
 * Developers maintaining the OpenMetrics text parser.
+* Developers maintaining client libraries.
 * Users that utilize the OpenMetrics Text format with Created Timestamps enabled.
 
 ## Non-Goals
