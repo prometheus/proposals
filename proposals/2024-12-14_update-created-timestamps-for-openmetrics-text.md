@@ -68,11 +68,10 @@ Furthermore the `CREATED`  line itself might look somewhat convoluted compared t
 ```
 # HELP foo Counter with and without labels to certify CT is parsed for both cases
 # TYPE foo counter
-# CREATED 1520872607.123; {a="b"} 1520872607.123
+# CREATED 1520872607.123; {a="b"} 1520872607.123; {le="c"} 1520872621.123
 foo_total 17.0 1520879607.789 # {id="counter-test"} 5
 foo_total{a="b"} 17.0 1520879607.789 # {id="counter-test"} 5
 foo_total{le="c"} 21.0
-foo_created{le="c"} 1520872621.123
 foo_total{le="1"} 10.0
 ```
 
