@@ -79,4 +79,8 @@ When the same MetricFamily has multiple label sets with their own CTs we'd have 
 
 ## Action Plan
 
+In no particular order:
 
+* [ ] Update the OpenMetrics specification to include the new syntax for Created Timestamps.
+* [ ] Update Prometheus's OpenMetrics text parser to support the new syntax.
+* [ ] Update tooling and libraries that expose OpenMetrics text. 
