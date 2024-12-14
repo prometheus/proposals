@@ -82,7 +82,7 @@ foo_total{le="1"} 10.0
 
 ### Summaries and Histograms
 
-Summaries and histograms are a bit more complex as they have quantiles and buckets respectively. Moreoever, there is no defacto line like in a counter where we can place the CT. Thus, we can opt to place the CT on the first line of the metric with the same label set. We can then cache this timestamp with a hash of the label set and use it for all subsequent lines with the same label set. This is something we somewhat do already with the current syntax.
+Summaries and histograms are a bit more complex as they have quantiles and buckets respectively. Moreoever, there is no defacto line like in a counter where we can place the CT. Thus, we can opt to place the CT on the first line of the metric with the same label set. We can then cache this timestamp with a hash of the label set and use it for all subsequent lines with the same label set. This is something we already do with the current syntax.
 
 A diff example (for brevity) of a summary metric with current vs proposed syntax:
 
@@ -105,7 +105,7 @@ Another option is to simply place the CT on every line of a summary or histogram
 ```
 # HELP rpc_durations_seconds RPC latency distributions.
 # TYPE rpc_durations_seconds summary
-+rpc_durations_seconds{service="exponential",quantile="0.5"} 7.689368882420941e-07 ct@1.7268398130168908e+09
+rpc_durations_seconds{service="exponential",quantile="0.5"} 7.689368882420941e-07 ct@1.7268398130168908e+09
 rpc_durations_seconds{service="exponential",quantile="0.9"} 1.6537614174305048e-06 ct@1.7268398130168908e+09
 rpc_durations_seconds{service="exponential",quantile="0.99"} 2.0965499063061924e-06 ct@1.7268398130168908e+09
 rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05 ct@1.7268398130168908e+09
