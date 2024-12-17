@@ -62,7 +62,7 @@ Lets look at some examples to illustrate the difference.
 # TYPE foo counter
 foo_total 17.0 1520879607.789 ct@1520872607.123 # {id="counter-test"} 5
 foo_total{a="b"} 17.0 1520879607.789 ct@1520872607.123 # {id="counter-test"} 5
-foo_total{le="c"} 21.0 ct1520872621.123
+foo_total{le="c"} 21.0 ct@1520872621.123
 foo_total{le="1"} 10.0
 ```
 
