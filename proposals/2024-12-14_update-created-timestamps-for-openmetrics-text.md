@@ -26,7 +26,7 @@ Created Timestamps (CTs) were proposed in the summer of 2023 with support for th
 
 These characterisitics, specifically the final one means that the parser must search or "peek" ahead to find the `_created` line for a given metric with the same label set and thus, requires additional CPU/memory resources when it can be saved.
 
-This search operation can be specifically taxing when the CT line, if it exists, is the very last line in a large MetricFamily such as that of a histogram with many buckets.
+This search operation can be particularly taxing when the CT line, if it exists, is the very last line in a large MetricFamily, such as a histogram with many buckets.
 
 ### Pitfalls of the current solution
 
