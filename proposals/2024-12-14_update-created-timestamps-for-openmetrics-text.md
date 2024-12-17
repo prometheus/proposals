@@ -34,7 +34,7 @@ As stated above, `_created`  lines can appear anywhere after its associated metr
 
 ## Goals
 
-* Prometheus can efficiently parse Created Timestamps without peeking forward.
+* Prometheus can parse Created Timestamps without holding state between lines.
 * OpenMetrics has an updated specification with a clear and precise syntax.
 
 ### Audience
