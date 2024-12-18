@@ -98,7 +98,7 @@ We propose to add the `--bench.version=<branch|@commit>` flag to `/prombench` GH
 Here are an example steps to customize and run a customized benchmark with `--bench.version` flag.
 
 1. Create a new branch on https://github.com/prometheus/test-infra e.g. `benchmark/scenario1`.
-2. Modify this directory to your liking e.g. changing query load, metric load of advanced Prometheus configuration. It's also possible to make Prometheus deployments and versions exactly the same, but vary in a single configuration flag, for feature benchmarking.
+2. Modify the contents of `/prombench/manifests/prombench` directory to your liking e.g. changing query load, metric load of advanced Prometheus configuration. It's also possible to make Prometheus deployments and versions exactly the same, but vary in a single configuration flag, for feature benchmarking.
 
    > WARN: When customizing this directory, don't change `1a_namespace.yaml` or `1c_cluster-role-binding.yaml` filenames as they are used for cleanup routine. Or, if you change it, know what you're doing in relation to [`make clean` job](../../Makefile).
 
