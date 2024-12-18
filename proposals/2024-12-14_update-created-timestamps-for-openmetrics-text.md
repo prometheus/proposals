@@ -18,7 +18,7 @@
 
 ## Why
 
-Created Timestamps (CTs) were proposed in the summer of 2023 with support for the OpenMetrics (OM) exposition format following in summer of 2024. Once CT lines could be parsed by Prometheus in OM text it felt as though the syntax could be improved upon to optimize how the parser picks up these CTs. CT lines can be characterized as followed:
+Prometheus integrated Created Timestamps (CTs) into its protobuf format in the summer of 2023, building on the concept originally defined by the OpenMetrics (OM) specification. Support for the OM text exposition format followed in the summer of 2024. Once CT lines could be parsed by Prometheus in OM text it felt as though the syntax could be improved upon to optimize how the parser picks up these CTs. CT lines can be characterized as followed:
 
 * They are represented as a standalone line in the OM text exposition format.
 * It is denoted with a metric name and `_created`  suffix.
