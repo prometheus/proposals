@@ -85,9 +85,50 @@ foo_total{le="1"} 10.0
 
 ### Summaries and Histograms
 
-Summaries and histograms are a bit more complex as they have quantiles and buckets respectively. Moreoever, there is no defacto line like in a counter where we can place the CT. Thus, we can opt to place the CT on the first line of the metric with the same label set. We can then cache this timestamp with a hash of the label set and use it for all subsequent lines with the same label set. This is something we already do with the current syntax.
+Summaries and histograms are a bit more complex as they have quantiles and buckets respectively. Moreoever, there is no defacto line like in a counter where we can place the CT. Thus, we can opt to place the CT on every line of a summary or histogram metric. This would be more explicit, easier to parse, and avoids storing the CT between lines.
 
-A diff example (for brevity) of a summary metric with current vs proposed syntax:
+An example of a summary metric with the proposed syntax:
+
+```
+# HELP rpc_durations_seconds RPC latency distributions.
+# TYPE rpc_durations_seconds summary
+rpc_durations_seconds{service="exponential",quantile="0.5"} 7.689368882420941e-07 ct@1.7268398130168908e+09
+rpc_durations_seconds{service="exponential",quantile="0.9"} 1.6537614174305048e-06 ct@1.7268398130168908e+09
+rpc_durations_seconds{service="exponential",quantile="0.99"} 2.0965499063061924e-06 ct@1.7268398130168908e+09
+rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05 ct@1.7268398130168908e+09
+rpc_durations_seconds_count{service="exponential"} 22 ct@1.7268398130168908e+09
+```
+
+vs current syntax:
+
+```diff
+# HELP rpc_durations_seconds RPC latency distributions.
+# TYPE rpc_durations_seconds summary
+rpc_durations_seconds{service="exponential",quantile="0.5"} 7.689368882420941e-07
+rpc_durations_seconds{service="exponential",quantile="0.9"} 1.6537614174305048e-06
+rpc_durations_seconds{service="exponential",quantile="0.99"} 2.0965499063061924e-06
+rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05
++rpc_durations_seconds_created{service="exponential"} 1.7268398130168908e+09
+rpc_durations_seconds_count{service="exponential"} 22
+```
+
+With the current syntax `_created` line can be anywhere after the `quantile` lines. A histogram would look similar to the summary but with `le` labels instead of `quantile` labels.
+
+### Backwards compatibility and semantic versioning
+
+This change is not backwards compatible and would break existing parsers that expect the `_created` line. OpenMetrics 1.x parsers that support `_created` lines would not be able to parse the new syntax. This would require a new major version of the OpenMetrics specification to be released, i.e, OpenMetrics 2.0. Any client libraries or tools that expose OpenMetrics text would also need to be updated to support the new syntax.
+
+## Alternatives
+
+### Do nothing
+
+Continue using the OM text format in its current state and further optimize CPU usage through PRs that build on [github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823). This is desirable if we wish to keep backwards compatibility and avoids breaking changes but we would have to live with an inefficient solution.
+
+### Place the CT next to the first line of a Summary or Histogram metric
+
+This involves opting the syntax described in the [counters section](#counters) but changing how we handle Summaries and Histograms. Here we place the CT on the first line of the metric with the same label set. This would be more less verbose and is something we already do with the current syntax. We can then cache this timestamp with a hash of the label set and use it for all subsequent lines with the same label set.
+
+A diff example (for brevity) of a summary metric with current vs this proposed syntax:
 
 ```diff
 # HELP rpc_durations_seconds RPC latency distributions.
@@ -100,30 +141,6 @@ rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05
 rpc_durations_seconds_count{service="exponential"} 22
 -rpc_durations_seconds_created{service="exponential"} 1.7268398130168908e+09
 ```
-
-With the current syntax `_created` line can be anywhere after the `quantile` lines. A histogram would look similar to the summary but with `le` labels instead of `quantile` labels.
-
-Another option is to simply place the CT on every line of a summary or histogram metric. This would be more verbose but would be more explicit and easier to parse and avoids storing the CT completely:
-
-```
-# HELP rpc_durations_seconds RPC latency distributions.
-# TYPE rpc_durations_seconds summary
-rpc_durations_seconds{service="exponential",quantile="0.5"} 7.689368882420941e-07 ct@1.7268398130168908e+09
-rpc_durations_seconds{service="exponential",quantile="0.9"} 1.6537614174305048e-06 ct@1.7268398130168908e+09
-rpc_durations_seconds{service="exponential",quantile="0.99"} 2.0965499063061924e-06 ct@1.7268398130168908e+09
-rpc_durations_seconds_sum{service="exponential"} 2.0318666372575776e-05 ct@1.7268398130168908e+09
-rpc_durations_seconds_count{service="exponential"} 22 ct@1.7268398130168908e+09
-```
-
-### Backwards compatibility and semantic versioning
-
-This change is not backwards compatible and would break existing parsers that expect the `_created` line. OpenMetrics 1.x parsers that support `_created` lines would not be able to parse the new syntax. This would require a new major version of the OpenMetrics specification to be released, i.e, OpenMetrics 2.0. Any client libraries or tools that expose OpenMetrics text would also need to be updated to support the new syntax.
-
-## Alternatives
-
-### Do nothing
-
-Continue using the OM text format in its current state and further optimize CPU usage through PRs that build on [github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823). This is desirable if we wish to keep backwards compatibility and avoids breaking changes but we would have to live with an inefficient solution.
 
 ### Storing CTs Using a `# HELP`-Like Syntax
 
