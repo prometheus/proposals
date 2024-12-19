@@ -2,6 +2,8 @@
 
 * **Owners:**
     * Manik Rana [@Maniktherana](https://github.com/Maniktherana)
+
+**Contributors:**
     * Arthur Silva Sens [@ArthurSens](https://github.com/ArthurSens)
     * Bartłomiej Płotka [@bwplotka](https://github.com/bwplotka)
 
