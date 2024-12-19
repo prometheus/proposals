@@ -53,7 +53,7 @@ As stated above, `_created` lines can appear anywhere after its associated metri
 
 ## How
 
-We store the Created Timestamp inline with the attached metric and remove `_created` lines. This will allow the parser to immediately associate the CT with the metric without having to search for it. For counters, it's straightforward, as we can just add the timestamp after the metric value like an exemplar. To separate it from a traditional timestamp, we can prefix the created timestamp with something like `ct@`, although this portion of the syntax is not final and can be changed. Furthermore, we can order the created timestamp such that it is after the metric value + timestamp and before an exemplar.
+We store the Created Timestamp inline with the attached metric and remove `_created` lines. This will allow the parser to immediately associate the CT with the metric without having to search for it. For counters, it's straightforward, as we can just add the timestamp after the metric value like an exemplar. To separate it from a traditional timestamp, we can prefix the created timestamp with something like `ct@`, although this portion of the syntax is not final and can be changed. We propose to force a certain order of the created timestamp such that it is after the metric value and the timestamp and before an exemplar. This CT itself will be Unix Epoch in seconds, unchanged from the current specification
 
 Lets look at some examples to illustrate the difference.
 
