@@ -32,7 +32,7 @@ This search operation can be particularly taxing when the CT line, if it exists,
 
 ### Pitfalls of the current solution
 
-As stated above, `_created`  lines can appear anywhere after its associated metric line. This means parser is required to store the current position of the lexer before we start searching for the created timestamp. Currently, we cache the timestamp and minimize data stored in memory. Before, we used to make a deep copy of the parser at every line whenever the `CreatedTimestamp`  function was called which lead to [Prometheus consuming Gigabytes more memory](https://github.com/prometheus/prometheus/issues/14808) than needed.
+As stated above, `_created` lines can appear anywhere after its associated metric line. This means parser is required to store the current position of the lexer before we start searching for the created timestamp. Currently, we cache the timestamp and minimize data stored in memory but there is still significant CPU overhead.
 
 ## Goals
 
