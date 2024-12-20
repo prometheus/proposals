@@ -7,7 +7,7 @@
   * [@krajorama](https://github.com/krajorama)
   * [@ArthurSens](https://github.com/ArthurSens)
   
-* **Implementation Status:** `Partially implemented`
+* **Implementation Status:** `Implemented`
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/test-infra/issues/659
@@ -185,4 +185,4 @@ Cons:
 * [X] Extend `make deploy` and `make clean` to support git pulling on demand and dynamic directory choice. (https://github.com/prometheus/test-infra/pull/812)
 * [X] Add docs (https://github.com/prometheus/test-infra/pull/812)
 * [X] Extend Prometheus prombench GH job (https://github.com/prometheus/prometheus/pull/15682)
-* [ ] Announce on -dev list.
+* [X] Announce on -dev list.
