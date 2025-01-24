@@ -116,8 +116,8 @@ This solution is not chosen because:
 
 * Adding suffixes outside of quotes looks strange: `{“http.server.duration”~seconds.histogram}`.
   * Alternatives: `{“http.server.duration”}~seconds.histogram` or `{“http.server.duration”}{seconds,histogram}`
-* Rolling this out may be breaking for existing Prometheus users: E.g. `{foo_seconds}` becomes either `{foo~seconds.histogram}` or `{foo_seconds~seconds.histogram}`. Could this be part of OM 2.0?
-  * Mitigation: users just stay with `{foo_seconds~seconds.histogram}`
+* Rolling this out may be breaking for existing Prometheus users: E.g. `foo_seconds` becomes either `foo~seconds.histogram` or `foo_seconds~seconds.histogram`. Could this be part of OM 2.0?
+  * Mitigation: users just stay with `foo_seconds~seconds.histogram`
 * Users might be surprised by, or dislike the additional suffixes and delimiters in the metric name results
   * Mitigation: Opt-in for query engines?
 
