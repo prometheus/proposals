@@ -33,7 +33,7 @@ This proposal introduces secret discovery, similar to service discovery, where d
 
 ### Pitfalls of the current solution
 
-Storing secrets in the filesystem poses risks, especially in environments like Kubernetes, where any pod on a node can access files mounted on that node. This could expose secrets to attackers. Additionally, configuring secrets through the filesystem often requires extra setup steps in some enviroments, which can be cumbersome for users.
+Storing secrets in the filesystem poses risks, especially in environments like Kubernetes, where any pod on a node can access files mounted on that node. This could expose secrets to attackers. Additionally, configuring secrets through the filesystem often requires extra setup steps in some environments, which can be cumbersome for users.
 
 Storing secrets inline can also pose risks, as the configuration file may still be accessible through the filesystem. Additionally it can lead to configuration files becoming cluttered and difficult to manage.
 
@@ -53,130 +53,124 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 ## Non-Goals
 
-* Implement a variety of secret providers.
+* Support for non-string secret values
+* Secret transformations/processing
+  * Things like String concatenation, base64 encoding/decoding
+* Default values
 
 ## How
 
 
-### Interfaces
-
-Secret providers will be created from their configurations through the following interface:
-
-```
-type SecretProviderConfiguration interface {
-	// Returns the secret provider for the given configuration.
-	Load() (SecretProvider, error)
-}
-```
-
-Secret providers will have to satisfy the following interface. Secret providers will be expected to be long lived to allow for caching. However they will be re-instantiated in case of a configuration change. The Fetch method will be called before each http request done through `prometheus/common/config`
-
-```
-type SecretProvider interface {
-	// Returns the secret value for the given configuration.
-  Fetch(ctx context.Context, secretRef string) (string, error)
-}
-```
-
 ### Configuration
 
-Globally there will be a section to configure secrete providers to be used throught the config file. Here is an example:
+Wherever a secret can be inserted in the configuration file, we will allow users to specify a special YAML tag for secrets.
+
+```
+        password: !secret provider=kubernetes namespace=ns1 secret_id=pass1
+...
+        password: !secret
+          provider: kubernetes
+          namespace: ns1
+          secret_id: pass2
+```
+Additionally there will be a global section to partially configure secret providers to prevent duplication. For instance if the kubernetes provider is used multiple times like above, it can be rewritten as: 
 
 ```
 global:
-  secret_providers:
-  - name: my_secret_provider
-    kubernetes_sp_config:
-      namespace: ns1
-```
-
-
-For secret related fields under http_config, a new `ref` variant will be added that can reference these secret providers. For instance, basic_auth will have the following form
-
-```
-basic_auth:
+  base_secrets:
+  - id: myk8secrets
+    provider: kubernetes
+    namespace: ns1
 ...
-  password: <secret>
-  password_file: <string>
-  password_ref:
-    <string>: <string>
+        password: !secret id=myk8secrets secret_id=pass1
+...
+        password: !secret
+          id: myk8secrets
+          secret_id: pass2
 ```
 
-and could be instantiated as follows:
+### Inline secrets
+
+When specifying secrets inline in the config file, the inline provider will be used. If a string is passed in, it is automatically converted to an inline provider to be consistent with previous syntax.
+```
+        password: !secret provider=inline secret=my_important_secret
+...
+# String types that are passed in are converted to the inline secret provider
+        password: my_important_secret
+```
+
+### Error handling
+
+We can classify all errors stemming from secret provider failures into 2 cases.
+
+The first case is that we have not gotten any secret value since startup. In this case we should not initialize any component that mentions this faulty secret, log this failure and schedule a retry to get this secret value and initialize the component.
+
+The second case is that we already have a secret value, but refreshing it has resulted in an error. In this case we should keep the component that uses this secret running with the potentially stale secret, schedule a retry and 
+
+### Metrics
+
+Metrics should be present to help users identify the errors mentioned above (in addition to logs). Therefore the following metrics should be reported per secret present in the config file:
+
+The time since the last successful secret fetch
 
 ```
-basic_auth:
-  password_ref:
-    my_secret_provider: 'my-secret-key'
+prometheus_remote_secret_last_successful_fetch_seconds{provider="kubernetes", secret_id="pass1"} 15
 ```
 
-#### Full configuration example
+A state enum describing in which error condition the secret is in:
+* error: there has been no successful request and no secret has been retrieved
+* stale: a request has succeeded but the latest request failed
+* none: the last request was succesful
+
+```
+# HELP prometheus_remote_secret_state Describes the current state of a remotely fetched secret.
+# TYPE prometheus_remote_secret_state gauge
+prometheus_remote_secret_state{provider="kubernetes", secret_id="pass1", state="none"} 0
+prometheus_remote_secret_state{provider="kubernetes", secret_id="auth_token", state="stale"} 1
+prometheus_remote_secret_state{id="myk8secrets", secret_id="pass2", state="error"} 2
+```
+
+### Nested secrets
+
+Secret providers might require secrets to be configured themselves. We will allow secrets to be passed in to secret providers.
+
 ```
 global:
-  secret_providers:
-  - name: kube1
-    kubernetes_sp_config:
-      namespace: ns1
-  - name: kube2
-    kubernetes_sp_config:
-      namespace: ns2
+  base_secrets:
+  - id: myk8secrets
+    provider: kubernetes
+  - id: bootstrapped
+    provider: bootstrapped
+    auth_token: !secret id=myk8secrets secret_id=auth_token
 ...
-  scrape_configs:
-  - job_name: 'http-basic-auth-endpoint'
-    http_config:
-      basic_auth:
-        username: 'myuser'
-        password_ref:
-          kube1: 'myuser-pass'
-    static_configs:
-    - targets: ['www.endpoint.com/basic-auth']
-  scrape_configs:
-  - job_name: 'http-authorization-auth-endpoint'
-    http_config:
-      authorization:
-        credentials_ref:
-          kube2: 'header-credentials'
-    static_configs:
-    - targets: ['www.endpoint.com/authorization-auth']
-  scrape_configs:
-  - job_name: 'tls-certificate-endpoint'
-    http_config:
-      tls_config:
-        key_ref:
-          kube2: 'header-credentials'
-    static_configs:
-    - targets: ['www.endpoint.com/tls-certificate']
+        password: !secret id=bootstrapped secret_id=pass1
 ```
 
+However, an initial implementation might only allow inline secrets for secret providers. This might limit the usefulness of certain providers that require sensitive information for their own configuration.
+
+### Where will code live
+
+Both the alertmanager and prometheus repos will be able to use secret providers. The code will eventually live in a separete repository specifically created for it.
 
 ## Alternatives
 
-### Modify Secret type
+### Secret references
 
-Currently most secrets in the config use the prometheus.common.config.Secret alias. We could modify this type such that if only a string is passed it behaves the same as before, and if a map is passed in it assumes it to be a reference to be fetched from the associated secret provider.
+Instead of allowing users to partially fill in the remaining fields of the secret provider, require all fields to be filled ahead of time and only a reference must be passed in:
 
-This would mean the config would look like this instead:
-```
-basic_auth:
-  password: 'my-secret-value'
+ ```
+global:
+  secrets:
+  - id: myk8secret1
+    provider: kubernetes
+    namespace: ns1
+    secret_id: pass1
 ...
-basic_auth:
-  password:
-    my_secret_provider: 'my-secret-key'
+        password_ref: myk8secret1
 ```
 
-Pros:
-* Simpler, more unified config
-* Defines a clear way to use secrets outside of the `http_config` component
-
-Cons:
-* Can be more confusing
-* Requires more careful documentation
-* Unclear how to refresh the configs for arbitrary components that could now change dynamically
-
+However a downside of this approach is the large number of fields that would need to have variants created. (Currently 22 cases from searching [here](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) for `<secret>`)
 
 ## Action Plan
 
-* [x] Add a secret manager to `prometheus.common.config`
-* [ ] Add secret providers to prometheus  
-* [ ] Add docs 
+* [ ] Create action plan after doc is stable!
