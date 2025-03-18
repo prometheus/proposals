@@ -13,9 +13,6 @@
   * https://github.com/prometheus/exporter-toolkit/pull/141
   * https://github.com/prometheus/prometheus/issues/5795
 
-
-
-
 * **Other docs or links:**
   * [Prometheus Remote Secrets Doc](https://docs.google.com/document/d/1EqHd2EwQxf9SYD8-gl3sgkwaU6A10GhiN7aw-2kx7NU/edit?tab=t.0)
     * Previous proposal by @TheSpiritXIII
