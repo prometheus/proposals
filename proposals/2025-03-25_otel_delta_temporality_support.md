@@ -94,38 +94,6 @@ For the initial implementation, reuse existing chunk encodings.
 
 Currently the counter reset behaviour for cumulative native histograms is to cut a new chunk if a counter reset is detected. If a value in a bucket drops, that counts as a counter reset. As delta samples don’t build on top of each other, there could be many false counter resets detected and cause unnecessary chunks to be cut. Therefore a new counter reset hint/header is required, to indicate the cumulative counter reset behaviour for chunk cutting should not apply.
 
-#### Alternatives
-
-##### CreatedTimestamp per sample
-If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
-
-##### Treat as gauge
-To avoid introducing a new type, deltas could be represented as gauges instead and the start time ignored.
-
-This could be confusing as gauges are usually used for sampled data (for example, in OTEL: "Gauges do not provide an aggregation semantic, instead “last sample value” is used when performing operations like temporal alignment or adjusting resolution.”) rather than data that should be summed/rated over time. 
-
-##### Treat as “mini-cumulative”
-Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions. 
-
-This requires CT-per-sample to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
-
-Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. rate() assumes samples in a range are equally spaced to figure out how much to extrapolate, which is less likely to be true for delta samples.
-
-This also does not work for samples missing StartTimeUnixNano.
-
-##### Convert to rate on ingest
-Convert delta metrics to per-second rate by dividing the sample value with (`TimeUnixName` - `StartTimeUnixNano`) on ingest, and also append `:rate` to the end of the metric name (e.g. `http_server_request_duration_seconds` -> `http_server_request_duration_seconds:rate`). So the metric ends up looking like a normal Prometheus counter that was rated with a recording rule.
-
-The difference is that there is no interval information in the metric name (like :rate1m) as there is no guarantee that the interval from sample to sample stays constant.
-
-To averages rates over more than the original collection interval, a new time-weighted average function is required to accommdate cases like the collection interval changing and having a query range which isn't a multiple of the interval.
-
-This would also require zero timestamp injection or CT-per-sample for better rate calculations.
-
-Users might want to convert back to original values (e.g. to sum the original values over time). It can be difficult to reconstruct the original value if the start timestamp is far away (as there are probably limits to how far we could look back). Having CT-per-sample would help in this case, as both the StartTimeUnixNano and the TimeUnixNano would be within the sample. However, in this case it is trivial to convert between the rated and unrated count, so there is no additional benefit of storing as the calculated rate. In that case, we should prefer to store the original value as that would cause less confusion to users who look at the stored values.
-
-This also does not work for samples missing StartTimeUnixNano.
-
 ### Distinguishing between delta and cumulative metrics
 
 There should be a way to distinguish between delta and cumulative metrics. This would allow the query engine to apply different behaviour depending on the metric type. Users should also be able to see the temporality of a metric, which is useful for understanding the metric and for debugging.
@@ -136,18 +104,8 @@ When ingesting a delta metric via the OTLP endpoint, the type will be added as a
 
 A con of this approach is that querying for all counter types or all delta series is less efficient - regex matchers like `__type__=~”(delta_counter|counter)” or `__type__=~”delta_.*”` would have to be used. However, this does not seem like a particularly necessary use case to optimise for.
 
-#### Alternatives
-##### New `__temporality__` label
-
-A new `__temporality__` label could be added instead.
-
-However, not all metric types should have a temporality (e.g. gauge). Having `delta_` as part of the type label enforces that only specific metric types can have temporality. Otherwise, additional label error checking would need to be done to make sure `__temporality__` is only added to specific types.
-
-##### Metric naming convention
-
-Have a convention for naming metrics e.g. appending `_delta_counter` to a metric name. This could make the temporality more obvious at query time. However, assuming the type and unit metadata proposal is implemented, having the temporality as part of a metadata label would be more consistent than having it in the metric name.
-
 ### Remote write
+
 Remote write support is a non-goal for the initial implementation to reduce its scope. However, the current design ends up partially supporting ingesting delta metrics via remote write. This is because a label will be added to indicate the temporality of the metric and used during querying, and therefore can be added by remote write. However, there is currently no equivalent to StartTimeUnixNano per sample in remote write.
 
 For the initial implementation, there should be a documented warning that deltas are not _properly_ supported with remote write yet.
@@ -161,18 +119,53 @@ Federation allows a Prometheus server to scrape selected time series from anothe
 
 
 
-Explain the full overview of the proposed solution. Some guidelines:
-
-* Make it concise and **simple**; put diagrams; be concrete, avoid using “really”, “amazing” and “great” (:
-* How you will test and verify?
-* How you will migrate users, without downtime. How we solve incompatibilities?
-* What open questions are left? (“Known unknowns”)
-
 ## Alternatives
 
-The section stating potential alternatives. Highlight the objections reader should have towards your proposal as they read it. Tell them why you still think you should take this path [[ref](https://twitter.com/whereistanya/status/1353853753439490049)]
+### Ingesting deltas alternatives
 
-1. This is why not solution Z...
+#### CreatedTimestamp per sample
+If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
+
+#### Treat as gauge
+To avoid introducing a new type, deltas could be represented as gauges instead and the start time ignored.
+
+This could be confusing as gauges are usually used for sampled data (for example, in OTEL: "Gauges do not provide an aggregation semantic, instead “last sample value” is used when performing operations like temporal alignment or adjusting resolution.”) rather than data that should be summed/rated over time. 
+
+#### Treat as “mini-cumulative”
+Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions. 
+
+This requires CT-per-sample to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
+
+Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. rate() assumes samples in a range are equally spaced to figure out how much to extrapolate, which is less likely to be true for delta samples.
+
+This also does not work for samples missing StartTimeUnixNano.
+
+#### Convert to rate on ingest
+Convert delta metrics to per-second rate by dividing the sample value with (`TimeUnixName` - `StartTimeUnixNano`) on ingest, and also append `:rate` to the end of the metric name (e.g. `http_server_request_duration_seconds` -> `http_server_request_duration_seconds:rate`). So the metric ends up looking like a normal Prometheus counter that was rated with a recording rule.
+
+The difference is that there is no interval information in the metric name (like :rate1m) as there is no guarantee that the interval from sample to sample stays constant.
+
+To averages rates over more than the original collection interval, a new time-weighted average function is required to accommdate cases like the collection interval changing and having a query range which isn't a multiple of the interval.
+
+This would also require zero timestamp injection or CT-per-sample for better rate calculations.
+
+Users might want to convert back to original values (e.g. to sum the original values over time). It can be difficult to reconstruct the original value if the start timestamp is far away (as there are probably limits to how far we could look back). Having CT-per-sample would help in this case, as both the StartTimeUnixNano and the TimeUnixNano would be within the sample. However, in this case it is trivial to convert between the rated and unrated count, so there is no additional benefit of storing as the calculated rate. In that case, we should prefer to store the original value as that would cause less confusion to users who look at the stored values.
+
+This also does not work for samples missing StartTimeUnixNano.
+
+### Alternatives to distinguishing between delta and cumulative metrics
+
+#### New `__temporality__` label
+
+A new `__temporality__` label could be added instead.
+
+However, not all metric types should have a temporality (e.g. gauge). Having `delta_` as part of the type label enforces that only specific metric types can have temporality. Otherwise, additional label error checking would need to be done to make sure `__temporality__` is only added to specific types.
+
+#### Metric naming convention
+
+Have a convention for naming metrics e.g. appending `_delta_counter` to a metric name. This could make the temporality more obvious at query time. However, assuming the type and unit metadata proposal is implemented, having the temporality as part of a metadata label would be more consistent than having it in the metric name.
+
+
 
 ## Action Plan
 
