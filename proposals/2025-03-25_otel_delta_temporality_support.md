@@ -21,9 +21,11 @@ Prometheus supports the ingestion of OTEL metrics via its OTLP endpoint. Counter
 
 Therefore, delta metrics need to be converted to cumulative ones during ingestion. The OTLP endpoint in Prometheus has an [experimental feature to convert delta to cumulative](https://github.com/prometheus/prometheus/blob/9b4c8f6be28823c604aab50febcd32013aa4212c/docs/feature_flags.md?plain=1#L167[). Alternatively, users can run the [deltatocumulative processor](https://github.com/sh0rez/opentelemetry-collector-contrib/tree/main/processor/deltatocumulativeprocessor) in their OTEL pipeline before writing the metrics to Prometheus. 
 
-This is simple - the cumulative code for storage and querying can be reused, and when querying, users don’t need to think about the temporality of the metrics - everything just works. However, there are downsides elaborated in the Pitfalls section below.
+Tthe cumulative code for storage and querying can be reused, and when querying, users don’t need to think about the temporality of the metrics - everything just works. However, there are downsides elaborated in the Pitfalls section below. 
 
-Prometheus' goal of becoming the best OTEL metrics backend means we should support delta metrics properly. We propose to add native support for OTEL delta metrics (i.e. metrics ingested via the OTLP endpoint). Native support means storing delta metrics without transforming to cumulative, and having functions that behave appropriately for delta metrics.
+Prometheus' goal of becoming the best OTEL metrics backend means we should support delta metrics properly. 
+
+We propose to add native support for OTEL delta metrics (i.e. metrics ingested via the OTLP endpoint). Native support means storing delta metrics without transforming to cumulative, and having functions that behave appropriately for delta metrics.
 
 ### Delta datapoints
 
@@ -89,20 +91,24 @@ These may come in later iterations of delta support, however.
 When an OTLP sample has its aggregation temporality set to delta, write its value at `TimeUnixNano`. 
 
 TODO: start time nano injection
+TODO: move the CT-per-sample here as the eventual goal
 
+If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
+
+### Chunks
 For the initial implementation, reuse existing chunk encodings. 
 
 Currently the counter reset behaviour for cumulative native histograms is to cut a new chunk if a counter reset is detected. If a value in a bucket drops, that counts as a counter reset. As delta samples don’t build on top of each other, there could be many false counter resets detected and cause unnecessary chunks to be cut. Therefore a new counter reset hint/header is required, to indicate the cumulative counter reset behaviour for chunk cutting should not apply.
 
 ### Distinguishing between delta and cumulative metrics
 
-There should be a way to distinguish between delta and cumulative metrics. This would allow the query engine to apply different behaviour depending on the metric type. Users should also be able to see the temporality of a metric, which is useful for understanding the metric and for debugging.
+We need to be able to distinguish between delta and cumulative metrics. This would allow the query engine to apply different behaviour depending on the metric type. Users should also be able to see the temporality of a metric, which is useful for understanding the metric and for debugging.
 
 Our suggestion is to build on top of the [proposal to add type and unit metadata labels to metrics](https://github.com/prometheus/proposals/pull/39/files). The `__type__` label will be extended with additional delta types for any counter-like types (e.g. `delta_counter`, `delta_histogram`). The original types (e.g. `counter`) will indicate cumulative temporality.
 
 When ingesting a delta metric via the OTLP endpoint, the type will be added as a label.
 
-A con of this approach is that querying for all counter types or all delta series is less efficient - regex matchers like `__type__=~”(delta_counter|counter)” or `__type__=~”delta_.*”` would have to be used. However, this does not seem like a particularly necessary use case to optimise for.
+A downside is that querying for all counter types or all delta series is less efficient - regex matchers like `__type__=~”(delta_counter|counter)”` or `__type__=~”delta_.*”` would have to be used. However, this does not seem like a particularly necessary use case to optimise for.
 
 ### Remote write
 
@@ -114,10 +120,24 @@ For the initial implementation, there should be a documented warning that deltas
 
 No scraped metrics should have delta temporality as there is no additional benefit over cumulative in this case. To produce delta samples from scrapes, the application being scraped has to keep track of when a scrape is done and resetting the counter. If the scraped value fails to be written to storage, the application will not know about it and therefore cannot correctly calculate the delta for the next scrape.
 
-Federation allows a Prometheus server to scrape selected time series from another Prometheus server. There are problems with exposing a delta metric when federating. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. Therefore, delta metrics will be filtered out from metrics being federated.
+Federation allows a Prometheus server to scrape selected time series from another Prometheus server. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. Therefore, delta metrics will be filtered out from metrics being federated.
 
+### Querying deltas
 
+Two things to consider: migration and use cases
+`rate()` and `sum_over_time()`
+from other providers etc.
 
+first stage - delta_rate() behind feature flag and sum_over_time() - quick, can experiment
+non-extrapolation is more important -> less regular spacing, harder to guess correctly
+next stage - rate() + possible new function for doing the same with cumulative metrics
+
+should return warning if queried with unexpected type
+
+### Handling missing StartTimeUnixNano
+Keep it for OTEL compatibility
+use spacing between intervals when possible
+non-extrapolation
 
 ## Alternatives
 
@@ -153,7 +173,7 @@ Users might want to convert back to original values (e.g. to sum the original va
 
 This also does not work for samples missing StartTimeUnixNano.
 
-### Alternatives to distinguishing between delta and cumulative metrics
+### Distinguishing between delta and cumulative metrics alternatives
 
 #### New `__temporality__` label
 
@@ -165,7 +185,12 @@ However, not all metric types should have a temporality (e.g. gauge). Having `de
 
 Have a convention for naming metrics e.g. appending `_delta_counter` to a metric name. This could make the temporality more obvious at query time. However, assuming the type and unit metadata proposal is implemented, having the temporality as part of a metadata label would be more consistent than having it in the metric name.
 
+### Querying deltas alternatives
 
+TODO: these are the top ones, for more see ...
+
+rate() to do sum_over_time()
+convert to cumulative on read
 
 ## Action Plan
 
