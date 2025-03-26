@@ -39,6 +39,8 @@ Storing secrets inline can also pose risks, as the configuration file may still 
 Goals and use cases for the solution as proposed in [How](#how):
 
 * Allow Prometheus to read secrets remotely from secret providers.
+  * Anywhere in the configs([1](https://prometheus.io/docs/prometheus/latest/configuration/configuration/),[2](https://prometheus.io/docs/alerting/latest/configuration/#configuration-file-introduction)) with the `<secret>` type, it should be possible to fetch from secret providers
+  * This will include Alertmanager 
 * Introduce secret discovery, similar to service discovery, where different secret providers can contribute code to read secrets from their respective API.
 
 ### Audience
@@ -54,45 +56,27 @@ Goals and use cases for the solution as proposed in [How](#how):
 * Secret transformations/processing
   * Things like String concatenation, base64 encoding/decoding
 * Default values
+* De-duplication and re-using common config values for secret provider configs
+  * This will be left to a follow up proposal if needed
 
 ## How
 
 
 ### Configuration
 
-Wherever a secret can be inserted in the configuration file, we will allow users to specify a special YAML tag for secrets.
+Wherever a `<secret>` type is present in the configuration files, we will allow users to specify a map specifying how to fetch from a secret provider.
 
 ```
-        password: !secret provider=kubernetes namespace=ns1 secret_id=pass1
-...
-        password: !secret
+        password:
           provider: kubernetes
           namespace: ns1
-          secret_id: pass2
-```
-Additionally there will be a global section to partially configure secret providers to prevent duplication. For instance if the kubernetes provider is used multiple times like above, it can be rewritten as: 
-
-```
-global:
-  base_secrets:
-  - id: myk8secrets
-    provider: kubernetes
-    namespace: ns1
-...
-        password: !secret id=myk8secrets secret_id=pass1
-...
-        password: !secret
-          id: myk8secrets
           secret_id: pass2
 ```
 
 ### Inline secrets
 
-When specifying secrets inline in the config file, the inline provider will be used. If a string is passed in, it is automatically converted to an inline provider to be consistent with previous syntax.
+When specifying secrets inline in the config file, a string can be passed in as usual for backwards compatibility.
 ```
-        password: !secret provider=inline secret=my_important_secret
-...
-# String types that are passed in are converted to the inline secret provider
         password: my_important_secret
 ```
 
@@ -132,15 +116,13 @@ prometheus_remote_secret_state{id="myk8secrets", secret_id="pass2", state="error
 Secret providers might require secrets to be configured themselves. We will allow secrets to be passed in to secret providers.
 
 ```
-global:
-  base_secrets:
-  - id: myk8secrets
-    provider: kubernetes
-  - id: bootstrapped
-    provider: bootstrapped
-    auth_token: !secret id=myk8secrets secret_id=auth_token
 ...
         password: !secret id=bootstrapped secret_id=pass1
+          provider: bootstrapped
+          secret_id: pass1
+          auth_token:
+            provider: kubernetes
+            secret_id: auth_token
 ```
 
 However, an initial implementation might only allow inline secrets for secret providers. This might limit the usefulness of certain providers that require sensitive information for their own configuration.
@@ -148,25 +130,6 @@ However, an initial implementation might only allow inline secrets for secret pr
 ### Where will code live
 
 Both the alertmanager and prometheus repos will be able to use secret providers. The code will eventually live in a separete repository specifically created for it.
-
-## Alternatives
-
-### Secret references
-
-Instead of allowing users to partially fill in the remaining fields of the secret provider, require all fields to be filled ahead of time and only a reference must be passed in:
-
- ```
-global:
-  secrets:
-  - id: myk8secret1
-    provider: kubernetes
-    namespace: ns1
-    secret_id: pass1
-...
-        password_ref: myk8secret1
-```
-
-However a downside of this approach is the large number of fields that would need to have variants created. (Currently 22 cases from searching [here](https://prometheus.io/docs/prometheus/latest/configuration/configuration/) for `<secret>`)
 
 ## Action Plan
 
