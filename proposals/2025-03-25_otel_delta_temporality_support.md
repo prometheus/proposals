@@ -64,7 +64,9 @@ State becomes more complex in distributed cases - if there are multiple OTEL col
 Cumulative metrics usually need to be wrapped in a `rate()` or `increase()` etc. call to get a useful result. However, it could be confusing when querying just the metric without any functions, the returned value is not the same as the ingested value.
 
 #### Does not handle sparse metrics well
-As mentioned in Background, sparse metrics are more common with delta. This can interact awkwardly with `rate()` - the `rate()` function in Prometheus does not work with only a single datapoint in the range, and assumes even spacing between samples. There is more discussion on this in the Querying deltas section.
+As mentioned in Background, sparse metrics are more common with delta. This can interact awkwardly with `rate()` - the `rate()` function in Prometheus does not work with only a single datapoint in the range, and assumes even spacing between samples.
+
+TODO: would intermittent be a better word to describe this behaviour?
 
 ## Goals
 
@@ -104,7 +106,7 @@ Currently the counter reset behaviour for cumulative native histograms is to cut
 
 We need to be able to distinguish between delta and cumulative metrics. This would allow the query engine to apply different behaviour depending on the metric type. Users should also be able to see the temporality of a metric, which is useful for understanding the metric and for debugging.
 
-Our suggestion is to build on top of the [proposal to add type and unit metadata labels to metrics](https://github.com/prometheus/proposals/pull/39/files). The `__type__` label will be extended with additional delta types for any counter-like types (e.g. `delta_counter`, `delta_histogram`). The original types (e.g. `counter`) will indicate cumulative temporality.
+Our suggestion is to build on top of the [proposal to add type and unit metadata labels to metrics](https://github.com/prometheus/proposals/pull/39/files). The `__type__` label will be extended with additional delta types for any counter-like types (e.g. `delta_counter`, `delta_histogram`). The original types (e.g. `counter`) will indicate cumulative temporality. (Note: type metadata might become native series information rather than labels; if that happens, we'd use that for indicating the delta types instead of labels.)
 
 When ingesting a delta metric via the OTLP endpoint, the type will be added as a label.
 
@@ -120,21 +122,74 @@ For the initial implementation, there should be a documented warning that deltas
 
 No scraped metrics should have delta temporality as there is no additional benefit over cumulative in this case. To produce delta samples from scrapes, the application being scraped has to keep track of when a scrape is done and resetting the counter. If the scraped value fails to be written to storage, the application will not know about it and therefore cannot correctly calculate the delta for the next scrape.
 
-Federation allows a Prometheus server to scrape selected time series from another Prometheus server. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. Therefore, delta metrics will be filtered out from metrics being federated.
-
+Delta metrics will be filtered out from metrics being federated. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. 
 ### Querying deltas
 
-Two things to consider: migration and use cases
-`rate()` and `sum_over_time()`
-from other providers etc.
+`rate()` and `increase()` will be extended to support delta metrics too. If the `__type__` starts with `delta_`, execute delta-specific logic instead of the current cumulative logic. The delta-specific logic will keep the intention of the rate/increase functions - that is, estimate the rate/increase over the selected range given the samples in the range, extrapolating if the samples do not align with the start and end of the range.
 
-first stage - delta_rate() behind feature flag and sum_over_time() - quick, can experiment
-non-extrapolation is more important -> less regular spacing, harder to guess correctly
-next stage - rate() + possible new function for doing the same with cumulative metrics
+`irate()` will also be extended to support delta metrics.
 
-should return warning if queried with unexpected type
+Having functions transparently handle the temporality simplifies the user experience - users do not need to know the temporality of a series for querying, and means queries don't need to be rewriten wehn migrating between cumulative and delta metrics.
+
+`resets()` does not apply to delta metrics, however, so will return no results plus a warning in this case.
+
+While the intention is to eventually use `rate()`/`increase()` etc. for both delta and cumulative metrics, initially experimental functions prefixed with `delta_` will be introduced behind a delta-support feature flag. This is to make it clear that these are experimental and the logic could change as we start seeing how they work in real-world scenarios. In the long run, we’d move the logic into `rate()`.
+
+#### Guessing start and end of series
+
+The current `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range.
+
+With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples. Therefore the delta implementation of `rate()`/`increase()` will not try and guess when a series starts and ends. Instead, it will always assume the series is ongoing for the whole range and always extrapolate to the whole range.
+
+This could inflate the value of the series, which can be especially problematic during rollouts when old series are replaced by new ones.
+
+As part of the implementation, experiment with heuristics to try and improve this (e.g. if intervals between samples are regular and there are than X samples, assume the samples are continuously ingested and therefore a gap would mean the series ended). This would make the calculation more complex, however.
+
+#### `rate()`/`increase()` calculation
+
+When CT-per-sample is introduced, there will be more information that could be used to more accurately calculate the rate (specifically, the first sample can be taken into account). Therefore the calculation differs depending on whether there is a CT within the sample.
+
+TODO: write code for these implementations to make it clearer
+
+*Without CT-per-sample rate()/increase()*
+
+`(sum of second to last samples / (last sample ts - first sample ts))` (multiply by range if `increase()`)
+
+We ignore the value of the first sample as we do not know when it started.
+
+*With CT-per-sample rate()/increase()*
+
+In this case, we don’t need to guess where the series started. As we have CT-per-sample, if a sample is before the range start, it can't be within in the range at all. We still cannot tell if there is a sample that overlaps with the end range, however.
+
+1. If the start time of the first sample is outside the range, truncate the sample so we only take into account of the value within the range: 
+    * `first sample value = first sample value * (first sample interval - (range start ts - first sample start ts))`
+    * `first sample value ts = range start ts` 
+2. Calculate rate: `(sum of all samples / (last sample ts - range start ts))` 
+    * Multiply by `range end ts - max(range start ts, first sample start ts)` for `increase()`.
+
+#### Non-extrapolation
+
+There may be cases where extrapolating to get the rate/increase over the selected range is unwanted for delta metrics. Extrapolation may work worse for deltas since we do not try and guess when series start and end.
+
+Users may prefer "non-extrapolation" behaviour that just gives them the sum of the sample values within the range. This can be accomplished with `sum_over_time()`. Note that this does not accurately give them the increase within the range.
+
+As an example:
+
+* S1: StartTimeUnixNano: T0, TimeUnixNano: T2, Value: 5
+* S2: StartTimeUnixNano: T2, TimeUnixNano: T4, Value: 1
+* S3: StartTimeUnixNano: T4, TimeUnixNano: T6, Value: 9 
+
+And  `sum_over_time() was executed between T1 and T5.
+
+As the samples are written at TimeUnixNano, only S1 and S2 are inside the query range. The total (aka “increase”)  of S1 and S2 would be 5 + 1 = 6. This is actually the increase between T0 (StartTimeUnixNano of S1) and T4 (TimeUnixNano of S2) rather than the increase between T1 and T5. In this case, the size of the requested range is the same as the actual range, but if the query was done between T1 and T4, the request and actual ranges would not match.
+
+`sum_over_time()` does not work for cumulative metrics, so a warning should be returned in this case. One downside is that this could make migrating from delta to cumulative metrics harder, since `sum_over_time()` queries would need to be rewritten, and users wanting to use `sum_over_time()` will need to know the temporality of their metrics.
+
+One possible solution would to have a function that does `sum_over_time()` for deltas and the cumulative equivalent too (this requires subtracting the latest sample before the start of the range with the last sample in the range). This is outside the scope of this design, however.
 
 ### Handling missing StartTimeUnixNano
+
+StartTimeUnixNano is optional in the OTEL spec ...
 Keep it for OTEL compatibility
 use spacing between intervals when possible
 non-extrapolation
@@ -144,6 +199,7 @@ non-extrapolation
 ### Ingesting deltas alternatives
 
 #### CreatedTimestamp per sample
+
 If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
 
 #### Treat as gauge
