@@ -123,9 +123,12 @@ For the initial implementation, there should be a documented warning that deltas
 No scraped metrics should have delta temporality as there is no additional benefit over cumulative in this case. To produce delta samples from scrapes, the application being scraped has to keep track of when a scrape is done and resetting the counter. If the scraped value fails to be written to storage, the application will not know about it and therefore cannot correctly calculate the delta for the next scrape.
 
 Delta metrics will be filtered out from metrics being federated. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. 
+
 ### Querying deltas
 
-`rate()` and `increase()` will be extended to support delta metrics too. If the `__type__` starts with `delta_`, execute delta-specific logic instead of the current cumulative logic. The delta-specific logic will keep the intention of the rate/increase functions - that is, estimate the rate/increase over the selected range given the samples in the range, extrapolating if the samples do not align with the start and end of the range.
+*Note: this section likely needs the most discussion. I'm not 100% about the proposal because of issues guessing the start and end of series. The main alternatives can be found in [Querying deltas alternatives](#querying-deltas-alternatives), and a more detailed doc with additional context and options is [here](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.3zt1m2ezcl1s).*
+
+`rate()` and `increase()` will be extended to support delta metrics too. If the `__type__` starts with `delta_`, execute delta-specific logic instead of the current cumulative logic. For consistenct, the delta-specific logic will keep the intention of the rate/increase functions - that is, estimate the rate/increase over the selected range given the samples in the range, extrapolating if the samples do not align with the start and end of the range.
 
 `irate()` will also be extended to support delta metrics.
 
@@ -133,45 +136,31 @@ Having functions transparently handle the temporality simplifies the user experi
 
 `resets()` does not apply to delta metrics, however, so will return no results plus a warning in this case.
 
-While the intention is to eventually use `rate()`/`increase()` etc. for both delta and cumulative metrics, initially experimental functions prefixed with `delta_` will be introduced behind a delta-support feature flag. This is to make it clear that these are experimental and the logic could change as we start seeing how they work in real-world scenarios. In the long run, we’d move the logic into `rate()`.
+While the intention is to eventually use `rate()`/`increase()` etc. for both delta and cumulative metrics, initially experimental functions prefixed with `delta_` will be introduced behind a delta-support feature flag. This is to make it clear that these are experimental and the logic could change as we start seeing how they work in real-world scenarios. In the long run, we’d move the logic into `rate()` etc..
 
-#### Guessing start and end of series
+#### rate() calculation
+
+TODO: write some code to make this clearer
+
+In general: `sum of all sample values / (last sample ts - first sample start ts)) * range`. If the start time of the first sample is outside the range, truncate the first sample.
 
 The current `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range.
 
-With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples. Therefore the delta implementation of `rate()`/`increase()` will not try and guess when a series starts and ends. Instead, it will always assume the series is ongoing for the whole range and always extrapolate to the whole range.
+With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples. 
 
-This could inflate the value of the series, which can be especially problematic during rollouts when old series are replaced by new ones.
+We could just not try and predict the start/end of the series and assume the series continues to extend to beyond the samples in the range. However, not predicting the start and end of the series could inflate the rate/increase value, which can be especially problematic during rollouts when old series are replaced by new ones.
 
-As part of the implementation, experiment with heuristics to try and improve this (e.g. if intervals between samples are regular and there are than X samples, assume the samples are continuously ingested and therefore a gap would mean the series ended). This would make the calculation more complex, however.
+Assuming `rate()` only has information about the sample within the range, guessing the start and end of series is probably the least worst option - this will at least work in delta cases where the samples are continuously ingested. To predict if a series has started ended in the range, check if the timestamp of the last sample are within 1.1x of an interval between their respective boundaries (aligns with the cumulative check for start/end of a series).
 
-#### `rate()`/`increase()` calculation
+As part of the implementation process, experiment with heuristics to try and improve this (e.g. if intervals between samples are regular and there are than X samples, assume the samples are continuously ingested and therefore a gap would mean the series ended). This would make the calculation more complex, however.
 
-When CT-per-sample is introduced, there will be more information that could be used to more accurately calculate the rate (specifically, the first sample can be taken into account). Therefore the calculation differs depending on whether there is a CT within the sample.
+With CT-per-sample, we do not need to predict the start of the series, as if a sample is before the range start, it can't be within in the range at all.
 
-TODO: write code for these implementations to make it clearer
+#### Non-approximation
 
-*Without CT-per-sample rate()/increase()*
+There may be cases where approximating the rate/increase over the selected range is unwanted for delta metrics. Approximation may work worse for deltas since we do not try and guess when series start and end.
 
-`(sum of second to last samples / (last sample ts - first sample ts))` (multiply by range if `increase()`)
-
-We ignore the value of the first sample as we do not know when it started.
-
-*With CT-per-sample rate()/increase()*
-
-In this case, we don’t need to guess where the series started. As we have CT-per-sample, if a sample is before the range start, it can't be within in the range at all. We still cannot tell if there is a sample that overlaps with the end range, however.
-
-1. If the start time of the first sample is outside the range, truncate the sample so we only take into account of the value within the range: 
-    * `first sample value = first sample value * (first sample interval - (range start ts - first sample start ts))`
-    * `first sample value ts = range start ts` 
-2. Calculate rate: `(sum of all samples / (last sample ts - range start ts))` 
-    * Multiply by `range end ts - max(range start ts, first sample start ts)` for `increase()`.
-
-#### Non-extrapolation
-
-There may be cases where extrapolating to get the rate/increase over the selected range is unwanted for delta metrics. Extrapolation may work worse for deltas since we do not try and guess when series start and end.
-
-Users may prefer "non-extrapolation" behaviour that just gives them the sum of the sample values within the range. This can be accomplished with `sum_over_time()`. Note that this does not accurately give them the increase within the range.
+Users may prefer "non-approximating" behaviour that just gives them the sum of the sample values within the range. This can be accomplished with `sum_over_time()`. Note that this does not accurately give them the increase within the range.
 
 As an example:
 
@@ -189,10 +178,9 @@ One possible solution would to have a function that does `sum_over_time()` for d
 
 ### Handling missing StartTimeUnixNano
 
-StartTimeUnixNano is optional in the OTEL spec ...
-Keep it for OTEL compatibility
-use spacing between intervals when possible
-non-extrapolation
+StartTimeUnixNano is optional in the OTEL spec. To ensure compatibility with the OTEL spec, this case should be supported. Also note that before implementing CT-per-sample, every sample will be missing StartTimeUnixNano.
+
+For functions that require an interval to operate (e.g. rate()/increase()), assume the spacing between samples is the ingestion interval when StartTimeUnixNano is missing. 
 
 ## Alternatives
 
@@ -243,10 +231,47 @@ Have a convention for naming metrics e.g. appending `_delta_counter` to a metric
 
 ### Querying deltas alternatives
 
-TODO: these are the top ones, for more see ...
+#### Lookahead and lookbehind of range
 
-rate() to do sum_over_time()
-convert to cumulative on read
+The reason why `increase()`/`rate()` need extrapolation to cover the entire range is that they’re constrained to only look at the samples within the range. This is a problem for both cumulative and delta metrics.
+
+To work out the increase more accurately, they would also have to look at the sample before and the sample after the range to see if there are samples that partially overlap with the range - in that case the partial overlaps should be added to the increase.
+
+This could be a new function, or changing the `rate()` function (it could be dangerous to adjust `rate()`/`increase()` though as they’re so widely used that users may be dependent on their current behaviour even if they are “less accurate”).
+
+With deltas, we don’t need to lookbehind if we had CT-per-sample, only lookahead.
+
+This would be a good long-term proposal for deltas (and cumulative metrics).
+
+#### Do sum_over_time() / range for delta `rate()` implementation
+
+Instead of trying to approximate the rate over the interval, just sum all the samples in the range and divide by the range for `rate()`.
+
+For cumulative metrics, just taking the samples in the range and not approximating to cover the whole range is a bad approach. In the cumulative case, this would mean just taking the difference between the first and last samples and dividing by the range.  As the first and last samples are unlikely to perfectly align with the start and end of the range, taking the difference between the two is likely to be an underestimation of the increase for the range. 
+
+For delta metrics, this is less likely to be an underestimation. Non-approximation would mean something different than in the cumulative case - summing all the samples together. It's less likely to be an underestimation because the start time of the first sample could be before the start of the query range. So the total range of the selected samples could be similar to the query range.
+
+Below is an image to demonstrate - the filled in blue squares are the samples within the range, with the lines between the interval for which the sample data was collected. The unfilled blue squad is the start time for the first sample in the range, which is before the start time of the query range, and the total range of the samples is similar to the query range, just offset.
+
+![Range covered by samples vs query range](../assets/2025-03-25_otel-delta-temporality-support/sum_over_time_range.png)
+
+As noted in [Non-approximation](#non-approximation), the actual range covered by the sum could still be different from the query range in the delta case. For the ranges to match, the query range needs to be a multiple of the collection interval, which Prometheus does not enforce. Also, this finds the rate between the start time of the first sample and the end time of the last sample, which won't always match the start and end times of the query.
+
+For users wanting this behaviour instead of the suggested one (approximating the rate/increase over the selected range), it is still possible do with (`sum_over_time(<delta metric>)` / `<range>`).
+
+Having `rate()`/`increase()`) do different things for cumulative and delta metrics can be confusing (e.g. with deltas and integer samples, you'd always get an integer value if you use `sum_over_time()`, but the same wouldn't be true for cumulative metrics with the current `increase()` behaviour). 
+
+If we were to add behaviour to do the cumulative version of "sum_over_time", that would likely be in a different function. And then you'd have different functions to do non-approximation for delta and cumulative metrics, which again causes confusion.
+
+If we went for this approach first, but then updated `rate() to lookahead and lookbehind in the long term, users depending on the "non-extrapolation" could be affected.
+
+#### Convert to cumulative on query
+
+Delta to cumulative conversion at query time doesn’t have the same out of order issues as conversion at ingest. When a query is executed, it uses a fixed snapshot of data. The order the data was ingested does not matter, the cumulative values are correctly calculated by processing the samples in timestamp-order. 
+
+No function modification needed - all cumulative functions will work for samples ingested as deltas.
+
+However, it can be confusing for users that the delta samples they write are transformed into cumulative samples with different values during querying. The sparseness of delta metrics also do not work well with the current `rate()` and `increase()` functions.
 
 ## Action Plan
 
