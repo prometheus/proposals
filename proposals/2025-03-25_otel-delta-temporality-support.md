@@ -129,6 +129,12 @@ No scraped metrics should have delta temporality as there is no additional benef
 
 Delta metrics will be filtered out from metrics being federated. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. 
 
+### Handling missing StartTimeUnixNano
+
+StartTimeUnixNano is optional in the OTEL spec. To ensure compatibility with the OTEL spec, this case should be supported. Also note that before implementing CT-per-sample, every sample will be missing StartTimeUnixNano.
+
+For functions that require an interval to operate (e.g. `rate()`/`increase()`), assume the spacing between samples is the ingestion interval when StartTimeUnixNano is missing. 
+
 ### Querying deltas
 
 *Note: this section likely needs the most discussion. I'm not 100% about the proposal because of issues guessing the start and end of series. The main alternatives can be found in [Querying deltas alternatives](#querying-deltas-alternatives), and a more detailed doc with additional context and options is [here](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.3zt1m2ezcl1s).*
@@ -147,7 +153,9 @@ While the intention is to eventually use `rate()`/`increase()` etc. for both del
 
 TODO: write some code to make this clearer
 
-In general: `sum of all sample values / (last sample ts - first sample start ts)) * range`. If the start time of the first sample is outside the range, truncate the first sample.
+In general:
+* If CT-per-sample is available: `sum of all sample values / (last sample ts - first sample start ts)) * range`. If the start time of the first sample is outside the range, truncate the first sample.
+* If CT-per-sample is not available: `sum of second to last sample values / (last sample ts - first sample ts)) * range`. We skip the value of the first sample value as we do not know its interval.
 
 The current `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range.
 
@@ -156,6 +164,10 @@ With sparse delta series, a long gap to a boundary is not very meaningful. The s
 We could just not try and predict the start/end of the series and assume the series continues to extend to beyond the samples in the range. However, not predicting the start and end of the series could inflate the rate/increase value, which can be especially problematic during rollouts when old series are replaced by new ones.
 
 Assuming `rate()` only has information about the sample within the range, guessing the start and end of series is probably the least worst option - this will at least work in delta cases where the samples are continuously ingested. To predict if a series has started ended in the range, check if the timestamp of the last sample are within 1.1x of an interval between their respective boundaries (aligns with the cumulative check for start/end of a series).
+
+To calculate the interval:
+* If CT-per-sample is available, use the average of the intervals of the samples (i.e. TimeUnixNano - StartTimeUnixNano). 
+* If CT-per-sample is not available, use the average spacing between samples.
 
 As part of the implementation process, experiment with heuristics to try and improve this (e.g. if intervals between samples are regular and there are than X samples, assume the samples are continuously ingested and therefore a gap would mean the series ended). This would make the calculation more complex, however.
 
@@ -180,12 +192,6 @@ As the samples are written at TimeUnixNano, only S1 and S2 are inside the query 
 `sum_over_time()` does not work for cumulative metrics, so a warning should be returned in this case. One downside is that this could make migrating from delta to cumulative metrics harder, since `sum_over_time()` queries would need to be rewritten, and users wanting to use `sum_over_time()` will need to know the temporality of their metrics.
 
 One possible solution would to have a function that does `sum_over_time()` for deltas and the cumulative equivalent too (this requires subtracting the latest sample before the start of the range with the last sample in the range). This is outside the scope of this design, however.
-
-### Handling missing StartTimeUnixNano
-
-StartTimeUnixNano is optional in the OTEL spec. To ensure compatibility with the OTEL spec, this case should be supported. Also note that before implementing CT-per-sample, every sample will be missing StartTimeUnixNano.
-
-For functions that require an interval to operate (e.g. rate()/increase()), assume the spacing between samples is the ingestion interval when StartTimeUnixNano is missing. 
 
 ## Alternatives
 
