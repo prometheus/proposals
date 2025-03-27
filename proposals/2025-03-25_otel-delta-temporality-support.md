@@ -1,17 +1,22 @@
 
-## Your Proposal Title
+# OTEL delta temporality support
 
 * **Owners:**
   * @fionaliao
-TODO: add others from delta wg
+  * Initial design started by @ArthurSens and @sh0rez
+  * TODO: add others from delta wg
 
 * **Implementation Status:** `Not implemented`
 
 * **Related Issues and PRs:**
-  * `<GH Issues/PRs>`
+  * https://github.com/prometheus/prometheus/issues/12763
 
 * **Other docs or links:**
-  * `<Links…>`
+  * [Original design doc](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.0)
+  * Additional context
+    * [OpenTelemetry metrics: A guide to Delta vs. Cumulative temporality trade-offs](https://docs.google.com/document/d/1wpsix2VqEIZlgYDM3FJbfhkyFpMq1jNFrJgXgnoBWsU/edit?tab=t.0#heading=h.wwiu0da6ws68)
+    * [Musings on delta temporality in Prometheus](https://docs.google.com/document/d/1vMtFKEnkxRiwkr0JvVOrUrNTogVvHlcEWaWgZIqsY7Q/edit?tab=t.0#heading=h.5sybau7waq2q)
+    * [Chronosphere Delta Experience Report](https://docs.google.com/document/d/1L8jY5dK8-X3iEoljz2E2FZ9kV2AbCa77un3oHhariBc/edit?tab=t.0#heading=h.3gflt74cpc0y)
 
  This design doc proposes adding native delta support to Prometheus. This means storing delta metrics without transforming to cumulative, and having functions that behave appropriately for delta metrics.
 
@@ -66,8 +71,6 @@ Cumulative metrics usually need to be wrapped in a `rate()` or `increase()` etc.
 #### Does not handle sparse metrics well
 As mentioned in Background, sparse metrics are more common with delta. This can interact awkwardly with `rate()` - the `rate()` function in Prometheus does not work with only a single datapoint in the range, and assumes even spacing between samples.
 
-TODO: would intermittent be a better word to describe this behaviour?
-
 ## Goals
 
 Goals and use cases for the solution as proposed in [How](#how):
@@ -83,21 +86,22 @@ This document is for Prometheus server maintainers, PromQL maintainers, and Prom
 ## Non-Goals
 
 * Support for ingesting delta metrics via other means (e.g. remote-write)
-* Support for non-monotonic sums
+* Support for converting OTEL non-monotonic sums to Prometheus counters (currently these are converted to Prometheus gauges)
 
 These may come in later iterations of delta support, however.
 
 ## How
 
 ### Ingesting deltas
-When an OTLP sample has its aggregation temporality set to delta, write its value at `TimeUnixNano`. 
 
-TODO: start time nano injection
-TODO: move the CT-per-sample here as the eventual goal
+When an OTLP sample has its aggregation temporality set to delta, write its value at `TimeUnixNano`.
 
-If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
+There is an effort towards adding CreatedTimestamp as a field for each sample ([PR](https://github.com/prometheus/prometheus/pull/16046/files)). This is for cumulative counters, but can be reused for deltas too. When this is completed, if `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample.
+
+CT-per-sample is not a blocker for deltas - before this is ready, `StartTimeUnixNano` will just be ignored.
 
 ### Chunks
+
 For the initial implementation, reuse existing chunk encodings. 
 
 Currently the counter reset behaviour for cumulative native histograms is to cut a new chunk if a counter reset is detected. If a value in a bucket drops, that counts as a counter reset. As delta samples don’t build on top of each other, there could be many false counter resets detected and cause unnecessary chunks to be cut. Therefore a new counter reset hint/header is required, to indicate the cumulative counter reset behaviour for chunk cutting should not apply.
@@ -168,7 +172,7 @@ As an example:
 * S2: StartTimeUnixNano: T2, TimeUnixNano: T4, Value: 1
 * S3: StartTimeUnixNano: T4, TimeUnixNano: T6, Value: 9 
 
-And  `sum_over_time() was executed between T1 and T5.
+And  `sum_over_time()` was executed between T1 and T5.
 
 As the samples are written at TimeUnixNano, only S1 and S2 are inside the query range. The total (aka “increase”)  of S1 and S2 would be 5 + 1 = 6. This is actually the increase between T0 (StartTimeUnixNano of S1) and T4 (TimeUnixNano of S2) rather than the increase between T1 and T5. In this case, the size of the requested range is the same as the actual range, but if the query was done between T1 and T4, the request and actual ranges would not match.
 
@@ -186,9 +190,13 @@ For functions that require an interval to operate (e.g. rate()/increase()), assu
 
 ### Ingesting deltas alternatives
 
-#### CreatedTimestamp per sample
+#### Inject zeroes for StartTimeUnixNano
 
-If `StartTimeUnixNano` is set for a delta counter, it should be stored in the CreatedTimestamp field of the sample. The CreatedTimestamp field does not exist yet, but there is currently an effort towards adding it for cumulative counters ([PR](https://github.com/prometheus/prometheus/pull/16046/files)), and can be reused for deltas. Having the timestamp and the start timestamp stored in a sample means that there is the potential to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
+[CreatedAt timestamps can be injected as 0-valued samples](https://prometheus.io/docs/prometheus/latest/feature_flags/#created-timestamps-zero-injection). Similar could be done for StartTimeUnixNano. 
+
+CT-per-sample is a better solution overall as it links the start timestamp with the sample. It makes it easier to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
+
+If CT-per-sample takes too long, this could be a temporary solution.
 
 #### Treat as gauge
 To avoid introducing a new type, deltas could be represented as gauges instead and the start time ignored.
@@ -273,9 +281,18 @@ No function modification needed - all cumulative functions will work for samples
 
 However, it can be confusing for users that the delta samples they write are transformed into cumulative samples with different values during querying. The sparseness of delta metrics also do not work well with the current `rate()` and `increase()` functions.
 
+## Known unknowns
+
+### Native histograms performance
+
+To work out the delta for all the cumulative native histograms in an interval, the first sample is subtracted from the last and then adjusted for counter resets within all the samples. Counter resets are detected at ingestion time when possible. This means the query engine does not have to read all buckets from all samples to calculate the result. The same is not true for delta metrics - as each sample is independent, to get the delta between the start and end of the interval, all of the buckets in all of the samples need to be summed, which is less efficient at query time.
+
 ## Action Plan
 
 The tasks to do in order to migrate to the new idea.
 
-* [ ] Task one <GH issue>
-* [ ] Task two <GH issue> ...
+TODO: break down further
+
+- [ ] Implement type and metadata proposal
+- [ ] Add delta ingestion + `delta_` functions behind new feature flag
+- [ ] Merge `delta_` functions with cumulative equivalent 
