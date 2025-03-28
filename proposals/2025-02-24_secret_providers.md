@@ -20,7 +20,7 @@
   * https://groups.google.com/g/prometheus-users/c/yWLE9qoG5GU/m/ke8ewxjIAQAJ
   
 
-> TL;DR: This document proposes adding a new way for Prometheus to discover and use secrets from various secret providers, similar to how service discovery works. It introduces a new configuration section where users can specify different secret providers and their configurations. It also defines interfaces and methods for secret providers to implement, allowing for flexibility in how secrets are fetched and managed.
+> TL;DR: This proposal introduces "secret providers" for Prometheus and Alertmanager, enabling them to fetch secrets from external systems. The config format will allow specifying a provider and its parameters for `<secret>` fields.
 
 ## Why
 
@@ -42,6 +42,7 @@ Goals and use cases for the solution as proposed in [How](#how):
   * Anywhere in the configs([1](https://prometheus.io/docs/prometheus/latest/configuration/configuration/),[2](https://prometheus.io/docs/alerting/latest/configuration/#configuration-file-introduction)) with the `<secret>` type, it should be possible to fetch from secret providers
   * This will include Alertmanager 
 * Introduce secret discovery, similar to service discovery, where different secret providers can contribute code to read secrets from their respective API.
+* Backwards compatibility for secrets in config
 
 ### Audience
 
@@ -64,7 +65,17 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 ### Configuration
 
-Wherever a `<secret>` type is present in the configuration files, we will allow users to specify a map specifying how to fetch from a secret provider.
+Wherever a `<secret>` type is present in the configuration files, we will allow users to specify a map specifying how to fetch from a secret provider. The generic format would be
+
+```
+secret_field:
+  provider:  <type of the provider>
+  <property1>: <value1>
+  ...
+  <propertyN>: <valueN>
+```
+
+For example when specifying a password fetched from the kubernetes provider with an id of `pass2` in namespace `ns1` for the HTTP passsword field it would look like this:
 
 ```
         password:
