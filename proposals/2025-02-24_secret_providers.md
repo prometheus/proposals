@@ -128,7 +128,7 @@ Secret providers might require secrets to be configured themselves. We will allo
 
 ```
 ...
-        password: !secret id=bootstrapped secret_id=pass1
+        password:
           provider: bootstrapped
           secret_id: pass1
           auth_token:
@@ -140,7 +140,7 @@ However, an initial implementation might only allow inline secrets for secret pr
 
 ### Where will code live
 
-Both the alertmanager and prometheus repos will be able to use secret providers. The code will eventually live in a separete repository specifically created for it.
+Both the Alertmanager and Prometheus repos will be able to use secret providers. The code will eventually live in a separete repository specifically created for it.
 
 ## Action Plan
 
