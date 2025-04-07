@@ -188,7 +188,7 @@ This solution is not chosen because:
 
 ### Handle __type__ and __unit__ in PromQL operations
 
-Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all PromQL operations remove the `__unit__` and `__type__` label (with the exception of `label_replace`). Over time, we can update each function to keep these labels by implementing the appropriate logic.  For example, adding two gauges together should yeild a gauge.
+Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all PromQL operations remove the `__unit__` and `__type__` label (with the exception of `label_replace`). Over time, we can update each function to keep these labels by implementing the appropriate logic.  For example, adding two gauges together should yield a gauge.
 
 ### Support PromQL operations on timeseries with the same base unit, but different scale
 
