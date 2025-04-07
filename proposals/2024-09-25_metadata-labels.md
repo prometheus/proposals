@@ -76,7 +76,7 @@ When a query for a metric returns multiple metrics with a different `__type__` o
 
 Users don't see the `__type__` or `__unit__` labels in the Prometheus UI next to other labels by default.
 
-When a query will drop metric name in a effect of an operation or function `__type__` and `__unit__` will be also dropped.
+When a query drops the metric name in an effect of an operation or function, `__type__` and `__unit__` will also be dropped.
 
 Users see no change to exposition formats as a result of this proposal.
 
