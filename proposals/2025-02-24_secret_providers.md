@@ -97,7 +97,19 @@ We can classify all errors stemming from secret provider failures into 2 cases.
 
 The first case is that we have not gotten any secret value since startup. In this case we should not initialize any component that mentions this faulty secret, log this failure and schedule a retry to get this secret value and initialize the component.
 
-The second case is that we already have a secret value, but refreshing it has resulted in an error. In this case we should keep the component that uses this secret running with the potentially stale secret, schedule a retry and 
+The second case is that we already have a secret value, but refreshing it has resulted in an error. In this case we should keep the component that uses this secret running with the potentially stale secret, and schedule a retry.
+
+
+### Secret rotation
+
+When a secret is rotated, it is possible for this to happen out of sync. For  example, one of the following could happen with secrets used for target scraping:
+
+1. The scrape target's secret updated but the currently stored secret hasn't updated yet.
+2. The secret provider's secret changes but the scrape target hasn't updated to the new secret yet.
+
+Therefore to help alleviate 1. we can ignore caching and query the secret provider again if permission errors are reported by the component.
+
+To alleviate 2. we can store the previous secret value before rotation for a period of time and use it as a fallback in case of permission errors.
 
 ### Metrics
 
