@@ -105,7 +105,7 @@ foo_sum 324789.3
 
 In this case, semantically one could say `_count` and `_bucket` series values represent a unit of `observations` or `1`. The `seconds` unit relate only to `le` label and `_sum` values in this case.
 
-For simplicity, we propose PromQL expect all the above series to have `__type__=histogram` and `__unit__=seconds`, despite. See [the related alternative](#omit-__unit__-label-from-counting-series-for-summaries-and-histograms).
+For simplicity, we propose that PromQL should expect all the above series to have `__type__=histogram` and `__unit__=seconds` regardless. See [the related alternative](#omit-__unit__-label-from-counting-series-for-summaries-and-histograms).
 
 ### PromQL Changes
 
@@ -119,7 +119,7 @@ When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats,
  
 For example for OpenMetrics parser, the [type is validated](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464) to be case-sensitive subset [the defined OpenMetrics 1,0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types). Unit can be any string, with [some soft recommendations from the OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units). In other places where see unsupported type, Prometheus might normalize the value to "unknown". Again, this may change and [another proposal for PromQL type and unit definition is required](#more-strict-unit-and-type-value-definition).
 
-Generally clients should never expose type and unit labels as it's a special label starting with `__`. However, it can totally happen by accident or for custom SDKs and exporters. That's why any existing user provided labels for `__unit__` and `__type__` should be overridden by the existing metadata mechanisms in current exposition and ingestion formats. Typeless (including unknown type), nameless and unless entries will NOT produce any labels.
+Generally clients should never expose type and unit labels as it's a special label starting with `__`. However, it can totally happen by accident or for custom SDKs and exporters. That's why any existing user provided labels for `__unit__` and `__type__` should be overridden by the existing metadata mechanisms in current exposition and ingestion formats. Typeless (including unknown type), nameless and unitless entries will NOT produce any labels.
 
 For PRW 1.0, this logic is omitted because metadata is sent separately from timeseries, making it infeasible to add the labels at ingestion time.
 
@@ -145,7 +145,7 @@ This is scoped down from the initial implementation due to complexity of the spe
 
 ### More strict unit and type value definition
 
-Current plan delegate definition to exposition and ingestion formats. Then also, generally it's not feasible to expect all the backends with all the
+The current plan delegates the unit and type label definitions to exposition and ingestion formats. Generally, it's not feasible to expect all of the backends to be compatible with all of the
 different types and units. For example for unit [OM unit is free-form string with the bias towards base units](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units) for OTLP semantic conventions it's [the UCUM](https://unitsofmeasure.org/ucum) standard. For types OpenMetrics define e.g. stateset, which neither Prometheus, or OTLP natively supports. OTLP defines `UpDownCounter` which does not natively exist in Prometheus or OpenMetrics.
 
 One could try to define standard translations or required subset of supported types in PromQL e.g. [the lowercase OpenMetrics types](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464). This is essential if we want to have robust type or unit aware functions and operations in PromQL one day. Also, it's critical for the proposal of noticing mixed types being passed through the PromQL engine or auto-converting units.
@@ -173,7 +173,7 @@ my_metric~seconds.total{...}
 my_metric~seconds.counter{...} 
 {"my_metric", ...}~seconds.total 
 
-# We can do consider without tilde too e.g.
+# We can consider a syntax without the tilde too e.g.
 my_metric.seconds.total{...}
 my_metric.seconds.counter{...} 
 ```
@@ -189,12 +189,12 @@ For example:
 
 * Querying for `foo.histogram` would return results that include both `foo~seconds.histogram` and `foo~milliseconds.histogram`.
 * Querying for `foo~seconds` would return results that include both `foo~seconds.histogram` and `foo~seconds.counter`.
-* Querying for `http_server_duration` would return results that include both `foo~seconds.histogram` and `foo~milliseconds.counter`.
+* Querying for `http_server_duration` would return results that include both `http_server_duration~seconds.histogram` and `http_server_duration~milliseconds.counter`.
 * Querying for an OpenTelemetry metric, such as `http.server.duration`, with suffixes would require querying for `”http.server.duration”~seconds.histogram`. Note that suffixes are outside of quotes.
 
 This extension/alternative has been discussed and rejected initially on the [2025-03-31 Prometheus DevSummit](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit?tab=t.0#bookmark=id.5gdzvuvgqaf5) due potentially surprising style and not visually appealing at the first glance look. It's true it might be too big of a leap and change for the ecosystem, given type and unit label has to be first proven and adopted in the ecosystem.
 
-While rejected, we ([@bwplotka](https://github.com/bwplotka), [@beorn7](https://github.com/beorn7)) still believe it's a valid alternative or extension to do. Something to consider once/if type and unit labels with get adoption.
+While rejected, we ([@bwplotka](https://github.com/bwplotka), [@beorn7](https://github.com/beorn7)) still believe it's a valid alternative or extension to do. Something to consider once/if type and unit labels is adopted.
 
 ### Handle __type__ and __unit__ in PromQL operations
 
@@ -249,7 +249,7 @@ Rejected due to complexity.
 
 ### __type__ and __unit__ from client libraries
 
-There is an unwritten rule, claiming that client libraries are not allowed to expose special labels starting with `__` e.g. see [the client_golang check](https://github.com/prometheus/client_golang/blob/34eaefd8a58ff01b243b36a369615859932de9d8/prometheus/labels.go#L187). This combined
+There is an unwritten rule, claiming that client libraries are not allowed to expose special labels starting with `__` e.g. see [the client_golang check](https://github.com/prometheus/client_golang/blob/34eaefd8a58ff01b243b36a369615859932de9d8/prometheus/labels.go#L187).
 
 One obvious extension of this proposal would be for Prometheus clients to start sending `__type__` and `__unit__` labels with the exposition format. This would:
 
