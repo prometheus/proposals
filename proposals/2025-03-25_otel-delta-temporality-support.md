@@ -41,7 +41,7 @@ The `end` timestamp is called  `TimeUnixNano` and is mandatory. The `start` time
 
 ### Characteristics of delta metrics
 
-Sparse metrics are more common for delta than cumulative metrics. While delta datapoints can be emitted at a regular interval, in some cases (like the OTEL SDKs), datapoints are only emitted when there is a change (e.g. if tracking request count, only send a datapoint if the number of requests in the ingestion interval > 0). This can be beneficial for the metrics producer, reducing memory usage and network bandwidth. 
+Sparse metrics are more common for delta than cumulative metrics. While delta datapoints can be emitted at a regular interval, in some cases (like the OTEL SDKs), datapoints are only emitted when there is a change (e.g. if tracking request count, only send a datapoint if the number of requests in the ingestion interval > 0). This can be beneficial for the metrics producer, reducing memory usage and network bandwidth.
 
 Further insights and discussions on delta metrics can be found in [Chronosphere Delta Experience Report](https://docs.google.com/document/d/1L8jY5dK8-X3iEoljz2E2FZ9kV2AbCa77un3oHhariBc/edit?tab=t.0#heading=h.3gflt74cpc0y), which describes Chronosphere's experience of adding functionality to ingest OTEL delta metrics and query them back with PromQL, and also [Musings on delta temporality in Prometheus](https://docs.google.com/document/d/1vMtFKEnkxRiwkr0JvVOrUrNTogVvHlcEWaWgZIqsY7Q/edit?tab=t.0#heading=h.5sybau7waq2q).
 
@@ -80,7 +80,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 * Support for all OTEL metric types that can have delta temporality (sums, histograms, exponential histograms)
 * Queries behave appropriately for delta metrics
 * Support for ingestion delta metrics via remote write 
-    * The main focus of the proposal is on OTLP ingestion, but remote write deltas end up being supported too.
+    * The main focus of the proposal is on OTLP ingestion, but remote write deltas end up being supported too. (TODO: depends on type and unit metadata proposal)
 
 ### Audience
 
@@ -123,9 +123,13 @@ It is possible to manually add the `__temporality__` label to a metric with a no
 
 Initially, `__temporality__="cumulative"` will not be added to cumulative metrics ingested via the OTLP endpoint to avoid unnecessary churn for exisitng cumulative metrics and potential disruption for users who might not be expecting this new label.
 
+TODO: need type and unit metadata proposal to be done to confirm how a new temporality metadata label could be added 
+
 ### Remote write
 
-Remote write support is a non-goal for this proposal to reduce its scope. However, the current design ends up supporting ingesting delta metrics via remote write. This is because a label will be added to indicate the temporality of the metric and used during querying, and therefore can be added by remote write. 
+Remote write support is a non-goal for this proposal to reduce its scope. However, the current design ends up supporting ingesting delta metrics via remote write. This is because a label will be added to indicate the temporality of the metric and used during querying, and therefore can be added by remote write.
+
+TODO: label setting depends on the type and unit metadata proposal, may need to be updated
 
 There is currently no equivalent to StartTimeUnixNano per sample in remote write. However, the initial delta implementation drops that field anyway.
 
@@ -137,13 +141,13 @@ Delta metrics will be filtered out from metrics being federated. If the current 
 
 ### Querying deltas
 
-*Note: this section likely needs the most discussion. I'm not 100% about the proposal because of issues guessing the start and end of series. The main alternatives can be found in [Querying deltas alternatives](#querying-deltas-alternatives), and a more detailed doc with additional context and options is [here](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.3zt1m2ezcl1s).*
+*Note: this section likely needs the most discussion. I'm not 100% about the proposal because of issues with sparse deltas, like making it harder to guess the start and end of series. The main alternatives can be found in [Querying deltas alternatives](#querying-deltas-alternatives), and a more detailed doc with additional context and options is [here](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.3zt1m2ezcl1s).*
 
 `rate()` and `increase()` will be extended to support delta metrics too. If the `__temporality__` is `delta`, execute delta-specific logic instead of the current cumulative logic. For consistency, the delta-specific logic will keep the intention of the rate/increase functions - that is, estimate the rate/increase over the selected range given the samples in the range, extrapolating if the samples do not align with the start and end of the range.
 
 `irate()` will also be extended to support delta metrics.
 
-Having functions transparently handle the temporality simplifies the user experience - users do not need to know the temporality of a series for querying, and means queries don't need to be rewriten wehn migrating between cumulative and delta metrics.
+Having functions transparently handle the temporality simplifies the user experience - users do not need to know the temporality of a series for querying, and means queries don't need to be rewriten when migrating between cumulative and delta metrics.
 
 `resets()` does not apply to delta metrics, however, so will return no results plus a warning in this case.
 
@@ -202,7 +206,6 @@ The reason why `increase()`/`rate()` need extrapolation to cover the entire rang
 To work out the increase more accurately, they would also have to look at the sample before and the sample after the range to see if there are samples that partially overlap with the range - in that case the partial overlaps should be added to the increase.
 
 This could be a new function, or changing the `rate()` function (it could be dangerous to adjust `rate()`/`increase()` though as they’re so widely used that users may be dependent on their current behaviour even if they are “less accurate”).
-
 
 ## Alternatives
 
