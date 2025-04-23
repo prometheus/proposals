@@ -148,11 +148,11 @@ This is scoped down from the initial implementation due to complexity of the spe
 The current plan delegates the unit and type label definitions to exposition and ingestion formats. Generally, it's not feasible to expect all of the backends to be compatible with all of the
 different types and units. For example for unit [OM unit is free-form string with the bias towards base units](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units) for OTLP semantic conventions it's [the UCUM](https://unitsofmeasure.org/ucum) standard. For types OpenMetrics define e.g. stateset, which neither Prometheus, or OTLP natively supports. OTLP defines `UpDownCounter` which does not natively exist in Prometheus or OpenMetrics.
 
-One could try to define standard translations or required subset of supported types in PromQL e.g. [the lowercase OpenMetrics types](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464). This is essential if we want to have robust type or unit aware functions and operations in PromQL one day. Also, it's critical for the proposal of noticing mixed types being passed through the PromQL engine or auto-converting units.
+One could try to define standard translations or a required subset of supported types in PromQL, e.g. [the lowercase OpenMetrics types](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464). This is essential for future functions and operations in PromQL that robustly utilize the type and unit information. Also, it's critical for auto-converting units and for properly handling mixed types being passed through the PromQL engine.
 
-One alternative is to say OpenMetrics types and units and everything else, before going to PromQL should be translated to OpenMetrics defined types and units. This is a bit limited, because Prometheus does not have native support to stateset and info metrics. We also plan to add delta type, which only exists in OTLP. For units, generally is not strictly defined in OpenMetrics, and [OTLP UCUM](https://unitsofmeasure.org/ucum) generally offers more functionality (e.g. standard way of representing concrete amount of batches of units e.g. 100 seconds).
+An alternative would be to convert external types and units to OpenMetrics defined types and units as they are ingested via OTLP or from other sources. This is a bit limited, because Prometheus itself does not even have native support (yet) for stateset and info metrics. We also plan to add delta types, which only exists in OTLP, but not (yet) in OpenMetrics or Prometheus itself. Units are generally not strictly defined in OpenMetrics, while [OTLP UCUM](https://unitsofmeasure.org/ucum) generally offers more functionality (e.g. standard way of representing concrete amount of batches of units e.g. 100 seconds).
 
-We propose to raise this problem in the Prometheus ecosystem and tackle it in different proposal. For now, Prometheus will use OpenMetrics type normalization and no unit definition.
+We propose to raise this problem in the Prometheus ecosystem and tackle it in a different proposal. For now, Prometheus will use OpenMetrics type normalization and no unit definition.
 
 ### Metric identity PromQL short syntax
 
@@ -165,7 +165,7 @@ my_metric{__unit__="seconds", __type__="counter"}
 {"my_metric",__unit__="seconds", __type__="counter"} 
 ``` 
 
-This is functional and feels familiar for labels, but similar to special `__name__` label, it could have much more convenient syntax available e.g.
+This is functional and feels familiar for labels, but similar to special `__name__` label, a much more convenient syntax would be possible e.g.
 
 ```
 my_metric~seconds.counter{}
