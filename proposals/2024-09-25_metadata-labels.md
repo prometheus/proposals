@@ -61,7 +61,7 @@ This document is for Prometheus server maintainers, PromQL maintainers, and anyo
 
 ## How
 
-We propose adding special `__unit__` and `__type__` labels that combined with `__name__` metric name compose a "metric identity". Initially behind a `type-and-unit-labels` feature flag, but opt-out once stable. Type and unit values are defined by the exposition and ingestion formats. We propose the initial PromQL handling of various type and unit to be initially tied to [OpenMetrics 1.0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types) and subject to a future breaking change (tackled in [a different proposal](#more-strict-unit-and-type-value-definition)).
+We propose adding special `__unit__` and `__type__` labels that combined with `__name__` metric name compose a "metric family identity". Initially behind a `type-and-unit-labels` feature flag, but opt-out once stable. Type and unit values are defined by the exposition and ingestion formats. We propose the initial PromQL handling of various type and unit to be initially tied to [OpenMetrics 1.0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types) and subject to a future breaking change (tackled in [a different proposal](#more-strict-unit-and-type-value-definition)).
 
 When querying for a metric, users will be able to filter for a type or unit by specifying a filter on the `__unit__` or `__type__` labels, which use the reserved `__` prefix to ensure they do not collide with user-provided labels. Those labels will be populated on ingestion (scrape, PRW/OTLP receiving) from the existing metadata fields (e.g. TYPE text field in text exposition). **Any existing user provided labels for `__unit__` and `__type__` will be overridden or dropped**.
 
