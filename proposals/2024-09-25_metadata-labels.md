@@ -1,4 +1,4 @@
-## Metric Identity Extension: Type and Unit as Labels
+## Metric Family Identity Extension: Type and Unit as Labels
 
 * **Owners:**
   * David Ashpole [@dashpole](https://github.com/dashpole)
@@ -26,12 +26,12 @@
 
 ## Why
 
-Prometheus naming convention and OpenMetrics 1.0 recommend encoding metric unit as a metric name suffix. For counters, conventions recommend adding `_total` suffix. This technique was incredible useful for humans to know semantics of their metrics when using Prometheus metrics (e.g. PromQL in alerts, dashboards, adhoc queries, in plain YAML form). However, these days we are hitting two main limitations of this solution:
+Prometheus [naming convention](https://prometheus.io/docs/practices/naming/) and [OpenMetrics 1.0](https://prometheus.io/docs/specs/om/open_metrics_spec/) recommend encoding metric unit as a metric name suffix. For counters, conventions recommend adding `_total` suffix, for info metrics, the `_info` suffix. This technique was incredible useful for humans to know semantics of their metrics when using Prometheus metrics (e.g. PromQL in alerts, dashboards, adhoc queries, in plain YAML form). However, these days we are hitting two main limitations of this solution:
 
 1. Inability for automation to reliably parse unit and type from the metric name. For example, you never know for sure if unit (e.g. `bytes`) is part of metric name or unit. For the metric type we saw accidents of naming counters without total or vice versa. The `_total` only helps with counters too, we have more metric types. This logic is preventing various innovations and features (e.g. Type-aware PromQL, seamless renames, smarter tool for metric analysis and processing, e.g. GenAI).
-2. Significant increase of the cases for series with the same metric name but different unit and type. For example, it is possible in Prometheus to have metrics with the same name, but different value types (float64 vs native histogram). Additionally with OpenTelemetry metrics, per [dev-summit consensus](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit#bookmark=id.q6upqm7itl24), we would like to avoid adding type and unit suffixes to metric names when translating from OpenTelemetry to Prometheus. Simply removing suffixes might result in "collisions" between distinct OpenTelemetry metrics which have the same name, but different types (less commonly) or units.
+2. Significant increase of the cases for series with the same metric name but different unit and type. For example, it is possible in Prometheus to have metrics with the same name, but different value types. For example `go_memstats_alloc_bytes` vs. `go_memstats_alloc_bytes_total` in Prometheus Go SDK, i.e. a counter and a gauge of "the same name". Additionally with OpenTelemetry metrics, per [dev-summit consensus](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit#bookmark=id.q6upqm7itl24), we would like to avoid adding type and unit suffixes to metric names when translating from OpenTelemetry to Prometheus. Simply removing suffixes might result in "collisions" between distinct OpenTelemetry metrics which have the same name, but different types (less commonly) or units.
 
-For those reasons this document explores ability to preserve type and unit as a separate pieces of information that can be reliably accessed, indexed and queried. **This essentially extends metric identity from just metric name to also unit and type**. We envision to solve it without breaking existing users (even when a feature flag is enabled).
+For those reasons this document explores ability to preserve type and unit as a separate pieces of information that can be reliably accessed, indexed and queried. **This essentially extends metric family identity from just metric name to also unit and type**. We envision to solve it without breaking existing users (even when a feature flag is enabled).
 
 ## Goals
 
@@ -115,21 +115,26 @@ Aggregations and label matches ignore `__unit__` and `__type__` and any operatio
 
 ### Prometheus Server Ingestion
 
-When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats, the type and unit of the metric are interpreted and added as the `__type__` and `__unit__` labels. The Prometheus interpretation may change in the future and it depends on the parser/ingestion. 
+When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats, the type and unit of the metric are interpreted from **the metadata fields** and added as the `__type__` and `__unit__` labels. 
  
-For example for OpenMetrics parser, the [type is validated](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464) to be case-sensitive subset [the defined OpenMetrics 1,0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types). Unit can be any string, with [some soft recommendations from the OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units). In other places where see unsupported type, Prometheus might normalize the value to "unknown". Again, this may change and [another proposal for PromQL type and unit definition is required](#more-strict-unit-and-type-value-definition).
+Generally clients should never expose type and unit labels directly as it's a special label starting with `__`. However, it can happen by accident or intentionally to support ingestion methods without metadata fields (e.g. PRW 1.0). That's why any existing user provided labels for `__unit__` and `__type__` should be *overridden* by the existing metadata mechanisms in current exposition and ingestion formats, otherwise we keep them on. 
+ 
+Typeless (including unknown type), nameless and unitless entries will NOT produce any labels.
+ 
+The Prometheus interpretation or validation of type and unit **values** may change in the future, and it depends on the parser/ingestion. For example for OpenMetrics parser, the [type is validated](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464) to be case-sensitive subset [the defined OpenMetrics 1,0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types). Unit can be any string, with [some soft recommendations from OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units). In other places, when we see an unsupported type value, Prometheus might normalize the value to the `unknown` string. Again, this may change and [another proposal for PromQL type and unit definition is required](#more-strict-unit-and-type-value-definition).
 
-Generally clients should never expose type and unit labels as it's a special label starting with `__`. However, it can totally happen by accident or for custom SDKs and exporters. That's why any existing user provided labels for `__unit__` and `__type__` should be overridden by the existing metadata mechanisms in current exposition and ingestion formats. Typeless (including unknown type), nameless and unitless entries will NOT produce any labels.
+Users would be able to modify the type and unit of a metric at ingestion time by using `metric_relabel_configs`, and relabeling the `__type__` and `__unit__` labels.
 
-For PRW 1.0, this logic is omitted because metadata is sent separately from timeseries, making it infeasible to add the labels at ingestion time.
-
-Users can modify the type and unit of a metric at ingestion time by using `metric_relabel_configs`, and relabeling the `__type__` and `__unit__` labels.
-
-### Considerations
+### Other Considerations
 
 This solution solves all goals mentioned in [Goals](#goals). It also comes with certain disadvantages:
 
-* As [@pracucci mentioned](https://github.com/prometheus/proposals/pull/39/files#r19428174750), this change will technically allow users to query for "all" counters or "all" metrics with units which will likely pose DoS/cost for operators, long term storage systems and vendors. Given existing TSDB indexing, `__type__` and `__unit__` postings will have extreme amount of series referenced. More work **has to be done to detect, handle or even forbid such selectors, on their own.**. On top of that TSDB posting index size will increase too. This is however similar to any popular labels like `env=prod`.
+* As [@pracucci mentioned](https://github.com/prometheus/proposals/pull/39/files#r19428174750), this change will technically allow users to query for "all" counters or "all" metrics with units which will likely pose DoS/cost for operators, long term storage systems and vendors. Given existing TSDB indexing, `__type__` and `__unit__` postings will have extreme amount of series referenced. More work **has to be done to detect, handle or even forbid such selectors, on their own**. On top of that TSDB posting index size will increase too. This is however similar or arguable "easier" problem to solve vs any popular labels like `env=prod`:
+  
+> @beorn7: I would argue the latter is an even worse problem. Not only has env="prod" a very similar shape as type="counter", there are even many common and actually useful queries that include a selector like env="prod", while users will rarely ask for "all metrics that are counters".
+> 
+> So the problem already exists, but in more relevant form. I don't see how adding the type and unit labels makes things really worse.
+
 * All API parts (Series, LabelNames, LabelValues, Recordings/Alerts, remote APIs) will expose new labels without control. This means ecosystem will start depending on this, once this feature gets more mature, **potentially prohibiting the alternative approaches (e.g. only exposing `~seconds.counter` special syntax instead of raw `__type__=~".*"` selectors)**. We accept that risk.
 * Downstream users might be surprised by the new labels e.g. in Cortex, Thanos, Mimir, vendors.
 
@@ -145,8 +150,10 @@ This is scoped down from the initial implementation due to complexity of the spe
 
 ### More strict unit and type value definition
 
-The current plan delegates the unit and type label definitions to exposition and ingestion formats. Generally, it's not feasible to expect all of the backends to be compatible with all of the
-different types and units. For example for unit [OM unit is free-form string with the bias towards base units](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units) for OTLP semantic conventions it's [the UCUM](https://unitsofmeasure.org/ucum) standard. For types OpenMetrics define e.g. stateset, which neither Prometheus, or OTLP natively supports. OTLP defines `UpDownCounter` which does not natively exist in Prometheus or OpenMetrics.
+The current plan delegates the unit and type label definitions to exposition and ingestion formats. Generally, it's not feasible to expect all of the backends to be compatible with all the different types and units. For example:
+ 
+* For unit [OM unit is free-form string with the bias towards base units](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units) for OTLP semantic conventions it's [the UCUM](https://unitsofmeasure.org/ucum) standard.
+* For types OpenMetrics defines types (e.g. stateset) that neither Prometheus nor OTLP natively support. OTLP defines `UpDownCounter` which does not natively exist in Prometheus or OpenMetrics.
 
 One could try to define standard translations or a required subset of supported types in PromQL, e.g. [the lowercase OpenMetrics types](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464). This is essential for future functions and operations in PromQL that robustly utilize the type and unit information. Also, it's critical for auto-converting units and for properly handling mixed types being passed through the PromQL engine.
 
@@ -190,7 +197,7 @@ For example:
 * Querying for `foo.histogram` would return results that include both `foo~seconds.histogram` and `foo~milliseconds.histogram`.
 * Querying for `foo~seconds` would return results that include both `foo~seconds.histogram` and `foo~seconds.counter`.
 * Querying for `http_server_duration` would return results that include both `http_server_duration~seconds.histogram` and `http_server_duration~milliseconds.counter`.
-* Querying for an OpenTelemetry metric, such as `http.server.duration`, with suffixes would require querying for `”http.server.duration”~seconds.histogram`. Note that suffixes are outside of quotes.
+* Querying for an OpenTelemetry metric, such as `http.server.duration`, with suffixes would require querying for `”{http.server.duration}”~seconds.histogram`. Note that suffixes are outside of quotes.
 
 This extension/alternative has been discussed and rejected initially on the [2025-03-31 Prometheus DevSummit](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit?tab=t.0#bookmark=id.5gdzvuvgqaf5) due potentially surprising style and not visually appealing at the first glance look. It's true it might be too big of a leap and change for the ecosystem, given type and unit label has to be first proven and adopted in the ecosystem.
 
@@ -198,7 +205,7 @@ While rejected, we ([@bwplotka](https://github.com/bwplotka), [@beorn7](https://
 
 ### Handle __type__ and __unit__ in PromQL operations
 
-Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all PromQL operations remove the `__unit__` and `__type__` label (except `label_replace`). Over time, we can update each function to keep these labels by implementing the appropriate logic. For example, adding two gauges together should yield a gauge, a rate of a counter, should probably be assumed to be a gauge.
+Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all the PromQL operations that removes the `__name__` also removes the `__unit__` and `__type__`. Over time, we can update each function to keep these labels by implementing the appropriate logic. For example, adding two gauges together should yield a gauge, a rate of a counter, should probably be assumed to be a gauge.
 
 ### Support PromQL operations on timeseries with the same base unit, but different scale
 
