@@ -102,6 +102,30 @@ The second case is that we already have a secret value, but refreshing it has re
 
 If we are starting up prometheus and do not get any secret values, startup will continue and prometheus will continue to run and retry finding secrets. If there are components that are fully specified, they will run during this time. The idea is that it is better to send partial metrics than no metrics, and the emitted metrics for secrets can alert users if there is a problem with their service providers.
 
+### Secret Refresh and Caching
+
+Prometheus will fetch secrets from configured providers and cache them locally. There is a trade off here between up-to-date credentials with performance considerations and API costs, which users might make different choices on.
+
+* **Local Caching:** Secrets retrieved successfully from a provider are stored in memory
+* **Background Refresh:** A dedicated background process periodically attempts to refresh each configured remote secret from its provider.
+* **Refresh Interval:** A default refresh interval of 1 hour is used, avoiding excessive calls to external secret providers (typical rotation schedules often measured in hours or days). However, this interval should be configurable on a per-provider instance basis. For example:
+```yaml
+scrape_configs:
+  - job_name: 'example'
+    basic_auth:
+      username: 'user'
+      password:
+        vault: # Example provider
+          address: "https://vault.example.com"
+          path: "secret/data/prometheus/example_job"
+          key: "password"
+          refresh_interval: 30m # Override default for this secret
+    # ... other config ...
+```
+* **Caching Behavior on Failure:** If a scheduled background refresh attempt fails (e.g., due to network issues, temporary provider unavailability, invalid credentials after rotation), Prometheus will continue to use the last successfully fetched secret value. This ensures components relying on the secret can continue operating with the last known good credential, preventing outages due to transient refresh problems. Failed refresh attempts will be logged, and the `prometheus_remote_secret_state` metric will reflect the 'stale' state.
+* **Permission Errors:** If a component using a cached secret reports a specific permission or authentication error, this might indicate the cached secret is no longer valid. Hence, an immediate refresh attempt for that specific secret is triggered, bypassing the regular refresh interval.
+* **Not Querying Per-Scrape:** It is explicitly **not** the default behavior to query the secret provider on every use.
+
 
 ### Secret rotation
 
