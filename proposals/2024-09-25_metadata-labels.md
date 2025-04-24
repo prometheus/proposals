@@ -20,7 +20,6 @@
   * Prometheus PoCs:
     * (first) https://github.com/prometheus/prometheus/compare/main...dashpole:prometheus:type_and_unit_labels
     * (second) https://github.com/prometheus/prometheus/pull/16025
-  * Vision docs: 
 
 > TL;DR: This document proposes extending metric identity to include the metric type and unit as separate labels.
 
