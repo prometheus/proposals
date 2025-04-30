@@ -1,7 +1,7 @@
 ## Remote Secrets (Secret Providers)
 
 * **Owners:**
-  * Henrique Matulis (@hsmatulisgoogle)
+  * Henrique Matulis (@hsmatulis)
 
 * **Implementation Status:** Not implemented
 
@@ -75,14 +75,14 @@ secret_field:
     <propertyN>: <valueN>
 ```
 
-For example when specifying a password fetched from the kubernetes provider with an id of `pass2` in namespace `ns1` for the HTTP passsword field it would look like this:
+For example when specifying a password fetched from the kubernetes provider with an id of `pass2` in namespace `ns1`, and looking for the `http_password` field within the Secret's 'data' field it would look like this:
 
 ```
         password:
           kubernetes:
-            namespace: <ns>
-            name: <secret name>
-            key: <data's key for secret name>
+            namespace: ns1
+            name: pass2
+            key: http_password
 ```
 
 ### Inline secrets
@@ -100,31 +100,39 @@ The first case is that we have not gotten any secret value since startup. In thi
 
 The second case is that we already have a secret value, but refreshing it has resulted in an error. In this case we should keep the component that uses this secret running with the potentially stale secret, and schedule a retry.
 
-If we are starting up prometheus and do not get any secret values, startup will continue and prometheus will continue to run and retry finding secrets. If there are components that are fully specified, they will run during this time. The idea is that it is better to send partial metrics than no metrics, and the emitted metrics for secrets can alert users if there is a problem with their service providers.
+If we are starting up Prometheus and do not get any secret values, startup will continue and Prometheus will continue to run and retry finding secrets. If there are components that are fully specified, they will run during this time. The idea is that it is better to send partial metrics than no metrics, and the emitted metrics for secrets can alert users if there is a problem with their service providers.
 
 ### Secret Refresh and Caching
 
 Prometheus will fetch secrets from configured providers and cache them locally. There is a trade off here between up-to-date credentials with performance considerations and API costs, which users might make different choices on.
 
-* **Local Caching:** Secrets retrieved successfully from a provider are stored in memory
-* **Background Refresh:** A dedicated background process periodically attempts to refresh each configured remote secret from its provider.
-* **Refresh Interval:** A default refresh interval of 1 hour is used, avoiding excessive calls to external secret providers (typical rotation schedules often measured in hours or days). However, this interval should be configurable on a per-provider instance basis. For example:
+#### Secret Caching
+
+Secrets retrieved successfully from a provider are stored in memory. Prometheus does **not** query the secret provider on every use, relying instead on this local cache.
+
+#### Scheduled refreshes
+
+A dedicated background process periodically attempts to refresh each configured remote secret from its provider. A default refresh interval of 1 hour is used (typical rotation schedules often measured in hours or days). However, this should be configurable on a per-provider instance basis. For example:
+
 ```yaml
 scrape_configs:
   - job_name: 'example'
     basic_auth:
       username: 'user'
       password:
-        vault: # Example provider
+        vault:
           address: "https://vault.example.com"
           path: "secret/data/prometheus/example_job"
           key: "password"
           refresh_interval: 30m # Override default for this secret
-    # ... other config ...
 ```
-* **Caching Behavior on Failure:** If a scheduled background refresh attempt fails (e.g., due to network issues, temporary provider unavailability, invalid credentials after rotation), Prometheus will continue to use the last successfully fetched secret value. This ensures components relying on the secret can continue operating with the last known good credential, preventing outages due to transient refresh problems. Failed refresh attempts will be logged, and the `prometheus_remote_secret_state` metric will reflect the 'stale' state.
-* **Permission Errors:** If a component using a cached secret reports a specific permission or authentication error, this might indicate the cached secret is no longer valid. Hence, an immediate refresh attempt for that specific secret is triggered, bypassing the regular refresh interval.
-* **Not Querying Per-Scrape:** It is explicitly **not** the default behavior to query the secret provider on every use.
+#### Error-Triggered Refresh
+
+If using a cached secret results in a specific permission or authentication error, this might indicate the cached secret is no longer valid. Hence, the user of the new secrets API should ask for an immediate refresh attempt for that specific secret is triggered, bypassing the regular refresh interval. The responsibility for determining which specific errors (e.g., HTTP 401/403 responses, database authentication failures) warrant signaling for a refresh lies within caller of the new secrets API.
+
+#### Handling Refresh Failures & Resilience
+
+If a scheduled background refresh attempt fails (e.g., due to network issues, temporary provider unavailability, invalid credentials after rotation), Prometheus will continue to use the last successfully fetched secret value. This ensures components relying on the secret can continue operating with the last known good credential, preventing outages due to transient refresh problems. Failed refresh attempts will be logged, and the `prometheus_remote_secret_state` metric will reflect the 'stale' state.
 
 
 ### Secret rotation
@@ -159,6 +167,24 @@ A state enum describing in which error condition the secret is in:
 prometheus_remote_secret_state{provider="kubernetes", secret_id="pass1", state="success"} 0
 prometheus_remote_secret_state{provider="kubernetes", secret_id="auth_token", state="stale"} 1
 prometheus_remote_secret_state{id="myk8secrets", secret_id="pass2", state="error"} 2
+```
+
+Total number of successful secret fetches:
+
+```
+# HELP prometheus_remote_secret_fetch_success_total Total number of successful secret fetches.
+# TYPE prometheus_remote_secret_fetch_success_total counter
+prometheus_remote_secret_fetch_success_total{provider="kubernetes", secret_id="pass1"} 102
+prometheus_remote_secret_fetch_success_total{provider="kubernetes", secret_id="auth_token"} 55
+```
+
+Total number of failed secret fetches:
+```
+# HELP prometheus_remote_secret_fetch_failures_total Total number of failed secret fetches.
+# TYPE prometheus_remote_secret_fetch_failures_total counter
+prometheus_remote_secret_fetch_failures_total{provider="kubernetes", secret_id="pass1"} 3
+prometheus_remote_secret_fetch_failures_total{provider="kubernetes", secret_id="auth_token"} 12
+prometheus_remote_secret_fetch_failures_total{provider="kubernetes", secret_id="pass2"} 8
 ```
 
 ### Nested secrets
@@ -274,4 +300,12 @@ secret_object = get_kubernetes_secret(secret_namespace, secret_name, kubernetes_
 
 ## Action Plan
 
-* [ ] Create action plan after doc is stable!
+* [ ] Implement core secret provider framework (initial API definition, caching, refresh, metrics) 
+* [ ] Integrate secret provider support into Prometheus configuration and components
+* [ ] Integrate secret provider support into Alertmanager
+* [ ] Establish shared code structure/repository for providers
+* [ ] Define dependency management strategy for providers
+* [ ] Implement initial set of key secret providers
+* [ ] Add user documentation for configuring secret providers in Prometheus & Alertmanager
+* [ ] Announce feature availability and usage guidelines
+
