@@ -6,13 +6,13 @@
 * **Implementation Status:** Not implemented
 
 * **Related Issues and PRs:**
-  * <https://github.com/prometheus/prometheus/issues/8429>
-  * <https://github.com/prometheus/prometheus/issues/3806>
-  * <https://github.com/prometheus/prometheus/issues/12967>
+  * https://github.com/prometheus/prometheus/issues/8429
+  * https://github.com/prometheus/prometheus/issues/3806
+  * https://github.com/prometheus/prometheus/issues/12967
   * [**Proof of Concept**](https://github.com/prometheus/prometheus/pull/16457)
 
 * **Other docs or links:**
-  *  [Improving rate and friends](https://docs.google.com/document/d/18ZQ8uOt0yTp8csVf-tl8G-RdgA8n2GqvlZyEvAytPKA/edit?usp=sharing)
+  * [Improving rate and friends](https://docs.google.com/document/d/18ZQ8uOt0yTp8csVf-tl8G-RdgA8n2GqvlZyEvAytPKA/edit?usp=sharing)
   * [Prometheus x-rate](https://docs.google.com/document/d/1y2Mp041_2v0blnKnZk7keCnJZICeK2YWUQuXH_m4DVc/edit?usp=sharing)
   * [Prometheus y-rate](https://docs.google.com/document/d/1CF5jhyxSD437c2aU2wHcvg88i8CjSPO3kMHsEaDRe2w/edit?usp=sharing)
   * [Prometheus a-rate](https://docs.google.com/document/d/1_83XWymIxauup7TidlhSuegqqLF6kLbBuVrvan5CCLo/edit?usp=sharing)
@@ -28,17 +28,17 @@ similar—* so they better align with diverse user expectations and use cases.
 
 ![](../assets/2025-rate-improvements/31f9c424e4d61716a64aa3d5a1ce7c44.png)
 
-|  TL;DR |
-| ---- |
+| TL;DR                                                                                                                                                                                |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `smoothed` brings better calculation for ranges by utilizing all data prometheus has at its disposal; with the downside that the values after the last scrape will be understimated. |
-| `anchored` brings a solution for users looking for integer results. |
+| `anchored` brings a solution for users looking for integer results.                                                                                                                  |
 
 ## Why
 
 Prometheus's current `rate`, `increase`, and similar functions play a foundational
 role in PromQL, but their behavior —particularly around range boundaries,
 extrapolation, and data irregularities— has long been a source of confusion,
-unintended results, and misaligned expectations. 
+unintended results, and misaligned expectations.
 
 While proposals like xrate, arate, and others have surfaced over the years,
 none have achieved wide consensus due to trade-offs in accuracy,
@@ -81,31 +81,31 @@ We will work in this design doc mainly with 2 data sets.
 
 The first data set is **complete** and contains the following points:
 
-| Time   | Time delta | Value | Value delta |
-|--------|------------|-------|-------------|
-| 10s    | -          | 1     | -           |
-| 25s    | 15s        | 2     | 1           |
-| 40s    | 15s        | 3     | 1           |
-| 55s    | 15s        | 4     | 1           |
-| 1m10s  | 15s        | 5     | 1           |
-| 1m25s  | 15s        | 9     | 4           |
-| 1m40s  | 15s        | 10    | 1           |
-| 1m55s  | 15s        | 11    | 1           |
-| 2m10s  | 15s        | 12    | 1           |
-| 2m25s  | 15s        | 13    | 1           |
+| Time  | Time delta | Value | Value delta |
+|-------|------------|-------|-------------|
+| 10s   | -          | 1     | -           |
+| 25s   | 15s        | 2     | 1           |
+| 40s   | 15s        | 3     | 1           |
+| 55s   | 15s        | 4     | 1           |
+| 1m10s | 15s        | 5     | 1           |
+| 1m25s | 15s        | 9     | 4           |
+| 1m40s | 15s        | 10    | 1           |
+| 1m55s | 15s        | 11    | 1           |
+| 2m10s | 15s        | 12    | 1           |
+| 2m25s | 15s        | 13    | 1           |
 
 The second dataset is **partial** and misses 2 of the values (simulating two failed scrapes):
 
-| Time   | Time delta | Value | Value delta |
-|--------|------------|-------|-------------|
-| 10s    | -          | 1     | -           |
-| 25s    | 15s        | 2     | 1           |
-| 40s    | 15s        | 3     | 1           |
-| 1m25s  | **45s**    | 9     | **6**       |
-| 1m40s  | 15s        | 10    | 1           |
-| 1m55s  | 15s        | 11    | 1           |
-| 2m10s  | 15s        | 12    | 1           |
-| 2m25s  | 15s        | 13    | 1           |
+| Time  | Time delta | Value | Value delta |
+|-------|------------|-------|-------------|
+| 10s   | -          | 1     | -           |
+| 25s   | 15s        | 2     | 1           |
+| 40s   | 15s        | 3     | 1           |
+| 1m25s | **45s**    | 9     | **6**       |
+| 1m40s | 15s        | 10    | 1           |
+| 1m55s | 15s        | 11    | 1           |
+| 2m10s | 15s        | 12    | 1           |
+| 2m25s | 15s        | 13    | 1           |
 
 ### Prometheus increase computation
 
@@ -196,6 +196,7 @@ avoiding implicit heuristics.
 #### `anchored`: Include Real Samples at Boundaries
 
 **Examples**:
+
 ```promql
 increase(http_requests_total[5m] anchored)
 http_requests_total anchored
@@ -214,7 +215,7 @@ http_requests_total anchored
 - If no sample is found within the selector range, the result dropped.
 - The lookback window is the lookback delta. Note: The loopback delta can be overriden per-query.
 
-**Important note**:  
+**Important note**:
 
 For instant vector, this mode has the effect of **ignoring staleness markers**.
 That is, a sample is considered valid as long as it exists within the configured
@@ -251,6 +252,7 @@ We also see an increase at the end of the graph, which occurs because the calcul
 #### `smoothed`: Estimate Boundary Values via Interpolation
 
 **Examples**:
+
 ```promql
 rate(cpu_usage_total[5m] smoothed)
 cpu_usage_total smoothed
