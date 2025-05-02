@@ -9,6 +9,7 @@
   * <https://github.com/prometheus/prometheus/issues/8429>
   * <https://github.com/prometheus/prometheus/issues/3806>
   * <https://github.com/prometheus/prometheus/issues/12967>
+  * [**Proof of Concept**](https://github.com/prometheus/prometheus/pull/16457)
 
 * **Other docs or links:**
   *  [Improving rate and friends](https://docs.google.com/document/d/18ZQ8uOt0yTp8csVf-tl8G-RdgA8n2GqvlZyEvAytPKA/edit?usp=sharing)
