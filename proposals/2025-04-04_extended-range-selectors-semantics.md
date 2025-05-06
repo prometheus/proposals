@@ -335,6 +335,10 @@ It is important that heuristics remain consistent whether metrics are pulled or 
 
 Yes, datapoints from before the query range can significantly influence the results, especially with short ranges. This can be particularly problematic when using `anchored` if the query range is much smaller than the lookback delta. A **future enhancement** would be to allow specifying custom "lookaround windows" with the modifiers: `anchored (1m)` to limit lookback to 1 minute, or `smoothed (1m:2m)` to define asymmetric windows before and after the range boundaries.
 
+*How to use smoothed as part of recording and alerting rules?*
+
+Since the `smoothed` modifier looks for samples after the evaluation interval, using it in alerting rules would *by default* always under-estimate the result, making it inappropriate for alerting and recording scenarios. When implementing rules with `smoothed`, it's recommended to use `query_offset` to ensure accurate calculations. For critical metrics, the offset should be at least one scrape interval, while less critical use cases may benefit from offsets of multiple scrape intervals to build resilience against missed scrapes.
+
 ## Compatibility Notes
 
 When using `*_over_time`, `irate`, `idelta` functions with `anchored` or `smoothed` modifiers, we should introduce warnings in the query results. This is because these modifiers introduce additional datapoints at range boundaries that can affect the calculation semantics. To ensure proper usage, we may initially implement a "whitelist" approach where only specific functions (like `rate`, `increase`, `delta`, `changes`, and `resets`) are explicitly supported with these modifiers, while other functions will generate appropriate warnings until their behavior with these modifiers is fully defined.
