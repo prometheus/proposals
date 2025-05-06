@@ -199,7 +199,6 @@ avoiding implicit heuristics.
 
 ```promql
 increase(http_requests_total[5m] anchored)
-http_requests_total anchored
 ```
 
 ![](../assets/2025-04-04_extended-range-selectors-semantics/2da740cff0429094d205883be2161df1.png)
@@ -214,13 +213,6 @@ http_requests_total anchored
 - If there is no **previous sample**, we duplicate the first sample in the range at the start of the range.
 - If no sample is found within the selector range, the result dropped.
 - The lookback window is the lookback delta. Note: The loopback delta can be overriden per-query.
-
-**Important note**:
-
-For instant vector, this mode has the effect of **ignoring staleness markers**.
-That is, a sample is considered valid as long as it exists within the configured
-lookback window—even if a staleness marker would have invalidated it without the
-keyword.
 
 **Use cases**:
 - Precise accounting for counter changes (provides integer results with integers)
@@ -293,13 +285,11 @@ The smoothed increase function effectively bridges gaps in the partial dataset b
 
 ### Application to Range and Instant Vectors
 
-Both `anchored` and `smoothed` modifiers apply to:
-- **Range selectors**: `[5m] anchored`, `[10m] smoothed`
-- **Instant selectors**: `metric anchored`, `metric smoothed`
+The `smoothed` modifiers apply to:
+- **Range selectors**: `[10m] smoothed`
+- **Instant selectors**: `metric smoothed`
 
-The `smoothed` modifier applies linear interpolation at time `t` using the nearest datapoints before and after that time. This creates a continuous estimation of values at range boundaries, resulting in smoother transitions between samples.
-
-The `anchored` modifier uses actual samples at range boundaries rather than interpolated values. It effectively ignores staleness markers, continuing to use the last known value within the lookback window even if the metric has gone stale. This provides more accurate calculations for counter metrics by using real observed values.
+The `smoothed` modifier applies linear interpolation at time `t` using the nearest datapoints before and after that time. This creates a continuous estimation of values at range boundaries, resulting in smoother transitions between samples. This is basically smoothing gauges with linear interpolation.
 
 ### Applications to other functions
 
@@ -393,7 +383,7 @@ temporary outages.
 ## Implementation Plan
 
 1. Implement the `anchored` and `smoothed` modifier behind the `promql-extended-range-selectors` feature flag for range floats.
-2. Implement `anchored` and `smoothed` for instant floats.
+2. Implement `smoothed` for instant floats.
 3. Implement `anchored` for range histograms and instant histograms.
 4. Implement `smoothed` for range histograms and smoothed histograms.
 
