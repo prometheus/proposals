@@ -273,7 +273,7 @@ Smoothed increase provides a more accurate estimate by interpolating between dat
 
 **Smoothed vector on partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-36b0b5c4d1261bcbba3e923b1adfbae7.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/36b0b5c4d1261bcbba3e923b1adfbae7.png)
 
 The smoothed approach accurately measures the total increase of 11 by using linear interpolation between available data points. This produces results very similar to what we see with the complete dataset. While we cannot fabricate missing data, the smoothed method leverages all available information in Prometheus to create the most accurate estimation possible through interpolation.
 
