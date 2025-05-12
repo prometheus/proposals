@@ -235,7 +235,7 @@ This behavior effectively implements a "time-to-live" (kind of) for metrics, whe
 
 **Anchored increase on partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/anchored-881987961c011e6f42321e778db91b5c.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/881987961c011e6f42321e778db91b5c.png)
 
 In this diagram, Anchored increase on partial datasets maintains a horizontal line when no new data is available. This behavior occurs because we capture samples up to the beginning of the time series for this exercise (otherwise, the line would slightly decrease). The anchored mode continues to produce integer results throughout.
 
