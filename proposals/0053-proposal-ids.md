@@ -31,9 +31,9 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 ## How
 
-We propose every Prometheus proposal has a stable reference/ID in the form of the `PROM-<number>`. This number is captured in the file name and it origins from the ID of the Pull Request that was used to approve and merge the proposal.
+We propose every Prometheus proposal has a stable reference/ID in the form of the `PROM-<number>`. This number is captured in the file name and it originates from the ID of the Pull Request that was used to approve and merge the proposal.
 
-We propose to NOT add stable number of digits in the official referencing. However, we propose we DO add stable number of digits in the file name, so the file browsing has a convenient ordering. We propose 4 digits for now, prefixed by zeros, which can be increased to 5 once we have PR numbers in ten-thousands (likely in a decade).
+We propose to NOT add a stable number of digits in the official referencing. However, we propose we DO add a stable number of digits in the file name, so the file browsing has a convenient ordering. We propose 4 digits for now, prefixed by zeros, which can be increased to 5 once we have PR numbers in ten-thousands (likely in a decade).
  
 For example, this proposal is referenced as `PROM-53`, because we proposed this in the [PR `#53`](https://github.com/prometheus/proposals/pulls/53). This proposal file name is then `0053-proposal-ids.md`.
 
@@ -57,4 +57,4 @@ There are a few alternatives to the `PROM-` prefix e.g.
 The tasks to do in order to migrate to the new idea.
 
 * [X] Adjust template and proposal docs.
-* [ ] Rename existing proposal's file to have its PROM-<number>; Leave the old files with a link to a new file, so the old links work.
+* [ ] Rename each existing proposal's file to have its PROM-<number>; Leave the old files with a link to a new file, so the old links work.
