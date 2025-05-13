@@ -162,9 +162,15 @@ functions, it deliberately avoids certain directions that have historically led
 to complexity or confusion:
 
 - **Define a one-size-fits-all solution**: The goal is not to find a universally
-  "better" rate function that replaces all others. Different use cases have
-  inherently different trade-offs, and the proposal embraces offering multiple
-  well-defined modes instead of forcing consensus around a single behavior.
+  "better" rate function that replaces all others. Instead, we aim for a
+  balanced approach that address two distinct use cases: for improved rate
+  calculations that adjust for range length, and direct differences between
+  sample values.
+- **Create a large set of specialized modifiers**: While flexibility is
+  important, we aim to keep the solution focused and manageable. While we add
+  these two modifiers, we do not aim to add more modifiers in the future; we'd
+  like to build on those two modifiers and adjust them as needed, rather than
+  adding more modifiers.
 - **Introduce new function names that encode behavior**: Rather than proliferating new
   variants like xrate, yrate, arate, etc., this proposal keeps the function names
   unchanged and introduces boundary behavior via modifiers. This preserves the
@@ -205,10 +211,12 @@ increase(http_requests_total[5m] anchored)
 *Anchored vectors ensure boundary completeness by including real samples at range boundaries. The diagram shows how a sample just before the range start (outside the original range) is included, and the last sample at range end is duplicated at the end of the range, making sure there are points to cover the complete interval [start, end].*
 
 **Behavior**:
-- This mode treats the selector range as **closed on both ends**: `[start, end]`.
-- At both the start and end of the range (or evaluation time, for instant
-  selectors), Prometheus will search **backward** using a lookback window to find
-  the sample just before the boundary.
+
+- This mode includes samples within the range `(start, end]` and additionally looks backward to find one sample before the start time.
+- Staleness markers are ignored.
+- At the start of the range (or evaluation time, for instant selectors),
+  Prometheus will search **backward** using a lookback window to find the sample
+  just before the boundary.
 - If there is no **previous sample**, we duplicate the first sample in the range at the start of the range.
 - If no sample is found within the left-open and right-closed selector range, no result is returned for the respective series.
 - The lookback window is the lookback delta. Note: The loopback delta can be overriden per-query.
@@ -254,12 +262,15 @@ cpu_usage_total smoothed
 Smoothed vectors behave as if continuous lines were drawn between samples, utilizing linear interpolation to create a smooth transition between data points. This captures the increase of 11.
 
 **Behavior**:
-- This mode estimates the values at the range’s start and end (or instant
+- This mode estimates the values at the range's start and end (or instant
   evaluation time) by **interpolating** between the nearest known samples **before
   and after** each boundary.
+- Staleness markers are ignored.
 - If there is no datapoint before the range, the first datapoint inside of the range is duplicated at the beginning of the range.
 - If there is no datapoint after the range, the last datapoint inside of the range is duplicated at the end of the range.
+- If there are no datapoints inside the range but samples exist before and after, it interpolates between those samples to estimate values at the range boundaries.
 - The interpolation window is controlled by the **lookback delta**,
+
 
 **Use cases**:
 - Better computation of rates, by taking into consideration before and after the range.
