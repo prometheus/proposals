@@ -266,7 +266,7 @@ Smoothed vectors behave as if continuous lines were drawn between samples, utili
 
 **Smoothed increase on complete dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-84f19b21166f516df4586326851ce8bf.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/84f19b21166f516df4586326851ce8bf.png)
 
 Smoothed increase provides a more accurate estimate by interpolating between data points. At the 15s mark, it calculates a value of 0.33, representing the partial increase that might occur if the data was linear. Unlike the standard increase function, smoothed increase avoids over-extrapolation by using linear interpolation between actual data points.
 
