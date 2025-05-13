@@ -48,7 +48,7 @@ There are a few alternatives to the `PROM-` prefix e.g.
 * PEP- ("Prometheus Enhancement Proposal")
   * Consistent with K8s and Otel, but Prometheus community never used "EP" naming.
 * P- or PP- ("Prometheus Proposal")
-  * Short but NOT clearly unique for Prometheus and not suggesting proposals
+  * Short but NOT clearly unique for Prometheus (e.g. Python [PEPs](https://peps.python.org/)) and not suggesting proposals
 * PROMETHEUS-
   * A bit too long?
 
