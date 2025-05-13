@@ -61,9 +61,8 @@ limitations that often diverge from user expectations:
   can lead to surprising or misleading results, particularly during scrapes with
   jitter or partial data loss, or when integer counter increments are involved.
 - **Sub-query Workarounds**: Users have resorted to complex and
-  brittle sub-query workarounds (e.g. `[1m:15s]`) to mimic more intuitive
-  behaviors, but these depend heavily on alignment and often break in Prometheus
-  3.0, due to closed brackets.
+  brittle sub-query workarounds (e.g. `[1m:15s]`) to mimic the
+  behavior they desire, but these depend heavily on alignment and have to be adjusted to the left-open range selectors introduced in Prometheus v3.
 - **Limited Tolerance for Edge Cases**: The current model performs best in idealized,
   “happy-path” scenarios with regular scrapes and clean data. During outages or
   high-jitter conditions, it tends to degrade poorly.
