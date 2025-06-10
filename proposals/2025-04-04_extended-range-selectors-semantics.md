@@ -210,7 +210,7 @@ increase(http_requests_total[5m] anchored)
   selectors), Prometheus will search **backward** using a lookback window to find
   the sample just before the boundary.
 - If there is no **previous sample**, we duplicate the first sample in the range at the start of the range.
-- If no sample is found within the selector range, the result dropped.
+- If no sample is found within the left-open and right-closed selector range, no result is returned for the respective series.
 - The lookback window is the lookback delta. Note: The loopback delta can be overriden per-query.
 
 **Use cases**:
