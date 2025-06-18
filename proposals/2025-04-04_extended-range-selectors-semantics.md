@@ -212,7 +212,7 @@ increase(http_requests_total[5m] anchored)
 
 **Behavior**:
 
-- This mode includes samples within the range `(start, end]` and additionally looks backward to find one sample before the start time.
+- This mode includes samples within the range `(start, end]` and additionally looks backward to find one sample at or before the start time.
 - Staleness markers are ignored.
 - At the start of the range (or evaluation time, for instant selectors),
   Prometheus will search **backward** using a lookback window to find the sample
