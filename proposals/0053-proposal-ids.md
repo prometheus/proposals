@@ -57,4 +57,4 @@ There are a few alternatives to the `PROM-` prefix e.g.
 The tasks to do in order to migrate to the new idea.
 
 * [X] Adjust template and proposal docs.
-* [ ] Rename each existing proposal's file to have its PROM-<number>; Leave the old files with a link to a new file, so the old links work.
+* [x] Rename each existing proposal's file to have its PROM-<number>; Leave the old files with a link to a new file, so the old links work.
