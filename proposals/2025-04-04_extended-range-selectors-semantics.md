@@ -270,7 +270,6 @@ Smoothed vectors behave as if continuous lines were drawn between samples, utili
 - If there is no datapoint after the range, the last datapoint inside of the range is duplicated at the end of the range.
 - If there are no datapoints inside the range but samples exist before and after, it interpolates between those samples to estimate values at the range boundaries.
 - The interpolation window is controlled by the **lookback delta**,
-- If the range selector duration is shorter than the evaluation step interval, the calculation will use the step interval as the effective range duration. A warning will then be returned to the user.
 
 
 **Use cases**:
