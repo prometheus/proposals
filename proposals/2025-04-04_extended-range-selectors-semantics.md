@@ -24,10 +24,6 @@ selectors in PromQL, with the goal of providing more expressive and
 representative options *—particularly for functions like `rate`, `increase`, and
 similar—* so they better align with diverse user expectations and use cases.
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/2da740cff0429094d205883be2161df1.png)
-
-![](../assets/2025-04-04_extended-range-selectors-semantics/31f9c424e4d61716a64aa3d5a1ce7c44.png)
-
 | TL;DR                                                                                                                                                                                |
 |--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `smoothed` brings better calculation for ranges by utilizing all data prometheus has at its disposal; with the downside that the values after the last scrape will be understimated. |
@@ -110,7 +106,7 @@ The second dataset is **partial** and misses 2 of the values (simulating two fai
 
 Here is how Prometheus computes vectors. In this example, we see a vector at 1m15 and 2m15:
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/0d50705cf54815c761544239a6a81137.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/prometheus-vector-complete.png)
 
 When computing range vectors, Prometheus only considers the data points that
 fall strictly within the specified time range. This means that samples that
@@ -126,23 +122,23 @@ Two consecutive range selectors therefore fail to capture the increase.
 
 It also means that Prometheus can over-estimate a range:
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/be019692b3f734531711c7ac942f6a1f.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/prometheus-vector-overestimation.png)
 
 In this graph, the overestimation is 1, which means that Prometheus is artificially *adding* one to the value - one which doesn't actually exist in the collected metrics.
 
 This is the result of calling `increase()` over the range:
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/84f19b21166f516df4586326851ce8bf.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/prometheus-increase-complete.png)
 
 When working with the **partial** dataset, Prometheus is interpolating only by half a scrape interval, which provides this:
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/36b0b5c4d1261bcbba3e923b1adfbae7.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/prometheus-vector-partial.png)
 
 We can clearly see that Prometheus is providing an increase of 2.17 for the first vector, which is an approximation based on the available data points within the range.
 
 When these same interpolation and extrapolation heuristics are applied consistently across the entire partial dataset, we get the following visualization:
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/881987961c011e6f42321e778db91b5c.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/prometheus-increase-partial.png)
 
 This demonstrates the function's poor behavior in non-ideal scenarios. The graph shows a significant spike that appears and vanishes immediately, highlighting the instability of the calculation when working with incomplete data.
 
@@ -163,7 +159,7 @@ to complexity or confusion:
 
 - **Define a one-size-fits-all solution**: The goal is not to find a universally
   "better" rate function that replaces all others. Instead, we aim for a
-  balanced approach that address two distinct use cases: for improved rate
+  balanced approach that addresses two distinct use cases: for improved rate
   calculations that adjust for range length, and direct differences between
   sample values.
 - **Create a large set of specialized modifiers**: While flexibility is
@@ -206,7 +202,7 @@ avoiding implicit heuristics.
 increase(http_requests_total[5m] anchored)
 ```
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/2da740cff0429094d205883be2161df1.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/anchored-vector-complete.png)
 
 *Anchored vectors ensure boundary completeness by including real samples at range boundaries. The diagram shows how a sample just before the range start (outside the original range) is included, and the last sample at range end is duplicated at the end of the range, making sure there are points to cover the complete interval [start, end].*
 
@@ -228,13 +224,13 @@ increase(http_requests_total[5m] anchored)
 
 **Anchored increase and complete dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/c656fe4579671a7807344bdfa8f979c8.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/anchored-increase-complete.png)
 
-Anchored increase provides integer results at each step. It also fixes the over-interpolation (8) that was shown with Prometheus' increase. By including the actual samples at range boundaries, anchored mode ensures that counter increases are calculated based on real observed values rather than interpolated estimates, resulting in more accurate results for counter metrics.
+Anchored increase provides integer results at each step. It also fixes the over-interpolation (8) that was shown with Prometheus' increase. By including the actual samples at range boundaries, anchored mode ensures that counter increases are calculated based on real observed values rather than interpolated estimates, resulting in more expected results for counter metrics.
 
 **Anchored vector in partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/84d70bf4beb27c8249f1744819bc9b99.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/anchored-vector-partial.png)
 
 Anchored vectors accurately capture the total increase of 11, though with slight estimation differences between the two time windows. The first window slightly underestimates while the second window slightly overestimates the actual increase.
 
@@ -242,7 +238,7 @@ This behavior effectively implements a "time-to-live" (kind of) for metrics, whe
 
 **Anchored increase on partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/881987961c011e6f42321e778db91b5c.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/anchored-increase-partial.png)
 
 In this diagram, Anchored increase on partial datasets maintains a horizontal line when no new data is available. This behavior occurs because we capture samples up to the beginning of the time series for this exercise (otherwise, the line would slightly decrease). The anchored mode continues to produce integer results throughout.
 
@@ -257,7 +253,7 @@ rate(cpu_usage_total[5m] smoothed)
 cpu_usage_total smoothed
 ```
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/31f9c424e4d61716a64aa3d5a1ce7c44.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-vector-complete.png)
 
 Smoothed vectors behave as if continuous lines were drawn between samples, utilizing linear interpolation to create a smooth transition between data points. This captures the increase of 11.
 
@@ -277,29 +273,35 @@ Smoothed vectors behave as if continuous lines were drawn between samples, utili
 
 **Smoothed increase on complete dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/84f19b21166f516df4586326851ce8bf.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-increase-complete.png)
 
 Smoothed increase provides a more accurate estimate by interpolating between data points. At the 15s mark, it calculates a value of 0.33, representing the partial increase that might occur if the data was linear. Unlike the standard increase function, smoothed increase avoids over-extrapolation by using linear interpolation between actual data points.
 
 **Smoothed vector on partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/36b0b5c4d1261bcbba3e923b1adfbae7.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-vector-partial.png)
 
 The smoothed approach accurately measures the total increase of 11 by using linear interpolation between available data points. This produces results very similar to what we see with the complete dataset. While we cannot fabricate missing data, the smoothed method leverages all available information in Prometheus to create the most accurate estimation possible through interpolation.
 
 **Smoothed increase on partial dataset**
 
-![](../assets/2025-04-04_extended-range-selectors-semantics/db481fb5271e12de0ffcc3b4cd48a446.png)
+![](../assets/2025-04-04_extended-range-selectors-semantics/smoothed-increase-partial.png)
 
 The smoothed increase function effectively bridges gaps in the partial dataset by using linear interpolation between available data points. This approach produces results remarkably similar to those seen with the complete dataset, with only minor variations where interpolation differs from actual values.
 
-### Application to Range and Instant Vectors
+### Application to Range and Instant Vector Selectors
 
 The `smoothed` modifiers apply to:
 - **Range selectors**: `[10m] smoothed`
 - **Instant selectors**: `metric smoothed`
 
-The `smoothed` modifier applies linear interpolation at time `t` using the nearest datapoints before and after that time. This creates a continuous estimation of values at range boundaries, resulting in smoother transitions between samples. This is basically smoothing gauges with linear interpolation.
+The `smoothed` modifier for instant vector selectors applies linear interpolation at time `t` using the nearest datapoints before and after that time. This creates a continuous estimation of values at range boundaries, resulting in smoother transitions between samples. This is basically smoothing gauges with linear interpolation.
+
+The `anchored` modifiers apply to:
+- **Range selectors**: `[10m] anchored`
+- **Instant selectors**: `metric anchored`
+
+The `anchored` modifier for instant vector selectors selects a datapoint at `t`, using the lookback delta, and ignoring staleness markers.
 
 ### Applications to other functions
 
@@ -327,7 +329,7 @@ These solutions are also meant for metrics that are pushed - in that case, extra
 
 Created Timestamp metadata enhances the precision of the `anchored` modifier by allowing the system to accurately place the initial zero value at the exact moment a counter was created. This ensures we capture the complete increase from the very beginning of a metric's existence. Without Created Timestamp, we might miss the initial increase that occurs between creation and the first sample. With it, `anchored` can duplicate the zero value precisely at the start of the range when appropriate, providing more accurate rate calculations especially for newly created counters.
 
-*Why not taking staleness markers into consideration?*
+*Why not take staleness markers into consideration?*
 
 It is important that heuristics remain consistent whether metrics are pulled or pushed. Additionally, staleness markers are not specialized and can indicate various conditions: a disappearing counter, a scrape failure, or a recording rule not returning a result. This ambiguity makes staleness markers unreliable as signals for specific behaviors in rate calculations.
 
