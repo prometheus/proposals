@@ -19,7 +19,7 @@
     * [Musings on delta temporality in Prometheus](https://docs.google.com/document/d/1vMtFKEnkxRiwkr0JvVOrUrNTogVvHlcEWaWgZIqsY7Q/edit?tab=t.0#heading=h.5sybau7waq2q)
     * [Chronosphere Delta Experience Report](https://docs.google.com/document/d/1L8jY5dK8-X3iEoljz2E2FZ9kV2AbCa77un3oHhariBc/edit?tab=t.0#heading=h.3gflt74cpc0y)
 
-This design document proposes adding experimental support for OTEL delta temporality metrics in Prometheus, allowing them be ingested and stored directly.
+This design document proposes adding experimental support for OTEL delta temporality metrics in Prometheus, allowing them be ingested, stored and queried directly.
 
 ## Why
 
@@ -110,56 +110,97 @@ Delta histograms will use native histogram chunks with the `GaugeType` counter r
 
 ### Delta metric type
 
-It is useful to be able to distinguish between delta and cumulative metrics. This would allow users to understand out what the raw data represents and what functions are appropiate to use. Additionally, this could allow the query engine or UIs displaying Prometheus data apply different behaviour depending on the metric type to provide meaningful output. 
+It is useful to be able to distinguish between delta and cumulative metrics. This would allow users to understand what the raw data represents and what functions are appropiate to use. Additionally, this could allow the query engine or UIs displaying Prometheus data apply different behaviour depending on the metric type to provide meaningful output.
 
-There are two options we are considering for how to type deltas. We propose to add both of these options as feature flags for ingesting deltas.
+As per [Prometheus documentation](https://prometheus.io/docs/concepts/metric_types/), "The Prometheus server does not yet make use of the type information and flattens all data into untyped time series". Recently however, there has been [an accepted Prometheus proposal (PROM-39)](https://github.com/prometheus/proposals/pull/39) to add experimental support type and unit metadata as labels to series, allowing more persistent and structured storage of metadata than was previously available. This means there is potential to build features on top of the typing in the future.
+
+There are two options we are considering for how to type deltas. We propose to add both of these options as feature flags for ingesting deltas:
 
 1. `--enable-feature=otlp-delta-as-gauge-ingestion`: Ingests OTLP deltas as gauges.
 
-2. `--enable-feature=otlp-native-delta-ingestion`: Ingests OTLP deltas as a new delta "type", using a new `__temporality__` label to explicitly mark metrics as delta.
+2. `--enable-feature=otlp-native-delta-ingestion`: Ingests OTLP deltas with a new `__temporality__` label to explicitly mark metrics as delta or cumulative, similar to how the new type and unit metadata labels are being added to series.
 
-In the documentation, we would highlight that the gauge option is more stable, since it's a pre-exisiting type and has been used for delta-like use cases in Prometheus already, while the temporality label option is very experimental and dependent on other experimental features.
+We would like to initially offer two options as they have different tradeoffs. The gauge option is more stable, since it's a pre-exisiting type and has been used for delta-like use cases in Prometheus already. The temporality label option is very experimental and dependent on other experimental features, but it has the potential to offer a better user experience in the long run as it allows more precise differenciation between metric types.
 
 Below we explore the pros and cons of each option in more detail.
 
 #### Treat as gauge
 
-Deltas could be treated as Prometheus gauges. A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data. 
+Deltas could be treated as Prometheus gauges. A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data.
 
-Pros
+When ingesting, the metric metadata type will be set to `gauge` / `gaugehistogram`. If type and unit metadata labels is enabled, `__type__="gauge"` / `__type__="gaugehistogram"` will be added as a label.
+
+**Pros**
 * Simplicity - this approach leverages an existing Prometheus metric type, reducing the changes to the core Prometheus data model.
 * Prometheus already implicitly uses gauges to represent deltas. For example, `increase()` outputs the delta count of a series over an specified interval. While the output type is not explicitly defined, it's considered a gauge.
+* Non-monotonic cumulative sums in OTEL are already ingested as Prometheus gauges, meaning there is precedent for counter-like OTEL metrics being converted to Prometheus gauge types.
 
-Cons
-This could be confusing as gauges are usually used for sampled data (for example, in OTEL: "Gauges do not provide an aggregation semantic, instead “last sample value” is used when performing operations like temporal alignment or adjusting resolution.”) rather than data that should be summed/rated over time.
+**Cons**
+* One problem with treating deltas as gauges is that gauge means different things in Prometheus and OTEL - in Prometheus, it's just a value that can go up and down, while in OTEL it's the "last-sampled event for a given time window". While it technically makes sense to represent an OTEL delta counter as a Prometheus gauge, this could be a point of confusion for OTEL users who see their counter being mapped to a Prometheus gauge, rather than a Prometheus counter. There could also be uncertainty for the user on whether the metric was accidentally instrumented as a gauge or whether it was converted from a delta counter to a gauge.
+* Gauges are usually aggregated in time by averaging or taking the last value, while deltas are usually summed. Treating both as a single type would mean there wouldn't be an appropriate default aggregation for gauges. Having a predictable aggregation by type is useful for downsampling, or applications that try to automatically display meaningful graphs for metrics (e.g. the [Grafana Explore Metrics](https://github.com/grafana/grafana/blob/main/docs/sources/explore/_index.md) feature).
+* The original delta information is lost upon conversion. If the resulting Prometheus gauge metric is converted back into an OTEL metric, it would be converted into a gauge rather than a delta metric. While there's no proven need for roundtrippable deltas, maintaining OTEL interoperability helps Prometheus be a good citizen in the OpenTelemetry ecosystem.
 
-TODO: cover temporality label
+#### Introduce `__temporality__` label
 
-### Remote write 
-Not a goal but sort of supported with temporality label option
-ingestion and forwarding - forwarding will contain labels
-otel is translated into remote write request, that'll be propagated
-Remote write support is a non-goal for this proposal to reduce its scope. However, the current design ends up supporting ingesting delta metrics via remote write. This is because a label will be added to indicate the temporality of the metric and used during querying, and therefore can be added by remote write.
+This option extends the metadata labels proposal which introduces the `__type__` and `__unit__` labels (PROM-39). An additional `__temporality__` metadata label will be added. The value of this label would be either `delta` or `cumulative`. If the temporality label is missing, the temporality should be assumed to be cumulative.
 
-TODO: label setting depends on the type and unit metadata proposal, may need to be updated
+`--enable-feature=otlp-native-delta-ingestion` will only be allowed to be enabled if `--enable-feature=type-and-unit-labels` is also enabled, as it depends heavily on the that feature.
 
-There is currently no equivalent to StartTimeUnixNano per sample in remote write. However, the initial delta implementation drops that field anyway.
-TODO: say remote write will be supported via adding a temporality label
+When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`), and the `__temporality__="delta"` label will be added. As mentioned in the Chunks section, `GaugeType` should still be the counter reset hint/header.
+
+Cumulative metrics ingested via the OTLP endpoint will also have a `__temporality__="cumulative"` label added.
+
+**Pros**
+* Clear distinction between delta metrics and gauge metrics. As discussed in the cons for treating deltas as gauges, it could be confusing treating gauge and delta as the same type.
+* Closer match with the OTEL model - in OTEL, counter-like types sum over events over time, with temporality being an property of the type. This is mirrored by using the `__type__` and `__temporality__` labels in Prometheus.
+* When instrumenting with the OTEL SDK, you have to explicitly define the type but not temporality. Furthermore, the temporality of metrics could change in the metric processing pipeline (for example, using the deltatocumulative or cumulativetodelta processors). As a result, users may know the type of a metric but be unaware of its temporality at query time. If different query functions are required for delta versus cumulative metrics, it can be difficult for users to know which one to use. By representing both type and temporality as metadata, there is the potential for functions like `rate()` to be overloaded or adapted to handle any counter-like metric correctly, regardless of its temporality. (See the Querying Deltas section for more discussion.)
+
+**Cons**
+* Dependent the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usages for refinement.
+* Introduces additional complexity to the Prometheus data model.
+* Systems or scripts that handle Prometheus metrics may be unware of the new `__temporality__` label and could incorrectly treat all counter-like metrics as cumulative. This could result in calculation errors that are hard to notice.
+
+### Metric names
+
+Currently, OTEL metric names are normalised when translated to Prometheus by default ([code](https://github.com/prometheus/otlptranslator/blob/94f535e0c5880f8902ab8c7f13e572cfdcf2f18e/metric_namer.go#L157)). As part of this normalisation, suffixes can be added in some cases. For example, OTEL metrics converted into Prometheus counters (i.e. monotonic cumulative sums in OTEL) have the `__total` suffix added to the metric name, while gauges do not.
+
+For consistency, any OTEL deltas ingested as Prometheus counters (when `--enable-feature=otlp-native-delta-ingestion` is configured) should have their metric names normalised in the same way as existing OTEL metrics converted into cumulative counters, including adding the `_total` suffix. Conversely, any deltas ingested as gauges (using `--enable-feature=otlp-delta-as-gauge-ingestion`) will follow the standard naming behavior for Prometheus gauges (so the `_total` suffix will not be added).
+
+### Monoticity 
+
+OTEL sums have a monoticity property, which indicates if the sum can only increase or if it can increase and decrease. Monotonic cumulative sums are mapped to Prometheus counters. Non-monotonic cumulative sums are mapped to Prometheus gauges, since Prometheus does not support counters that can decrease. This is because any drop in a Prometheus counter is assumed to be a counter reset.
+
+It is not necessary to detect counter resets for delta metrics - to get the increase over an interval, you can just sum the values over that interval. Therefore, for the  `--enable-feature=otlp-native-delta-ingestion` option, where OTEL deltas are converted into Prometheus counters (with `__temporality__` label), non-monotonic delta sums will also be converted in the same way (with `__type__="counter"` and `__temporality__="delta"`).
+
+Downsides include not being to convert delta counters in Prometheus into their cumulative counterparts (e.g. for any possible future querying extensions for deltas). Also, as the monoticity information is lost, if the metrics are later exported back into the OTEL format, all deltas will have to be assumed to be non-monotonic.
+
+However, the alternative of mapping non-monotonic delta counters to gauges would be problematic, as it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name). Different functions would be needed to get the same results for the non-monotonic counters of differerent temporalities. Another alternative is to continue to reject non-monotonic delta counters, but this could prevent the ingestion of StatsD counters - [the StatsD receiver sets counters as non monotonic by default](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/statsdreceiver/README.md). 
+
+A possible future enhancement is to add an `__monotonicity__` label along with `__temporality__` for counters. Additionally, if there were a reliable way to have CreatedAt timestamp for all cumulative counters, we could consider supporting non-monotonic cumulative counters as well, as at that point the CreatedAt timestamp could be used for working out counter resets instead of decreases in counter value. This may not be feasible in all cases though.
 
 ### Scraping
 
 No scraped metrics should have delta temporality as there is no additional benefit over cumulative in this case. To produce delta samples from scrapes, the application being scraped has to keep track of when a scrape is done and resetting the counter. If the scraped value fails to be written to storage, the application will not know about it and therefore cannot correctly calculate the delta for the next scrape.
 
-Delta metrics will be filtered out from metrics being federated. If the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has issues detailed above. 
-TODO: not always the case - instead of filtering update
-metadata counter + __temporality__ -> can miss the temporality
+For federation, if the current value of the delta series is exposed directly, data can be incorrectly collected if the ingestion interval is not the same as the scrape interval for the federate endpoint. The alternative is to convert the delta metric to a cumulative one, which has the conversion issues detailed above.
 
-### TODO: non-monotonic sums
+We will add a warning to the delta documentation explaining the issue with federating delta metrics, and provide a scrape config for ignoring deltas if the `__temporality__="delta"` label is set. If deltas are converted to gauges, there would not be a way to distinguish deltas from regular gauges so we cannot provide a scrape config.
 
-### TODO: 
+### Remote write ingestion
 
-### Prometheus OTEL receiver
-to be able to convert back to delta
+Remote write support is a non-goal for this initial delta proposal to reduce its scope. However, the current design ends up supporting ingesting delta metrics via remote write. This is because a label will be added to indicate the temporality of the metric and used during querying, and therefore can be added manually added to metrics before being sent by remote write.
+
+### Prometheus metric metadata
+
+Prometheus has metric metadata as part of its metric model, which include the type of a metric. For this initial proposal, this will not be modified. Temporality will not be added as an additional metadata field, and will only be able to be set via the `__temporality__` label on a series.
+
+### Prometheus OTEL receivers
+
+Once deltas are ingested into Prometheus, they can be converted back into OTEL metrics by the prometheusreceiver (scrape) and [prometheusremotewritereceiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver) (push).
+
+The prometheusreceiver has the same issue described in Scraping regarding possibly misaligned scrape vs delta ingestion intervals.
+
+If we do not modify prometheusremotewritereceiver, then `--enable-feature=otlp-native-delta-ingestion` will set the metric metadata type to counter. The receiver will currently assume it's a cumulative counter ([code](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/7592debad2e93652412f2cd9eb299e9ac8d169f3/receiver/prometheusremotewritereceiver/receiver.go#L347-L351)), which is incorrect. If we get more certain that the `__temporality__` label is the right way to go, we should update the receiver to translate counters with `__temporality__="delta"` to OTEL sums with delta temporality. For now, we will recommend that delta metrics should be dropped before reaching the  receiver, and provide a remote write relabel config for doing so.
 
 ### Querying deltas
 
@@ -356,6 +397,8 @@ To work out the delta for all the cumulative native histograms in an range, the 
 Experimental
 what if people use?
 more risky, why it's not the default
+sum_over_time should always work 
+
 
 ## Implementation Plan
 
