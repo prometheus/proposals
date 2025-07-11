@@ -164,19 +164,23 @@ Cumulative metrics ingested via the OTLP endpoint will also have a `__temporalit
 
 Currently, OTEL metric names are normalised when translated to Prometheus by default ([code](https://github.com/prometheus/otlptranslator/blob/94f535e0c5880f8902ab8c7f13e572cfdcf2f18e/metric_namer.go#L157)). As part of this normalisation, suffixes can be added in some cases. For example, OTEL metrics converted into Prometheus counters (i.e. monotonic cumulative sums in OTEL) have the `__total` suffix added to the metric name, while gauges do not.
 
-For consistency, any OTEL deltas ingested as Prometheus counters (when `--enable-feature=otlp-native-delta-ingestion` is configured) should have their metric names normalised in the same way as existing OTEL metrics converted into cumulative counters, including adding the `_total` suffix. Conversely, any deltas ingested as gauges (using `--enable-feature=otlp-delta-as-gauge-ingestion`) will follow the standard naming behavior for Prometheus gauges (so the `_total` suffix will not be added).
+The `_total` suffix will not be added to OTEL deltas, ingested as either counters with temporality label or gauges. The `_total` suffix is used to help users figure out whether a metric is a counter. As deltas depend on type and unit metadata labels being added, especially in the `--enable-feature=otlp-native-delta-ingestion` case, the `__type__` label will be able to provide the distinction and the suffix is unnecessary.
+
+One downside is that switching between cumulative and delta means metric names will change, affecting dashboards and alerts. However, the current proposal requires different functions for querying delta and cumulative counters anyway.
 
 ### Monoticity 
 
-OTEL sums have a monoticity property, which indicates if the sum can only increase or if it can increase and decrease. Monotonic cumulative sums are mapped to Prometheus counters. Non-monotonic cumulative sums are mapped to Prometheus gauges, since Prometheus does not support counters that can decrease. This is because any drop in a Prometheus counter is assumed to be a counter reset.
+OTEL sums have a [monoticity property](https://opentelemetry.io/docs/specs/otel/metrics/supplementary-guidelines/#monotonicity-property), which indicates if the sum can only increase or if it can increase and decrease. Monotonic cumulative sums are mapped to Prometheus counters. Non-monotonic cumulative sums are mapped to Prometheus gauges, since Prometheus does not support counters that can decrease. This is because any drop in a Prometheus counter is assumed to be a counter reset.
 
 It is not necessary to detect counter resets for delta metrics - to get the increase over an interval, you can just sum the values over that interval. Therefore, for the  `--enable-feature=otlp-native-delta-ingestion` option, where OTEL deltas are converted into Prometheus counters (with `__temporality__` label), non-monotonic delta sums will also be converted in the same way (with `__type__="counter"` and `__temporality__="delta"`).
 
 Downsides include not being to convert delta counters in Prometheus into their cumulative counterparts (e.g. for any possible future querying extensions for deltas). Also, as the monoticity information is lost, if the metrics are later exported back into the OTEL format, all deltas will have to be assumed to be non-monotonic.
 
-However, the alternative of mapping non-monotonic delta counters to gauges would be problematic, as it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name). Different functions would be needed to get the same results for the non-monotonic counters of differerent temporalities. Another alternative is to continue to reject non-monotonic delta counters, but this could prevent the ingestion of StatsD counters - [the StatsD receiver sets counters as non monotonic by default](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/statsdreceiver/README.md). 
+However, the alternative of mapping non-monotonic delta counters to gauges would be problematic, as it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name). Different functions would be needed for non-monotonic counters of differerent temporalities. 
 
-A possible future enhancement is to add an `__monotonicity__` label along with `__temporality__` for counters. Additionally, if there were a reliable way to have CreatedAt timestamp for all cumulative counters, we could consider supporting non-monotonic cumulative counters as well, as at that point the CreatedAt timestamp could be used for working out counter resets instead of decreases in counter value. This may not be feasible in all cases though.
+Another alternative is to continue to reject non-monotonic delta counters, but this could prevent the ingestion of StatsD counters. [The StatsD receiver sets counters as non monotonic by default](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/statsdreceiver/README.md), but there has been some debate on whether this should be the case or not ([issue 1](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/1789), [issue 2](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/14956)).
+
+A possible future enhancement is to add an `__monotonicity__` label along with `__temporality__` for counters. Additionally, if there were a reliable way to have [CreatedAt timestamp](https://github.com/prometheus/proposals/blob/main/proposals/0029-created-timestamp.md) for all cumulative counters, we could consider supporting non-monotonic cumulative counters as well, as at that point the CreatedAt timestamp could be used for working out counter resets instead of decreases in counter value. This may not be feasible or wanted in all cases though.
 
 ### Scraping
 
@@ -204,51 +208,44 @@ If we do not modify prometheusremotewritereceiver, then `--enable-feature=otlp-n
 
 ### Querying deltas
 
-TODO: add warnings and that's it. move the rest to potential future extensions
-The existing `sum_over_time()` function can be used to aggregate a delta metric over time, and `sum_over_time(metric[<interval>]) / <interval>` can be used for the rate.  TODO: link
+For this initial proposal, existing functions will be used for querying deltas.
 
+`rate()` and `increase()` will not work, since they assume cumulative metrics. Instead, the `sum_over_time()` function can be used to get the increase in the range, and `sum_over_time(metric[<range>]) / <range>` can be used for the rate. `metric / interval` can also be used to calculate a rate if the ingestion interval is known.
 
-*Note: this section likely needs the most discussion. I'm not 100% about the proposal because of issues with sparse deltas, like making it harder to guess the start and end of series. The main alternatives can be found in [Querying deltas alternatives](#querying-deltas-alternatives), and a more detailed doc with additional context and options is [here](https://docs.google.com/document/d/15ujTAWK11xXP3D-EuqEWTsxWiAlbBQ5NSMloFyF93Ug/edit?tab=t.3zt1m2ezcl1s).*
+Having different functions for delta and cumulative counters mean that if the temporality of a metric changes, queries will have to be updated.
 
-`rate()` and `increase()` will be extended to support delta metrics too. If the `__temporality__` is `delta`, execute delta-specific logic instead of the current cumulative logic. For consistency, the delta-specific logic will keep the intention of the rate/increase functions - that is, estimate the rate/increase over the selected range given the samples in the range, extrapolating if the samples do not align with the start and end of the range.
+Possible improvements to rate/increase calculations and user experience can be found in the Function overloading section below.
 
-`irate()` will also be extended to support delta metrics.
+#### Querying range misalignment
 
-Having functions transparently handle the temporality simplifies the user experience - users do not need to know the temporality of a series for querying, and means queries don't need to be rewriten when migrating between cumulative and delta metrics.
+One caveat with using `sum_over_time` is that the actual range covered by the sum could be different from the query range. For the ranges to match, the query range needs to be a multiple of the collection interval, which Prometheus does not enforce. Also, this finds the rate between the start time of the first sample and the end time of the last sample, which won't always match the start and end times of the query.
 
-`resets()` does not apply to delta metrics, however, so will return no results plus a warning in this case.
+Below are a couple of examples.
 
-#### rate() calculation
+**Example 1**
 
-In general: `sum of second to last sample values / (last sample ts - first sample ts)) * range`. We skip the value of the first sample as we do not know its interval.
+* S1: StartTimeUnixNano: T0, TimeUnixNano: T2, Value: 5
+* S2: StartTimeUnixNano: T2, TimeUnixNano: T4, Value: 1
+* S3: StartTimeUnixNano: T4, TimeUnixNano: T6, Value: 9 
 
-The current `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range.
+And  `sum_over_time()` was executed between T1 and T5.
 
-With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples. 
+As the samples are written at TimeUnixNano, only S1 and S2 are inside the query range. The total (aka “increase”)  of S1 and S2 would be 5 + 1 = 6. This is actually the increase between T0 (StartTimeUnixNano of S1) and T4 (TimeUnixNano of S2) rather than the increase between T1 and T5. In this case, the size of the requested range is the same as the actual range, but if the query was done between T1 and T4, the request and actual ranges would not match.
 
-We could just not try and predict the start/end of the series and assume the series continues to extend to beyond the samples in the range. However, not predicting the start and end of the series could inflate the rate/increase value, which can be especially problematic during rollouts when old series are replaced by new ones.
+**Example 2**
 
-Assuming `rate()` only has information about the sample within the range, guessing the start and end of series is probably the least worst option - this will at least work in delta cases where the samples are continuously ingested. To predict if a series has started ended in the range, check if the timestamp of the last sample are within 1.1x of an interval between their respective boundaries (aligns with the cumulative check for start/end of a series).
+* S1: StartTimeUnixNano: T0, TimeUnixNano: T5, Value: 10
 
-To calculate the interval, use the average spacing between samples.
+`sum_over_time()` between T0 and T5 will get 10. Divided by 5 for the rate results in 2.
 
-Downsides:
+However, if you only query between T4 and T5, the rate would be 10/1 = 1 , and queries between earlier times (T0-T1, T1-T2 etc.) will have a rate of zero. These results may be misleading.
 
-* This will not work if there is only a single sample in the range, which is more likely with delta metrics (due to sparseness, or being used in short-lived jobs).
-* Harder to predict the start and end of the series vs cumulative.
-* The average spacing may not be a good estimation for the ingestion interval, since delta metrics can be sparse.
+#### Function warnings
 
-#### Non-approximation
+To help users use the correct functions, warnings will be added if the metric type/temporality does not match the types that should be used with the function.
 
-While `rate()` and `increase()` will be consistent with cumulative case, there are downsides as mentioned above. Therefore there may be cases where approximating the rate/increase over the selected range is unwanted for delta metrics.
-
-Users may prefer "non-approximating" behaviour that just gives them the sum of the sample values within the range. This can be accomplished with `sum_over_time()`, though this does not always accurately give the increase within the requested range.
-
-`sum_over_time()` does not work for cumulative metrics, so a warning should be returned in this case. One downside is that this could make migrating from delta to cumulative metrics harder, since `sum_over_time()` queries would need to be rewritten, and users wanting to use `sum_over_time()` will need to know the temporality of their metrics.
-
-One possible solution would to have a function that does `sum_over_time()` for deltas and the cumulative equivalent too (this requires subtracting the latest sample before the start of the range with the last sample in the range). This is outside the scope of this design, however.
-
-TODO: mixed samples
+* `rate()` and `increase()` will warn if `__type__="gauge"` or `__temporality__="delta"`
+* `sum_over_time()` will warn if `__temporality__="cumulative"`
 
 ## Possible future extensions
 
@@ -260,6 +257,8 @@ CT-per-sample is not a blocker for deltas - before this is ready, `StartTimeUnix
 
 Having CT-per-sample can improve the `rate()` calculation - the ingestion interval for each sample will be directly available, rather than having to guess the interval based on gaps. It also means a single sample in the range can result in a result from `rate()` as the range will effectively have an additional point at `StartTimeUnixNano`. 
 
+There are unknowns over the performance and storage of essentially doubling the number of samples with this approach.
+
 ### Inject zeroes for StartTimeUnixNano
 
 [CreatedAt timestamps can be injected as 0-valued samples](https://prometheus.io/docs/prometheus/latest/feature_flags/#created-timestamps-zero-injection). Similar could be done for StartTimeUnixNano. 
@@ -267,27 +266,103 @@ Having CT-per-sample can improve the `rate()` calculation - the ingestion interv
 CT-per-sample is a better solution overall as it links the start timestamp with the sample. It makes it easier to detect overlaps between delta samples (indicative of multiple producers sending samples for the same series), and help with more accurate rate calculations.
 
 If CT-per-sample takes too long, this could be a temporary solution.
-TODO: also mention space and performance of additional sample 
 
-### Lookahead and lookbehind of range
-TODO: move to querying section
+It's possible for the StartTimeUnixNano of a sample to be the same as the TimeUnixNano of the preceding sample; care would need to be taken to not overwrite the non-zero sample value.
 
-The reason why `increase()`/`rate()` need extrapolation to cover the entire range is that they’re constrained to only look at the samples within the range. This is a problem for both cumulative and delta metrics.
+### Rate calculation extensions
 
-To work out the increase more accurately, they would also have to look at the sample before and the sample after the range to see if there are samples that partially overlap with the range - in that case the partial overlaps should be added to the increase.
+Querying deltas outlined the caveats of using `sum_over_time(...[<interval>]) / <interval>` to calculate the increase for delta metrics. In this section, we explore possible alternative implementations for delta metrics. Additionally, this section references the [Extended range selectors semantics proposal](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md) which introduces extensions to range selectors, in particular for `rate()` and `increase()` for cumulative counters.
 
-This could be a new function, or changing the `rate()` function (it could be dangerous to adjust `rate()`/`increase()` though as they’re so widely used that users may be dependent on their current behaviour even if they are “less accurate”).
+#### Similar logic to cumulative metrics
+
+For cumulative counters, `increase()` works by subtracting the first sample from the last sample in the range, adjusting for counter resets, and then extrapolating to estimate the increase for the entire range. The extrapolation is required as the first and last samples are unlikely to perfectly align with the start and end of the range, and therefore just taking the difference between the two is likely to be an underestimation of the increase for the range. rate() divides the result of increase() by the range. This gives an estimate of the increase or rate of the selected range.
+
+For consistency, we could emulate that for deltas. In general the calculation would be: `sum of second to last sample values / (last sample ts - first sample ts))` for delta rate, and multiply by `range` for delta increase. We skip the value of the first sample as we do not know its interval. A slight alternative is to partially include the first sample to avoid discarding information, using the average interval between samples to estimate how much of it is within the selected range.
+
+The cumulative `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range. With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples. We could just not try and predict the start/end of the series and assume the series continues to extend to beyond the samples in the range. However, not predicting the start and end of the series could inflate the rate/increase value, which can be especially problematic during rollouts when old series are replaced by new ones.
+
+Assuming the delta rate function only has information about the sample within the range, guessing the start and end of series is probably the least worst option - this will at least work in delta cases where the samples are continuously ingested. To predict if a series has started or ended in the range, check if the timestamp of the last sample are within 1.1x of an interval between their respective boundaries (aligns with the cumulative check for start/end of a series). To calculate the interval, use the average spacing between samples.
+
+Downsides:
+
+* This will not work if there is only a single sample in the range, which is more likely with delta metrics (due to sparseness, or being used in short-lived jobs).
+  * A possible adjustment is to just take the single value as the increase for the range. This may be more useful on average than returning no value in the case of a single sample. However, the mix of extrapolation and non-extrapolation logic may end up surprising users. If we do decide to generally extrapolate to fill the whole window, but have this special case for a single datapoint, someone might rely on the non-extrapolation behaviour and get surprised when there are two points and it changes.
+* Harder to predict the start and end of the series vs cumulative.
+* The average spacing may not be a good estimation for the ingestion interval when delta metrics are sparse.
+
+##### Lookahead and lookbehind of range
+
+The reason why `increase()`/`rate()` need extrapolation for cumulative counters is to cover the entire range is that they’re constrained to only look at the samples within the range. This is a problem for both cumulative and delta metrics.
+
+To work out the increase more accurately, the functions would also have to look at the sample before and the sample after the range to see if there are samples that partially overlap with the range - in that case the partial overlaps should be added to the increase. 
+
+The `smoothed` modifer in the extended range selectors proposal does this for cumulative counters - looking at the points before and after the range to more accurately calculate the rate/increase. We could implement something similar with deltas, though we cannot naively use the propossed smoothed behaviour for deltas. 
+
+The `smoothed` proposal works by injecting points at the edges of the range. For the start boundary, the injected point will have its value worked out by linearly interpolating between the closest point before the range start and the first point inside the range.
+
+![cumulative smoothed example](../assets/2025-03-25_otel-delta-temporality-support/cumulative-smoothed.png)
+
+That value would be nonesensical for deltas, as the values for delta samples are independent. Additionally, for deltas, to work out the increase, we add all the values up in the range (with some adjustments) vs in the cumulative case where you subtract the first point in the range from the last point. So it makes sense the smoothing behaviour would be different.
+
+In the delta case, we would need to work out the proportion of the first sample within the range and update its value. We would use the assumption that the start timestamp for the first sample is equal the the timestamp of the previous sample, and then use the formula `inside value * (inside ts - range start ts) / (inside ts - outside ts)` to adjust the first sample (aka the `inside value`).
+
+### Function overloading
+
+`rate()` and `increase()` could be extended to work transparently with both cumulative and delta metrics. The PromQL engine could check the `__temporality__` label and execute the correct logic.
+
+This would mean users would not need to know the temporality of their metric to write queries. Users often don’t know or may not be able to control the temporality of a metric (e.g. if they instrument the application, but the metric processing pipeline run by another team changes the temporality). Different sources may also mean different series have different temporalities.
+
+Additionally, it allows for greater query portability and reusability. Published generic dashboards and alert rules (e.g. [Prometheus monitoring mixins](https://monitoring.mixins.dev/)) can be reused for metrics of any temporality, reducing oeprational overhead. 
+
+However, there are several considerations and open questions:
+
+* There are questions on how to best calculate the rate or increase of delta metrics (see section below), and there is currently ongoing work with extending range selectors for cumulative counters, which should be taken into account when considering how to calcualte delta ([proposal](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md)).
+* While there is some precedent for function overloading with both counters and native histograms being processed in different ways by `rate()`, those are established types with obvious structual differences that are difficult to mix up. The metadata labels (including the proposed `__temporality__` label) are themselves experimental and require more adoption and validation before we start building too much on top of them.
+* The increased internal complexity could end up being more confusing.
+* Migration between delta and cumulative temporality may seem seamless at first glance - there is no need to change the functions used. However, the `__temporality__` label would mean that there would be two separate series, one delta and one cumulative. If you have a long query (e.g. `increase(...[30d]))`, the transition point between the two series will be included for a long time in queries. Assuming the [proposed metadata labels behaviour](https://github.com/prometheus/proposals/blob/main/proposals/0039-metadata-labels.md#milestone-1-implement-a-feature-flag-for-type-and-unit-labels), where metadata labels are dropped after `rate()` or `increase()` is applied, two series with the same labelset will be returned (with an info annotation about the query containing mixed types). One possible change could be to attempt to stitch the cumulative and delta series together and return a single result.
+* There is currently no way to correct the metadata labels for a stored series during query time. While there is the `label_replace()` function, that only works on instant vectors, not range vectors which are required by `rate()` and `increase()`. If `rate()` has different behaviour depending on a label, there is no way to get it to switch to the other behaviour if you've accidentally used the wrong label during ingestion. 
+* While updating queries could be tedious, it's an explicit and informed process, and just doing it will solve the problem.
+* Once we start with overloading functions, users may ask for more of that e.g. should we change `sum_over_time()` to also allow calculating the increase of cumulative metrics rather than just summing samples together. Where would the line be in terms of which functions should be overloaded or not? One option would be to only allow `rate()` and `increase()` to be overloaded, as they are the most popular functions that would be used with counters.
+
+Function overloading could also technically work f OTEL deltas are ingested as Prometheus gauges and the `__type__="gauge"` label is added, but then `rate()` and `increase()` could run on actual gauges (e.g. max cpu), not add any warnings, and produce results that don’t really make sense.
+
+#### `rate()` behaviour for deltas
+
+If we were to implement function overloading for `rate()` and `increase()`, how exactly will it behave for deltas? In this document, a few possible ways to do rate calculation are outlined, each with their own pros and cons.
+
+Doing extrapolation in a similar way to the current cumulative rate calculation would be the most consistent option, and if users have a mix of delta and cumulative metrics, or migrate from one to another, there are fewer surprises. However, the extrapolating behaviour works less well with deltas, and there are also issues with it on the cumulative side.
+
+Our  suggestion for the inital delta implementation is for users to directly use `sum_over_time()` to calculate the increase in a delta metric. We could instead do the `sum_over_time()` calculation for `rate()`/`increase()` if those functions are called on deltas. This could cause confusion if the users are switching between delta and cumulative metrics in some way, and there could be a range misalignment.
+
+Also to take into account are the new `smoothed` and `anchored` modifiers in the extended range selectors proposal. One possible solution is to 
+allowing different behaviours depending on the modifiers.
+
+The closest match in terms of consistent behaviour between deltas and cumulative given the same input to the instrumented counters in the application would be:
+* no modifier - Logic as described in Similar logic to cumulative metrics.
+* `smoothed` - Logic as described in Lookahead and lookbehind.
+* `anchored` - In the extended range selectors proposal, anchored will add the sample before the start of the range as a sample at the range start boundary before doing the usual rate calculation. Similar to the `smoothed` case, while this works for cumulative metrics, it does not work for deltas. To get the same result, for deltas we would just use use `sum_over_time()` to calculate the increase (and divide by range to get rate). No samples outside the range need to be considered for deltas.
+
+An adjustment could be to do `sum_over_time()` in the no modifier case too, even though it's less consistent with cumulative behaviour, since the extrapolation behaviour with delta metrics has issues and could end up being more confusing despite being more consistent with the cumulative implementaiton.
+
+One problem with reusing the range selector modifiers is that they are more generic than just modifiers for `rate()` and `increase()`, so adding delta-specific logic for these modifiers for `rate()` and `increase()`, may be confusing.
+
+### `delta_*` functions
+
+An alternative to function overloading, but allowing more choices on how rate calculation can be done would be to introduce `delta_*` functions like `delta_rate()` and having range selector modifiers. 
+
+This has the problem of having to use different functions for delta and cumulative metrics (so switching cost, possibly poor user experience).
 
 ## Discarded alternatives
 
 ### Ingesting deltas alternatives 
 
 #### Treat as “mini-cumulative”
+
 Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions. 
 
 This requires CT-per-sample to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
 
-Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. rate() assumes samples in a range are equally spaced to figure out how much to extrapolate, which is less likely to be true for delta samples. TODO: depends on delta type
+Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate, which is less likely to be true for delta samples. TODO: depends on delta type
 
 This also does not work for samples missing StartTimeUnixNano.
 
@@ -321,58 +396,6 @@ Have a convention for naming metrics e.g. appending `_delta_counter` to a metric
 
 ### Querying deltas alternatives
 
-#### Do sum_over_time() / range for delta `rate()` implementation
-
-Instead of trying to approximate the rate over the interval, just sum all the samples in the range and divide by the range for `rate()`. This avoids any approximation which may be less effective for delta metrics where the start and end of series is harder to predict, so may be preferred by users.
-
-For cumulative metrics, just taking the samples in the range and not approximating to cover the whole range is a bad approach. In the cumulative case, this would mean just taking the difference between the first and last samples and dividing by the range.  As the first and last samples are unlikely to perfectly align with the start and end of the range, taking the difference between the two is likely to be an underestimation of the increase for the range. 
-
-For delta metrics, this is less likely to be an underestimation. Non-approximation would mean something different than in the cumulative case - summing all the samples together. It's less likely to be an underestimation because the start time of the first sample could be before the start of the query range. So the total range of the selected samples could be similar to the query range.
-
-Below is an image to demonstrate - the filled in blue squares are the samples within the range, with the lines between the interval for which the sample data was collected. The unfilled blue squad is the start time for the first sample in the range, which is before the start time of the query range, and the total range of the samples is similar to the query range, just offset.
-
-![Range covered by samples vs query range](../assets/2025-03-25_otel-delta-temporality-support/sum_over_time_range.png)
-
-The actual range covered by the sum could still be different from the query range in the delta case. For the ranges to match, the query range needs to be a multiple of the collection interval, which Prometheus does not enforce. Also, this finds the rate between the start time of the first sample and the end time of the last sample, which won't always match the start and end times of the query.
-
-Below are a couple of examples.
-
-**Example 1**
-
-* S1: StartTimeUnixNano: T0, TimeUnixNano: T2, Value: 5
-* S2: StartTimeUnixNano: T2, TimeUnixNano: T4, Value: 1
-* S3: StartTimeUnixNano: T4, TimeUnixNano: T6, Value: 9 
-
-And  `sum_over_time()` was executed between T1 and T5.
-
-As the samples are written at TimeUnixNano, only S1 and S2 are inside the query range. The total (aka “increase”)  of S1 and S2 would be 5 + 1 = 6. This is actually the increase between T0 (StartTimeUnixNano of S1) and T4 (TimeUnixNano of S2) rather than the increase between T1 and T5. In this case, the size of the requested range is the same as the actual range, but if the query was done between T1 and T4, the request and actual ranges would not match.
-
-**Example 2**
-
-* S1: StartTimeUnixNano: T0, TimeUnixNano: T5, Value: 10
-
-`sum_over_time()` between T0 and T5 will get 10. Divided by 5 for the rate results in 2.
-
-However, if you only query between T4 and T5, the rate would be 10/1 = 1 , and queries between earlier times (T0-T1, T1-T2 etc.) will have a rate of zero. These results may be misleading.
-
-For users wanting this behaviour instead of the suggested one (approximating the rate/increase over the selected range), it is still possible do with `sum_over_time(<delta metric>)` / `<range>`.
-
-Having `rate()`/`increase()` do different things for cumulative and delta metrics can be confusing (e.g. with deltas and integer samples, you'd always get an integer value if you use `sum_over_time()`, but the same wouldn't be true for cumulative metrics with the current `increase()` behaviour). 
-
-If we were to add behaviour to do the cumulative version of "sum_over_time", that would likely be in a different function. And then you'd have different functions to do non-approximation for delta and cumulative metrics, which again causes confusion.
-
-If we went for this approach first, but then updated `rate()` to lookahead and lookbehind in the long term, users depending on the "non-extrapolation" could be affected.
-
-One open question is if or how much the "accuracy" problem matters to users. Furthermore, in the case of the second example, where the query range is smaller than the ingestion interval, that may not be a very frequent problem.
-
-#### Do sum_over_time() / range for delta `rate()` implementation only when StartTimeUnixNano is missing
-
-Use the proposed logic (with interval-based approximation) when StartTimeUnixNano is set, but if it's missing, use sum_over_time() / range. 
-
-With the initial implementation, all delta metrics will essentially have missing "StartTimeUnixNano" since that is discarded on ingestion and not available at query time.
-
-This also provides a way for users to choose between the approximating and non-approximating query behaviour by setting StartTimeUnixNano or not. However, the users querying the metrics may be different from the operators of the metrics pipeline, and therefore still not have control over the query behaviour.
-
 #### Convert to cumulative on query
 
 Delta to cumulative conversion at query time doesn’t have the same out of order issues as conversion at ingest. When a query is executed, it uses a fixed snapshot of data. The order the data was ingested does not matter, the cumulative values are correctly calculated by processing the samples in timestamp-order. 
@@ -380,12 +403,6 @@ Delta to cumulative conversion at query time doesn’t have the same out of orde
 No function modification needed - all cumulative functions will work for samples ingested as deltas.
 
 However, it can be confusing for users that the delta samples they write are transformed into cumulative samples with different values during querying. The sparseness of delta metrics also do not work well with the current `rate()` and `increase()` functions.
-
-#### Have temporary `delta_rate()` and `delta_increase()` functions 
-
-While the intention is to eventually use `rate()`/`increase()` etc. for both delta and cumulative metrics, initially experimental functions prefixed with `delta_` will be introduced behind a delta-support feature flag. This is to make it clear that these are experimental and the logic could change as we start seeing how they work in real-world scenarios. In the long run, we’d move the logic into `rate()` etc..
-
-This may be an unnecessary step, especially if the delta functionality is behind feature flags.
 
 ## Known unknowns
 
