@@ -6,7 +6,7 @@
 
 * **Contributors:**  
   * Initial design started by @ArthurSens and @sh0rez
-  * Delta WG contributors: @ArthurSens, @enisoc and @subvocal
+  * Delta WG: @ArthurSens, @enisoc and @subvocal, among others
 
 * **Implementation Status:** `Partially implemented`
 
@@ -101,6 +101,8 @@ This document is for Prometheus server maintainers, PromQL maintainers, and Prom
 These may come in later iterations of delta support.
 
 ## How
+
+This section outlines the proposed approach for delta temporality support. Additional approaches and extensions can be found in [Potential future extensions](#potential-future-extensions) and [Discarded alternatives](#discarded-alternatives).
 
 ### Ingesting deltas
 
@@ -261,6 +263,34 @@ There are also additional functions that should only be used with Prometheus gau
 
 This initial approach enables Prometheus to support OTEL delta metrics in a careful manner by relying on existing concepts like labels and reusing existing functions with minimal changes, and also provides a foundation for potentially building more advanced delta features in the future.
 
+## Known unknowns
+
+### Native histograms performance
+
+To work out the delta for all the cumulative native histograms in an range, the first sample is subtracted from the last and then adjusted for counter resets within all the samples. Counter resets are detected at ingestion time when possible. This means the query engine does not have to read all buckets from all samples to calculate the result. The same is not true for delta metrics - as each sample is independent, to get the delta between the start and end of the range, all of the buckets in all of the samples need to be summed, which is less efficient at query time.
+
+## Implementation Plan
+
+### 1. Experimental feature flags for OTLP delta ingestion
+
+Add the `--enable-feature=otlp-native-delta-ingestion` and `--enable-feature=otlp-delta-as-gauge-ingestion` feature flags as described in [Delta metric type](#delta-metric-type) to add appropriate types and flags to series on ingestion.
+
+Note a `--enable-feature=otlp-native-delta-ingestion` was already introduced in https://github.com/prometheus/prometheus/pull/16360, but that doesn't add any type metadata to the ingested series.
+
+### 2. Function warnings
+
+Add function warnings when a function is used with series of wrong type or temporality as described in [Function warnings](#function-warnings).
+
+There are already warnings if `rate()`/`increase()` are used without the `__type__="counter"` label: https://github.com/prometheus/prometheus/pull/16632.
+
+### 3. Update documentation
+
+Update documentation explaining new experimental delta functionality, including recommended configs for filtering out delta metrics from scraping and remote write.
+
+### 4. Review deltas in practice and experiment with possible future extensions
+
+Review how deltas work in practice using the current approach, and use experience and feedback to decide whether any of the potential extensions are necessary, and whether to discontinue one of the two options for delta ingestion (gauges vs. temporality label).
+
 ## Potential future extensions
 
 Potential extensions, likely requiring dedicated proposals.
@@ -303,7 +333,7 @@ The `smoothed` modifer in the extended range selectors proposal does this for cu
 
 The `smoothed` proposal works by injecting points at the edges of the range. For the start boundary, the injected point will have its value worked out by linearly interpolating between the closest point before the range start and the first point inside the range.
 
-![cumulative smoothed example](../assets/2025-03-25_otel-delta-temporality-support/cumulative-smoothed.png)
+![cumulative smoothed example](../assets/0048-otel_delta_temporality_support/cumulative-smoothed.png)
 
 That value would be nonesensical for deltas, as the values for delta samples are independent. Additionally, for deltas, to work out the increase, we add all the values up in the range (with some adjustments) vs in the cumulative case where you subtract the first point in the range from the last point. So it makes sense the smoothing behaviour would be different.
 
@@ -447,31 +477,3 @@ Delta to cumulative conversion at query time doesn’t have the same out of orde
 No function modification is needed - all cumulative functions will work for samples ingested as deltas.
 
 However, it can be confusing for users that the delta samples they write are transformed into cumulative samples with different values during querying. The sparseness of delta metrics also do not work well with the current `rate()` and `increase()` functions.
-
-## Known unknowns
-
-### Native histograms performance
-
-To work out the delta for all the cumulative native histograms in an range, the first sample is subtracted from the last and then adjusted for counter resets within all the samples. Counter resets are detected at ingestion time when possible. This means the query engine does not have to read all buckets from all samples to calculate the result. The same is not true for delta metrics - as each sample is independent, to get the delta between the start and end of the range, all of the buckets in all of the samples need to be summed, which is less efficient at query time.
-
-## Implementation Plan
-
-### 1. Experimental feature flags for OTLP delta ingestion
-
-Add the `--enable-feature=otlp-native-delta-ingestion` and `--enable-feature=otlp-delta-as-gauge-ingestion` feature flags as described in [Delta metric type](#delta-metric-type) to add appropriate types and flags to series on ingestion.
-
-Note a `--enable-feature=otlp-native-delta-ingestion` was already introduced in https://github.com/prometheus/prometheus/pull/16360, but that doesn't add any types to deltas.
-
-### 2. Function warnings
-
-Add function warnings when a function is used with series of wrong type or temporality as described in [Function warnings](#function-warnings).
-
-There are already warnings if `rate()`/`increase()` are used without the `__type__="counter"` label: https://github.com/prometheus/prometheus/pull/16632.
-
-### 3. Update documentation
-
-Update documentation explaining new experimental delta functionality, including recommended configs for filtering out delta metrics from scraping and remote write.
-
-### 4. Review deltas in practice and experiment with possible future extensions
-
-Review how deltas work in practice using the current approach, and use experience and feedback to decide whether any of the potential extensions are necessary, and whether to discontinue one of the two options for delta ingestion (gauges vs. temporality label).
