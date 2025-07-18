@@ -28,7 +28,7 @@ Prometheus supports the ingestion of OTEL metrics via its OTLP endpoint. Counter
 
 Therefore, delta metrics need to be converted to cumulative ones during ingestion. The OTLP endpoint in Prometheus has an [experimental feature to convert delta to cumulative](https://github.com/prometheus/prometheus/blob/9b4c8f6be28823c604aab50febcd32013aa4212c/docs/feature_flags.md?plain=1#L167[). Alternatively, users can run the [deltatocumulative processor](https://github.com/sh0rez/opentelemetry-collector-contrib/tree/main/processor/deltatocumulativeprocessor) in their OTEL pipeline before writing the metrics to Prometheus. 
 
-The cumulative code for storage and querying can be reused, and when querying, users don’t need to think about the temporality of the metrics - everything just works. However, there are downsides elaborated in the Pitfalls section below. 
+The cumulative code for storage and querying can be reused, and when querying, users don’t need to think about the temporality of the metrics - everything just works. However, there are downsides elaborated in the [Pitfalls section](#pitfalls-of-the-current-solution) below. 
 
 Prometheus' goal of becoming the best OTEL metrics backend means it should improve its support for delta metrics, allowing them to be ingested and stored without being transformed into cumulative.
 
@@ -154,14 +154,14 @@ This option extends the metadata labels proposal (PROM-39). An additional `__tem
 
 `--enable-feature=otlp-native-delta-ingestion` will only be allowed to be enabled if `--enable-feature=type-and-unit-labels` is also enabled, as it depends heavily on the that feature.
 
-When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`), and the `__temporality__="delta"` label will be added. As mentioned in the Chunks section, `GaugeType` should still be the counter reset hint/header.
+When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`), and the `__temporality__="delta"` label will be added. As mentioned in the [Chunks](#chunks) section, `GaugeType` should still be the counter reset hint/header.
 
 Cumulative metrics ingested via the OTLP endpoint will also have a `__temporality__="cumulative"` label added.
 
 **Pros**
 * Clear distinction between delta metrics and gauge metrics.
 * Closer match with the OTEL model - in OTEL, counter-like types sum over events over time, with temporality being an property of the type. This is mirrored by having separate `__type__` and `__temporality__` labels in Prometheus.
-* When instrumenting with the OTEL SDK, the type needs to be explicitly defined for a metric but not its temporality. Additionally, the temporality of metrics could change in the metric processing pipeline (for example, using the deltatocumulative or cumulativetodelta processors). As a result, users may know the type of a metric but be unaware of its temporality at query time. If different query functions are required for delta versus cumulative metrics, it is difficult to know which one to use. By representing both type and temporality as metadata, there is the potential for functions like `rate()` to be overloaded or adapted to handle any counter-like metric correctly, regardless of its temporality. (See Function overloading for more discussion.)
+* When instrumenting with the OTEL SDK, the type needs to be explicitly defined for a metric but not its temporality. Additionally, the temporality of metrics could change in the metric processing pipeline (for example, using the deltatocumulative or cumulativetodelta processors). As a result, users may know the type of a metric but be unaware of its temporality at query time. If different query functions are required for delta versus cumulative metrics, it is difficult to know which one to use. By representing both type and temporality as metadata, there is the potential for functions like `rate()` to be overloaded or adapted to handle any counter-like metric correctly, regardless of its temporality. (See [Function overloading](#function-overloading) for more discussion.)
 
 **Cons**
 * Dependent the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usages for refinement.
@@ -207,7 +207,7 @@ Prometheus has metric metadata as part of its metric model, which include the ty
 
 Once deltas are ingested into Prometheus, they can be converted back into OTEL metrics by the prometheusreceiver (scrape) and [prometheusremotewritereceiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/receiver/prometheusremotewritereceiver) (push).
 
-The prometheusreceiver has the same issue described in Scraping regarding possibly misaligned scrape vs delta ingestion intervals.
+The prometheusreceiver has the same issue described in [Scraping](#scraping) regarding possibly misaligned scrape vs delta ingestion intervals.
 
 If we do not modify prometheusremotewritereceiver, then `--enable-feature=otlp-native-delta-ingestion` will set the metric metadata type to counter. The receiver will currently assume it's a cumulative counter ([code](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/7592debad2e93652412f2cd9eb299e9ac8d169f3/receiver/prometheusremotewritereceiver/receiver.go#L347-L351)), which is incorrect. If we gain more confience that the `__temporality__` label is the correct approach, the receiver should be updated to translate counters with `__temporality__="delta"` to OTEL sums with delta temporality. For now, we will recommend that delta metrics should be dropped before reaching the  receiver, and provide a remote write relabel config for doing so.
 
@@ -219,7 +219,7 @@ For this initial proposal, existing functions will be used for querying deltas.
 
 Having different functions for delta and cumulative counters mean that if the temporality of a metric changes, queries will have to be updated.
 
-Possible improvements to rate/increase calculations and user experience can be found in Rate calculation extensions and Function overloading.
+Possible improvements to rate/increase calculations and user experience can be found in [Rate calculation extensions](#rate-calculation-extensions) and [Function overloading](#function-overloading).
 
 Note: With [left-open range selectors](https://prometheus.io/docs/prometheus/3.5/migration/#range-selectors-and-lookback-exclude-samples-coinciding-with-the-left-boundary) introduced in Prometheus 3.0, queries such as `sum_over_time(metric[<interval])` will exclude the sample at the left boundary. This is a fortunate usability improvement for querying deltas - with Prometheus 2, a `1m` interval actually covered `1m1s`, which could lead to double counting samples in consecutive steps and inflated sums; to get the actual value within `1m`, the awkward `59s999ms` had to be used instead.
 
@@ -289,7 +289,7 @@ It's possible for the StartTimeUnixNano of a sample to be the same as the TimeUn
 
 ### Rate calculation extensions
 
-Querying deltas outlined the caveats of using `sum_over_time(...[<interval>]) / <interval>` to calculate the increase for delta metrics. In this section, we explore possible alternative implementations for delta metrics. 
+[Querying deltas](#querying-deltas) outlined the caveats of using `sum_over_time(...[<interval>]) / <interval>` to calculate the increase for delta metrics. In this section, we explore possible alternative implementations for delta metrics. 
 
 This section assumes knowledge of [Extended range selectors semantics proposal](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md) which introduces the `smoothed` and `anchored` modifers to range selectors, in particular for `rate()` and `increase()` for cumulative counters.
 
@@ -355,7 +355,7 @@ Cons:
 Open questions and considerations:
 
 * While there is some precedent for function overloading with both counters and native histograms being processed in different ways by `rate()`, those are established types with obvious structual differences that are difficult to mix up. The metadata labels (including the proposed `__temporality__` label) are themselves experimental and require more adoption and validation before we start building too much on top of them.
-* There are open questions on how to best calculate the rate or increase of delta metrics (see `rate()` behaviour for deltas below), and there is currently ongoing work with [extending range selectors for cumulative counters](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md), which should be taken into account for deltas too.
+* There are open questions on how to best calculate the rate or increase of delta metrics (see [`rate()` behaviour for deltas](#rate-behaviour-for-deltas) below), and there is currently ongoing work with [extending range selectors for cumulative counters](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md), which should be taken into account for deltas too.
 * Once we start with overloading functions, users may ask for more of that e.g. should we change `sum_over_time()` to also allow calculating the increase of cumulative metrics rather than just summing samples together. Where would the line be in terms of which functions should be overloaded or not? One option would be to only allow `rate()` and `increase()` to be overloaded, as they are the most popular functions that would be used with counters.
 
 Function overloading could also technically work if OTEL deltas are ingested as Prometheus gauges and the `__type__="gauge"` label is added, but then `rate()` and `increase()` could run on actual gauges (e.g. max cpu), not add any warnings, and produce nonsensical results.
@@ -370,7 +370,7 @@ The current proposed solution would be:
 
 * no modifier - just use use `sum_over_time()` to calculate the increase (and divide by range to get rate). 
 * `anchored` - same as no modifer. In the extended range selectors proposal, anchored will add the sample before the start of the range as a sample at the range start boundary before doing the usual rate calculation. Similar to the `smoothed` case, while this works for cumulative metrics, it does not work for deltas. To get the same output in the cumulative and delta cases given the same input to the initial instrumented counter, the delta case should use `sum_over_time()`.
-* `smoothed` - Logic as described in Lookahead and lookbehind.
+* `smoothed` - Logic as described in [Lookahead and lookbehind](#lookahead-and-lookbehind-of-range).
 
 For the no modifier case, the most consistent behaviour with to cumulative metrics would be do implement what's describe in Similar logic to cumulative case. This could result in fewer surprises if switching between delta and cumulative. However, the extrapolating behaviour does not work well for deltas in many cases, so it's unlikely we will go down that route.
 
@@ -458,13 +458,13 @@ To work out the delta for all the cumulative native histograms in an range, the 
 
 ### 1. Experimental feature flags for OTLP delta ingestion
 
-Add the `--enable-feature=otlp-native-delta-ingestion` and `otlp-deltas-as-gauge` feature flags as described in Delta metric types to add appropiate types and flags to series on ingestion.
+Add the `--enable-feature=otlp-native-delta-ingestion` and `otlp-deltas-as-gauge` feature flags as described in [Delta metric type](#delta-metric-type) to add appropiate types and flags to series on ingestion.
 
 Note a `--enable-feature=otlp-native-delta-ingestion` was already introduced in https://github.com/prometheus/prometheus/pull/16360, but that doesn't add any types to deltas.
 
 ### 2. Function warnings
 
-Add function warnings when a function is used with series of wrong type or temporality as described in Function warnings.
+Add function warnings when a function is used with series of wrong type or temporality as described in [Function warnings](#function-warnings).
 
 There are already warnings if `rate()`/`increase()` are used without the `__type__="counter"` label: https://github.com/prometheus/prometheus/pull/16632.
 
