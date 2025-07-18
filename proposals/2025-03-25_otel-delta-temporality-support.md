@@ -3,8 +3,10 @@
 
 * **Owners:**
   * @fionaliao
+
+* **Contributors:**  
   * Initial design started by @ArthurSens and @sh0rez
-  * TODO: add others from delta wg
+  * Delta WG contributors: @ArthurSens, @enisoc and @subvocal
 
 * **Implementation Status:** `Partially implemented`
 
@@ -398,9 +400,9 @@ Additionally, if there were a reliable way to have [Created Timestamp](https://g
 
 Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions. 
 
-This requires CT-per-sample to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
+This requires CT-per-sample (or some kind of precise CT tracking) to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
 
-Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate, which is less likely to be true for delta samples. TODO: depends on delta type
+Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate, which is not always true for delta samples. 
 
 This also does not work for samples missing StartTimeUnixNano.
 
@@ -422,7 +424,7 @@ This also does not work for samples missing StartTimeUnixNano.
 
 Mapping non-monotonic delta counters to gauges would be problematic, as it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name). Different functions would be needed for non-monotonic counters of differerent temporalities. 
 
-### Distinguishing between delta and cumulative metrics alternatives
+### Delta metric type alternatives
 
 #### Add delta `__type__` label values 
 
