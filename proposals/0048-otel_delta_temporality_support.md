@@ -42,7 +42,7 @@ The `end` timestamp is called `TimeUnixNano` and is mandatory. The `start` times
 
 ### Characteristics of delta metrics
 
-### Sparseness
+#### Sparseness
 
 Sparse metrics are more common for delta than cumulative metrics. While delta datapoints can be emitted at a regular interval, in some cases (like the OTEL SDKs), datapoints are only emitted when there is a change (e.g. if tracking request count, only send a datapoint if the number of requests in the collection interval > 0). This can be beneficial for the metrics producer, reducing memory usage and network bandwidth.
 
