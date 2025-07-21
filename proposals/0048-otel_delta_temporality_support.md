@@ -134,25 +134,29 @@ We propose to add two options as feature flags for ingesting deltas:
 
 2. `--enable-feature=otlp-native-delta-ingestion`: Ingests OTLP deltas with a new `__temporality__` label to explicitly mark metrics as delta or cumulative, similar to how the new type and unit metadata labels are being added to series.
 
-We would like to initially offer both options as they have different tradeoffs. The gauge option is more stable, since it's a pre-exisiting type and has been used for delta-like use cases in Prometheus already. The temporality label option is very experimental and dependent on other experimental features, but it has the potential to offer a better user experience in the long run as it allows more precise differentiation.
+We would like to initially offer both options as they have different tradeoffs. The gauge option is more stable, since it's a pre-exisiting type and has been used for delta use cases in Prometheus already. The temporality label option is very experimental and dependent on other experimental features, but is a closer fit to the OTEL model.
 
 Below we explore the pros and cons of each option in more detail.
 
 #### Treat as gauge
 
-Deltas could be treated as Prometheus gauges. A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data.
+Deltas could be treated as Prometheus gauges. A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data. In general, delta data is aggregated over time by adding up all the values in the range. There are no restrictions on how a gauge should be aggregated over time.
+
+Gauges ingested into Prometheus via scraping represent sampled values for the metric and using `sum_over_time()` for these types of gauges do not make sense. However, there are other sources that can ingest "delta" gauges already for which summing does make sense. For example, `increase()` outputs the delta count of a series over an specified interval. While the output type is not explicitly defined, it's considered a gauge. A common optimisation is to use recording rules with `increase()` to generate “delta” samples at regular intervals. When calculating the increase over a longer period of time, instead of loading large volumes of raw cumulative counter data, the stored deltas can be summed over time.
 
 When ingesting, the metric metadata type will be set to `gauge` / `gaugehistogram`. If type and unit metadata labels is enabled, `__type__="gauge"` / `__type__="gaugehistogram"` will be added as a label.
 
 **Pros**
 * Simplicity - this approach leverages an existing Prometheus metric type, reducing the changes to the core Prometheus data model.
-* Prometheus already uses gauges to represent deltas in some cases. For example, `increase()` outputs the delta count of a series over an specified interval. While the output type is not explicitly defined, it's considered a gauge.
+* Prometheus already uses gauges to represent deltas. For example, `increase()` outputs the delta of a counter series over an specified interval. While the output type is not explicitly defined, it's considered a gauge.
 * Non-monotonic cumulative sums in OTEL are already ingested as Prometheus gauges, meaning there is precedent for counter-like OTEL metrics being converted to Prometheus gauge types.
 
 **Cons**
 * Gauge has different meanings in Prometheus and OTEL. In Prometheus, it's just a value that can go up and down, while in OTEL it's the "last-sampled event for a given time window". While it technically makes sense to represent an OTEL delta counter as a Prometheus gauge, this could be a point of confusion for OTEL users who see their counter being mapped to a Prometheus gauge rather than a Prometheus counter. There could also be uncertainty for the user on whether the metric was accidentally instrumented as a gauge or whether it was converted from a delta counter to a gauge.
-* Scraped Prometheus gauges are usually aggregated in time by averaging or taking the last value, while OTEL deltas are usually summed. Treating both as a single type would mean there wouldn't be an appropriate default aggregation for gauges. Having a predictable aggregation by type is useful for downsampling, or applications that try to automatically display meaningful graphs for metrics (e.g. the [Grafana Explore Metrics](https://github.com/grafana/grafana/blob/main/docs/sources/explore/_index.md) feature).
+* Scraped Prometheus gauges are usually aggregated in time by averaging or taking the last value, while OTEL deltas are usually summed. Treating both as a single type would mean there wouldn't be an appropriate default aggregation for gauges. Having a predictable aggregation by type is useful for downsampling, or applications that try to automatically display meaningful graphs for metrics.
 * The original delta information is lost upon conversion. If the resulting Prometheus gauge metric is converted back into an OTEL metric, it would be converted into a gauge rather than a delta metric. While there's no proven need for roundtrippable deltas, maintaining OTEL interoperability helps Prometheus be a good citizen in the OpenTelemetry ecosystem.
+
+The cons are generally around it being difficult to tell apart OTEL gauges and counters when ingested into Prometheus. An extension could be to [Add otel metric properties as labels](#add-otel-metric-properties-as-labels), so there is extra information users can use to decide on how to query the metric, while the Prometheus type remains a gauge.
 
 #### Introduce `__temporality__` label
 
@@ -165,15 +169,16 @@ When ingesting a delta metric via the OTLP endpoint, the metric type is set to `
 Cumulative metrics ingested via the OTLP endpoint will also have a `__temporality__="cumulative"` label added.
 
 **Pros**
-* Clear distinction between delta metrics and gauge metrics.
+* Clear distinction between OTEL delta metrics and OTEL gauge metrics when ingested into Prometheus, meaning users know the appriopiate functions to use for each type (e.g. `sum_over_time()` is unlikely to be useful for OTEL gauge metrics).
 * Closer match with the OTEL model - in OTEL, counter-like types sum over events over time, with temporality being an property of the type. This is mirrored by having separate `__type__` and `__temporality__` labels in Prometheus.
 * When instrumenting with the OTEL SDK, the type needs to be explicitly defined for a metric but not its temporality. Additionally, the temporality of metrics could change in the metric processing pipeline (for example, using the deltatocumulative or cumulativetodelta processors). As a result, users may know the type of a metric but be unaware of its temporality at query time. If different query functions are required for delta versus cumulative metrics, it is difficult to know which one to use. By representing both type and temporality as metadata, there is the potential for functions like `rate()` to be overloaded or adapted to handle any counter-like metric correctly, regardless of its temporality. (See [Function overloading](#function-overloading) for more discussion.)
 
 **Cons**
-* Dependent on the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usage for refinement.
 * Introduces additional complexity to the Prometheus data model.
+* Confusing overlap between gauge and `__temporality__="delta"`. As mentioned in [Treat as gauge](#treat-as-gauge), essentially deltas already exist in Prometheus as gauges, and deltas can be viewed as a subset of gauges under the Prometheus definition. The same `sum_over_time()` would be used for aggregating these pre-existing deltas-as-gauges and OTEL deltas with counter type and `__temporality__="delta"`, creating confusion on why there are two different "types".
+  * Pre-existing deltas-as-gauges to counters with `__temporality__="delta"`, to have one consistent "type" which should be summed over time.
+* Dependent on the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usage for refinement.
 * Systems or scripts that handle Prometheus metrics may be unaware of the new `__temporality__` label and could incorrectly treat all counter-like metrics as cumulative, resulting in hard-to-notice calculation errors.
-* For the initial proposal, the difference between metrics with `__temporality__="delta"` and gauges is mainly just informational. `sum_over_time()` can be used for both (though it might not be appropiate for all gauge metrics). It can be confusing that the same function can be used for two distinct "types".
 
 ### Metric names
 
@@ -257,9 +262,9 @@ However, if you only query between T4 and T5, the rate would be 10/1 = 1 , and q
 
 Whether this is a problem or not is subjective. Users may prefer this behaviour, as unlike the cumulative `rate()`/`increase()`, it does not attempt to extrapolate. This makes the results easier to reason about and directly reflects the ingested data. The [Chronosphere user experience report](https://docs.google.com/document/d/1L8jY5dK8-X3iEoljz2E2FZ9kV2AbCa77un3oHhariBc/edit?tab=t.0) supports this: "user feedback indicated [`sum_over_time()`] felt much more natural and trustworthy when working with deltas" compared to converting deltas to cumulative and having `rate()`/`increase()` apply its usual extrapolation.
 
-For some delta systems like StatsD, each sample represents an value that occurs at a specific moment in time, rather than being aggregated over a window. In these cases, each delta sample can be viewed as representing a infinitesimally small interval around its timestamp. This means taking into account of all the samples in the range, without extrapolation or interpolation, is a good representation of increase in the range - there are no samples in the range that only partially contribute to the range, and there are no samples out of the range which contribute to the increase in the range at all. For our initial implementation, the collection interval is ignored (i.e. `StartTimeUnixNano` is dropped), so all deltas could be viewed in this way.
+For some delta systems like StatsD, each sample represents an value that occurs at a specific moment in time, rather than being aggregated over a window. In these cases, each delta sample can be viewed as representing an infinitesimally small interval around its timestamp. This means taking into account of all the samples in the range, without extrapolation or interpolation, is a good representation of increase in the range - there are no samples in the range that only partially contribute to the range, and there are no samples out of the range which contribute to the increase in the range at all. For our initial implementation, the collection interval is ignored (i.e. `StartTimeUnixNano` is dropped), so all deltas could be viewed in this way.
 
-Additionally, as mentioned before, it is comment for deltas to have samples emitted at fixed time boundaries (i.e. are aligned). This means if the collection interval is known, and query ranges match the time boundaries, accurate results can be produces with `sum_over_time()`.
+Additionally, as mentioned before, it is common for deltas to have samples emitted at fixed time boundaries (i.e. are aligned). This means if the collection interval is known, and query ranges match the time boundaries, accurate results can be produces with `sum_over_time()`.
 
 #### Function warnings
 
@@ -267,7 +272,6 @@ To help users use the correct functions, warnings will be added if the metric ty
 
 * Cumulative counter-specific functions (`rate()`, `increase()`, `irate()` and `resets()`)  will warn if `__type__="gauge"` or `__temporality__="delta"`.
 * `sum_over_time()` will warn if  `type="counter"` with no `__temporality__` label (implies cumulative counter), or if `__temporality__="cumulative"`.
-There are also additional functions that should only be used with Prometheus gauges (e.g. `delta()`) rather than cumulative counters. Out of scope of delta vs cumulative though.
 
 ### Summary
 
@@ -303,7 +307,7 @@ Review how deltas work in practice using the current approach, and use experienc
 
 ## Potential future extensions
 
-Potential extensions, likely requiring dedicated proposals.
+Potential extensions, some may require dedicated proposals.
 
 ### CT-per-sample
 
@@ -347,7 +351,9 @@ The `smoothed` proposal works by injecting points at the edges of the range. For
 
 That value would be nonesensical for deltas, as the values for delta samples are independent. Additionally, for deltas, to work out the increase, we add all the values up in the range (with some adjustments) vs in the cumulative case where you subtract the first point in the range from the last point. So it makes sense the smoothing behaviour would be different.
 
-In the delta case, the adjustment to samples in the range used for the rate calculation would be to work out the proportion of the first sample within the range and update its value. We would use the assumption that the start timestamp for the first sample is equal the the timestamp of the previous sample, and then use the formula `inside value * (inside ts - range start ts) / (inside ts - outside ts)` to adjust the first sample (aka the `inside value`). 
+In the delta case, the adjustment to samples in the range used for the rate calculation would be to work out the proportion of the first sample within the range and update its value. We would use the assumption that the start timestamp for the first sample is equal the the timestamp of the previous sample, and then use the formula `inside value * (inside ts - range start ts) / (inside ts - outside ts)` to adjust the first sample (aka the `inside value`).
+
+Support for retaining `StartTimeUnixNano` would improve the calculation, as we would then know the real interval for the first sample, rather than assuming its interval extends back until the previous sample. For sparse cases, this assumption could be wrong.
 
 #### Similar logic to cumulative case
 
@@ -355,7 +361,7 @@ For cumulative counters, `increase()` works by subtracting the first sample from
 
 For consistency, we could emulate that for deltas. 
 
-First sum all sample values in the range, with the first sample’s value only partially included if it's not completely within the query range. To estimate the proporation of the first sample within the range, assume its interval is the average interval betweens all samples within the range. If the last sample does not align with the end of the time range, the sum should be extrapolated to cover the range until the end boundary. 
+First sum all sample values in the range, with the first sample’s value only partially included if it's not completely within the query range. To estimate the proportion of the first sample within the range, assume its interval is the average interval betweens all samples within the range. If the last sample does not align with the end of the time range, the sum should be extrapolated to cover the range until the end boundary. 
 
 The cumulative `rate()`/`increase()` implementations guess if the series starts or ends within the range, and if so, reduces the interval it extrapolates to. The guess is based on the gaps between gaps and the boundaries on the range. With sparse delta series, a long gap to a boundary is not very meaningful. The series could be ongoing but if there are no new increments to the metric then there could be a long gap between ingested samples.
 
@@ -370,14 +376,16 @@ Downsides:
 * This will not work if there is only a single sample in the range, which is more likely with delta metrics (due to sparseness, or being used in short-lived jobs).
   * A possible adjustment is to just take the single value as the increase for the range. This may be more useful on average than returning no value in the case of a single sample. However, the mix of extrapolation and non-extrapolation logic may end up surprising users. If we do decide to generally extrapolate to fill the whole window, but have this special case for a single datapoint, someone might rely on the non-extrapolation behaviour and get surprised when there are two points and it changes.
 * Harder to predict the start and end of the series vs cumulative.
-* The average spacing may not be a good estimation for the collection interval when delta metrics are sparse or deliberately irregularly spaced (e.g. in the classic statsd use case).
-* Additional downsides can be found in [this review comment](https://github.com/prometheus/proposals/pull/48#discussion_r2047990524) for the proposal.
+* The average spacing may not be a good estimation for the collection interval when delta metrics are sparse or irregularly spaced.
+* Additional downsides can be found in [this review comment](https://github.com/prometheus/proposals/pull/48#discussion_r2047990524).
 
-Due to the numerous downsides, and the fact that more accurate lookahead/lookbehind techniques are already being explored for cumulative metrics (which means we could likely do something similar for deltas), it is unlikely that this option will actually be implemented.
+The numerous downsides likely outweigh the argument for consistency. Additionally, lookahead/lookbehind techniques are already being explored for cumulative metrics with the `smoothed` modifier. This means we could likely do something similar for deltas. Lookahead/lookbehind aims to do a similar thing to this calculation - estimate the increase/rate for the series within the selected query range. However, since it can look beyond the boundary of the query range, it should get better results.
 
 ### Function overloading
 
 `rate()` and `increase()` could be extended to work transparently with both cumulative and delta metrics. The PromQL engine could check the `__temporality__` label and execute the correct logic.
+
+Function overloading could also work if OTEL deltas are ingested as Prometheus gauges and the `__type__="gauge"` label is added, but then `rate()` and `increase()` could run on gauges that are unsuited to being summed over time, not add any warnings, and produce nonsensical results.
 
 Pros:
 
@@ -388,6 +396,8 @@ Pros:
 Cons:
 
 * The increased internal complexity could end up being more confusing.
+* Inconsistent functions depending on type and temporality. Both `increase()` and `sum_over_time()` could be used for aggregating deltas over time. However, `sum_over_time()` would not work for cumulative metrics, and `increase()` would not work for gauges.
+  * This gets further complicated when considering how functions could be combined. For example, a user may use recording rules to compute the sum of a delta metric over a shorter period of time, so they can later for the sum over a longer period of time faster by using the pre-computed results. `increase()` and `sum_over_time()` would both work for the recording rule. For the long query, `increase()` will not work - it would return a warning (as the pre-computed values would be gauges/untyped and should not be used with `increase()`) and a wrong value (if the cumulative counter logic is applied when there is no `__temporality__="delta"` label). `sum_over_time()` for the long query would work in the expected manner, however.
 * Migration between delta and cumulative temporality for a series may seem seamless at first glance - there is no need to change the functions used. However, the `__temporality__` label would mean that there would be two separate series, one delta and one cumulative. If you have a long query (e.g. `increase(...[30d]))`, the transition point between the two series will be included for a long time in queries. Assuming the [proposed metadata labels behaviour](https://github.com/prometheus/proposals/blob/main/proposals/0039-metadata-labels.md#milestone-1-implement-a-feature-flag-for-type-and-unit-labels), where metadata labels are dropped after `rate()` or `increase()` is applied, two series with the same labelset will be returned (with an info annotation about the query containing mixed types).
   * One possible extension could be to stitch the cumulative and delta series together and return a single result.
 * There is currently no way to correct the metadata labels for a stored series during query time. While there is the `label_replace()` function, that only works on instant vectors, not range vectors which are required by `rate()` and `increase()`. If `rate()` has different behaviour depending on a label, there is no way to get it to switch to the other behaviour if you've accidentally used the wrong label during ingestion. 
@@ -398,21 +408,17 @@ Open questions and considerations:
 * There are open questions on how to best calculate the rate or increase of delta metrics (see [`rate()` behaviour for deltas](#rate-behaviour-for-deltas) below), and there is currently ongoing work with [extending range selectors for cumulative counters](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md), which should be taken into account for deltas too.
 * Once we start with overloading functions, users may ask for more of that e.g. should we change `sum_over_time()` to also allow calculating the increase of cumulative metrics rather than just summing samples together. Where would the line be in terms of which functions should be overloaded or not? One option would be to only allow `rate()` and `increase()` to be overloaded, as they are the most popular functions that would be used with counters.
 
-Function overloading could also technically work if OTEL deltas are ingested as Prometheus gauges and the `__type__="gauge"` label is added, but then `rate()` and `increase()` could run on actual gauges (e.g. max cpu), not add any warnings, and produce nonsensical results.
-
 #### `rate()` behaviour for deltas
 
 If we were to implement function overloading for `rate()` and `increase()`, how exactly will it behave for deltas? A few possible ways to do rate calculation have been outlined, each with their own pros and cons.
 
 Also to take into account are the new `smoothed` and `anchored` modifiers in the extended range selectors proposal. 
 
-The current proposed solution would be:
+A possible proposal would be:
 
 * no modifier - just use use `sum_over_time()` to calculate the increase (and divide by range to get rate). 
 * `anchored` - same as no modifer. In the extended range selectors proposal, anchored will add the sample before the start of the range as a sample at the range start boundary before doing the usual rate calculation. Similar to the `smoothed` case, while this works for cumulative metrics, it does not work for deltas. To get the same output in the cumulative and delta cases given the same input to the initial instrumented counter, the delta case should use `sum_over_time()`.
 * `smoothed` - Logic as described in [Lookahead and lookbehind](#lookahead-and-lookbehind-of-range).
-
-For the no modifier case, the most consistent behaviour with to cumulative metrics would be do implement what's describe in Similar logic to cumulative case. This could result in fewer surprises if switching between delta and cumulative. However, the extrapolating behaviour does not work well for deltas in many cases, so it's unlikely we will go down that route.
 
 One problem with reusing the range selector modifiers is that they are more generic than just modifiers for `rate()` and `increase()`, so adding delta-specific logic for these modifiers for `rate()` and `increase()` may be confusing.
 
@@ -431,6 +437,22 @@ This has the problem of having to use different functions for delta and cumulati
 A possible future enhancement is to add an `__monotonicity__` label along with `__temporality__` for counters. 
 
 Additionally, if there were a reliable way to have [Created Timestamp](https://github.com/prometheus/proposals/blob/main/proposals/0029-created-timestamp.md) for all cumulative counters, we could consider supporting non-monotonic cumulative counters as well, as at that point the created timestamp could be used for working out counter resets instead of decreases in counter value. This may not be feasible or wanted in all cases though.
+
+### Add otel metric properties as labels
+
+This would primarily be beneficial for the `--enable-feature=otlp-delta-as-gauge-ingestion` option.
+
+The key problem of ingesting OTEL deltas as Prometheus gauges is the lack of distinction between OTEL gauges and OTEL deltas, even though their semantics differ. Adding the original OTEL types as labels means that users would be able to get this information. For an OTEL delta sum, its labels would include `__type__="gauge"`, `__otel_type__="sum"` and `__otel_temporality__="delta"` (and `__otel_monotonicity__="true"/"false"`). This could also be useful for non-delta use cases, for example, being able to identify OTEL non-monotonic cumulative counters vs OTEL gauges.
+
+Function overloading could still be done - `rate()` and `increase()` could work based on the OTEL type label, rather than a general temporality label.
+
+This approach makes delta support OTEL-specific, rather than a more generic Prometheus feature. However, Prometheus does not natively produce deltas anyway as discussed in [Scraping](#scraping) (though users could push deltas to Prometheus via remote write). It may be preferable to acknowledge the fundamental differences between the OTEL and Prometheus metric models, and treat OTEL deltas as a special case for compatibility, instead of integrating them as a core Prometheus feature.
+
+There is a risk that tooling and workflows could rely too much on the OTEL-specific labels rather than Prometheus native types where possible, leading to inconsistent user experience depending on whether OTEL or Prometheus is used for ingestion.
+
+This can also be confusing, as OTEL users would need to understand there are two different types - the OTEL types and the Prometheus types. For example, knowing that an OTEL gauge is not the same as a Prometheus gauge and there's also a separate type label to consider.
+
+An additional consideration would be any CreatedTimestamp features would need to work for both Prometheus counters and gauges, so that `StartTimeUnixNano` would be able to be preserved for deltas-as-gauges.
 
 ## Discarded alternatives
 
