@@ -160,7 +160,6 @@ Cumulative metrics ingested via the OTLP endpoint will also have a `__temporalit
 * Dependent on the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usage for refinement.
 * Systems or scripts that handle Prometheus metrics may be unaware of the new `__temporality__` label and could incorrectly treat all counter-like metrics as cumulative, resulting in hard-to-notice calculation errors.
 
-
 #### Treat as gauge
 
 Deltas could be treated as Prometheus gauges. A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data. In general, delta data is aggregated over time by adding up all the values in the range. There are no restrictions on how a gauge should be aggregated over time.
@@ -195,7 +194,7 @@ OTEL sums have a [monotonicity property](https://opentelemetry.io/docs/specs/ote
 
 It is not necessary to detect counter resets for delta metrics - to get the increase over an interval, you can just sum the values over that interval. Therefore, for the  `--enable-feature=otlp-native-delta-ingestion` option, where OTEL deltas are converted into Prometheus counters (with `__temporality__` label), non-monotonic delta sums will also be converted in the same way (with `__type__="counter"` and `__temporality__="delta"`).
 
-This ensures StatsD counters can be ingested as Prometheus counters. [The StatsD receiver sets counters as non monotonic by default](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/statsdreceiver/README.md). Note there has been some debate on whether this should be the case or not ([issue 1](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/1789), [issue 2](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/14956)).
+This ensures StatsD counters can be ingested as Prometheus counters. Since StatsD is so widely used, it's important to make sure StatsD counters (ingested via OTEL) will work properly in Prometheus. [StatsD counters are non-monotonic by definition](https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/1789), and [the StatsD receiver sets counters as non-monotonic by default](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/statsdreceiver/README.md).
 
 Consequences include not being able to convert delta counters in Prometheus into their cumulative counterparts (e.g. for any possible future querying extensions for deltas). Also, as monoticity information is lost, if the metrics are later exported back into the OTEL format, all deltas will have to be assumed to be non-monotonic.
 
@@ -263,9 +262,9 @@ However, if you only query between T4 and T5, the rate would be 10/1 = 1 , and q
 
 Whether this is a problem or not is subjective. Users may prefer this behaviour, as unlike the cumulative `rate()`/`increase()`, it does not attempt to extrapolate. This makes the results easier to reason about and directly reflects the ingested data. The [Chronosphere user experience report](https://docs.google.com/document/d/1L8jY5dK8-X3iEoljz2E2FZ9kV2AbCa77un3oHhariBc/edit?tab=t.0) supports this: "user feedback indicated [`sum_over_time()`] felt much more natural and trustworthy when working with deltas" compared to converting deltas to cumulative and having `rate()`/`increase()` apply its usual extrapolation.
 
-For some delta systems like StatsD, each sample represents an value that occurs at a specific moment in time, rather than being aggregated over a window. In these cases, each delta sample can be viewed as representing an infinitesimally small interval around its timestamp. This means taking into account of all the samples in the range, without extrapolation or interpolation, is a good representation of increase in the range - there are no samples in the range that only partially contribute to the range, and there are no samples out of the range which contribute to the increase in the range at all. For our initial implementation, the collection interval is ignored (i.e. `StartTimeUnixNano` is dropped), so all deltas could be viewed in this way.
+For some delta systems like StatsD, each sample represents an value that occurs at a specific moment in time, rather than being aggregated over a window. Each delta sample can be viewed as representing an infinitesimally small interval around its timestamp. This means taking into account of all the samples in the range, without extrapolation or interpolation, is a good representation of increase in the range - there are no samples in the range that only partially contribute to the range, and there are no samples out of the range which contribute to the increase in the range at all. For our initial implementation, the collection interval is ignored (i.e. `StartTimeUnixNano` is dropped), so all deltas could be viewed in this way.
 
-Additionally, as mentioned before, it is common for deltas to have samples emitted at fixed time boundaries (i.e. are aligned). This means if the collection interval is known, and query ranges match the time boundaries, accurate results can be produces with `sum_over_time()`.
+Additionally, as mentioned before, it is common for deltas to have samples emitted at fixed time boundaries (i.e. are aligned). This means if the collection interval is known, and query ranges match the time boundaries, accurate results can be produced with `sum_over_time()`.
 
 #### Function warnings
 
@@ -501,7 +500,7 @@ Have a convention for naming metrics e.g. appending `_delta_counter` to a metric
 
 #### Map non-monotonic delta counters to gauges with `__temporality__` option
 
-With the `__temporality__` option, we could map monotonic deltas to the counter type, and non-monotonic counters to gauges. However, it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name), without adding [additional otel metric properties as labels](#add-otel-metric-properties-as-labels).
+With the `__temporality__` option, we could map monotonic deltas to the counter type, and non-monotonic counters to gauges. However, it becomes impossible to reliably distinguish between metrics that are non-monotonic deltas and those that are non-monotonic cumulative (since both would be stored as gauges, potentially with the same metric name). Though this could be improved by adding [additional otel metric properties as labels](#add-otel-metric-properties-as-labels).
 
 ### Querying deltas alternatives
 
