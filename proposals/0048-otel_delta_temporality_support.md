@@ -134,7 +134,7 @@ This approach leverages an existing Prometheus metric type, reducing the changes
 
 As per [Prometheus documentation](https://prometheus.io/docs/concepts/metric_types/), "The Prometheus server does not yet make use of the type information and flattens all data into untyped time series". Recently however, there has been [an accepted Prometheus proposal (PROM-39)](https://github.com/prometheus/proposals/pull/39) to add experimental support type and unit metadata as labels to series, allowing more persistent and structured storage of metadata than was previously available. This means there is potential to build features on top of the typing in the future. If type and unit metadata labels is enabled, `__type__="gauge"` / `__type__="gaugehistogram"` will be added as a label. If the  `--enable-feature=type-and-unit-labels` (from PROM-39) is set, a `__type__="gauge"` will be added as a label.
 
-An alternative/potential future extension is to add a temporality property to the Prometheus counter type, discussed in [Introduce `__temporality__` label](#introduce-__temporality__-label). That option is a bigger change since it alters the Prometheus model rather than reusing a pre-existing type. However, could be less confusing as it aligns the Prometheus data model more closely to the OTEL one.
+An alternative/potential future extension is to add a temporality property to the Prometheus counter type, discussed in [Introduce `__temporality__` label](#ingest-as-counter-with-__temporality__-label). That option is a bigger change since it alters the Prometheus model rather than reusing a pre-existing type. However, could be less confusing as it aligns the Prometheus data model more closely to the OTEL one.
 
 #### Add otel metric properties as labels
 
@@ -154,7 +154,9 @@ Therefore it is important to maintain information about the OTEL metric properti
 
 This is similar to the approach taken for type and unit labels in PROM-39. However, since these are new labels being added, there is not a strong dependency so does not require `--enable-feature=type-and-unit-labels` to be enabled. At query time, these should be dropped in the same way as the other metadata labels (as per PROM-39: "When a query drops the metric name in an effect of an operation or function, `__type__` and `__unit__` will also be dropped"), as these labels do provide type information about the metric and that changes when certain operations/functions are applied.
 
-This approach makes delta support OTEL-specific, rather than a more generic Prometheus feature. However, Prometheus does not natively produce deltas anyway as discussed in [Scraping](#scraping) (though users could push deltas to Prometheus via remote write). It may also be preferable to acknowledge the fundamental differences between the OTEL and Prometheus metric models, and treat OTEL deltas as a special case for compatibility, instead of integrating them as a core Prometheus feature.
+The temporality and monotonicity labels could added without the `otel_` prefix, since it doesn't clash with any reserved labels in Prometheus. However, this makes it clear that these concepts are OTEL-specific and are linked to the `__otel_type__`, rather than the `__type__` label for the Prometheus type.
+
+This approach makes delta support OTEL-specific, rather than a more generic Prometheus feature. Prometheus does not natively produce deltas anyway as discussed in [Scraping](#scraping) (though users could push deltas to Prometheus via remote write). It may also be preferable to acknowledge the fundamental differences between the OTEL and Prometheus metric models, and treat OTEL deltas as a special case for compatibility, instead of integrating them as a core Prometheus feature.
 
 There is a risk that tooling and workflows could rely too much on the OTEL-specific labels rather than Prometheus native types where possible, leading to inconsistent user experience depending on whether OTEL or Prometheus is used for ingestion. This can also be confusing, as OTEL users would need to understand there are two different types - the OTEL types and the Prometheus types. For example, knowing that an OTEL gauge is not the same as a Prometheus gauge and there's also a separate type label to consider.
 
@@ -281,20 +283,24 @@ Review how deltas work in practice using the current approach, and use experienc
 
 Potential extensions, some may require dedicated proposals.
 
-### Introduce `__temporality__` label
+### Ingest as counter with `__temporality__` label
 
-This option extends the metadata labels proposal (PROM-39). An additional `__temporality__` metadata label will be added. The value of this label would be either `delta` or `cumulative`. If the temporality label is missing, the temporality should be assumed to be cumulative.
+This option extends the metadata labels proposal (PROM-39).
 
-`--enable-feature=otlp-native-delta-ingestion` will only be allowed to be enabled if `--enable-feature=type-and-unit-labels` is also enabled, as it depends heavily on that feature.
+Ingest delta metrics as Prometheus counters. When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`). To be able to distinguish from cumulative counters, an additional `__temporality__` metadata label will be added. The value of this label would be either `delta` or `cumulative`. If the temporality label is missing, the temporality should be assumed to be cumulative.
 
-When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`), and the `__temporality__="delta"` label will be added. As mentioned in the [Chunks](#chunks) section, `GaugeType` should still be the counter reset hint/header. 
+The `__temporality__` label is more generic than the ingest-as-gauge option that uses a `__otel_temporality__` label, making temporality more of a "first-class citizen" within Prometheus, and enables deltas to be accepted from non-OTEL sources.
 
-An additional `__monotonicity__` label will be added so both monotonic and non-monotonic deltas can be supported. If we just supported monotonic delta counters, StatsD counters would be rejected. If we wrote non-monotonic deltas as gauges (while keeping monotonic deltas as counters with `__temporality__`), the more advanced querying features we may implement in the future (e.g. allowing deltas to be queried with `rate()`) would not work with StatsD counters mapped to gauges. 
+This will only be allowed to be enabled if `--enable-feature=type-and-unit-labels` is also enabled.
 
-Cumulative metrics ingested via the OTLP endpoint will also have a `__temporality__="cumulative"` label added.
+As mentioned in the [Chunks](#chunks) section, `GaugeType` should still be the counter reset hint/header. 
+
+An additional `__monotonicity__` label will be added so both monotonic and non-monotonic deltas can be supported. If we just supported monotonic delta counters, StatsD counters would be rejected. If we wrote non-monotonic deltas as gauges (while keeping monotonic deltas as counters with `__temporality__`), the more advanced querying features we may implement in the future (e.g. allowing deltas to be queried with `rate()`) would not work with StatsD counters mapped to gauges.
+
+Cumulative counter-like metrics ingested via the OTLP endpoint will also have a `__temporality__="cumulative"` label added.
 
 **Pros**
-* Clear distinction between OTEL delta metrics and OTEL gauge metrics when ingested into Prometheus, meaning users know the appriopiate functions to use for each type (e.g. `sum_over_time()` is unlikely to be useful for OTEL gauge metrics).
+* Clear distinction between OTEL delta metrics and OTEL gauge metrics when ingested into Prometheus, meaning users know the appropriate functions to use for each type (e.g. `sum_over_time()` is unlikely to be useful for OTEL gauge metrics).
 * Closer match with the OTEL model - in OTEL, counter-like types sum over events over time, with temporality being an property of the type. This is mirrored by having separate `__type__` and `__temporality__` labels in Prometheus.
 * When instrumenting with the OTEL SDK, the type needs to be explicitly defined for a metric but not its temporality. Additionally, the temporality of metrics could change in the metric processing pipeline (for example, using the deltatocumulative or cumulativetodelta processors). As a result, users may know the type of a metric but be unaware of its temporality at query time. If different query functions are required for delta versus cumulative metrics, it is difficult to know which one to use. By representing both type and temporality as metadata, there is the potential for functions like `rate()` to be overloaded or adapted to handle any counter-like metric correctly, regardless of its temporality. (See [Function overloading](#function-overloading) for more discussion.)
 
@@ -305,7 +311,7 @@ Cumulative metrics ingested via the OTLP endpoint will also have a `__temporalit
 * Dependent on the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usage for refinement.
 * Systems or scripts that handle Prometheus metrics may be unaware of the new `__temporality__` label and could incorrectly treat all counter-like metrics as cumulative, resulting in hard-to-notice calculation errors.
 
-We decided not to go for this approach for the initial version as it is more invasive to the Prometheus model - it changes the definition of a Prometheus counter, especially if we allow non-monotonic deltas to be ingested as counters. This would mean we won't always be able convert Prometheus delta counters to Prometheus cumulative counters, as Prometheus cumulative counters have to monotonic (as drops are detected as resets). There's no actual use case yet for being able to convert delta counters to cumulative ones but it makes the Prometheus data model more complex (counters sometimes need to be monotonic, but not always). 
+We decided not to go for this approach for the initial version as it is more invasive to the Prometheus model - it changes the definition of a Prometheus counter, especially if we allow non-monotonic deltas to be ingested as counters. This would mean we won't always be able convert Prometheus delta counters to Prometheus cumulative counters, as Prometheus cumulative counters have to monotonic (as drops are detected as resets). There's no actual use case yet for being able to convert delta counters to cumulative ones but it makes the Prometheus data model more complex (counters sometimes need to be monotonic, but not always).
 
 With the `__otel_...` labels approach, the core Prometheus types do not change, just additional metadata that can help users decide how to write queries. However, if it seems like the `__otel_...` labels is too confusing, or there are use cases for delta temporality outside of OTEL, we may decide to change to this option.
 
