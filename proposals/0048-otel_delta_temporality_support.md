@@ -124,11 +124,11 @@ For the initial implementation, ignore `StartTimeUnixNano`. To ensure compatibil
 
 #### Set metric type as gauge
 
-For this initial proposal, OTEL deltas will be treated as Prometheus gauges. When ingesting, the metric metadata type will be set to `gauge` / `gaugehistogram`. 
+For this initial proposal, OTEL deltas will be treated as a special case of Prometheus gauges. When ingesting, the metric metadata type will be set to `gauge` / `gaugehistogram`. 
 
 A gauge is a metric that can ["arbitrarily go up and down"](https://prometheus.io/docs/concepts/metric_types/#gauge), meaning it's compatible with delta data. In general, delta data is aggregated over time by adding up all the values in the range. There are no restrictions on how a gauge should be aggregated over time. 
 
-Prometheus already uses gauges to represent deltas. While gauges ingested into Prometheus via scraping represent sampled values rather than a count within a interval, there are other sources that can ingest "delta" gauges. For example, `increase()` outputs the delta count of a series over an specified interval. While the output type is not explicitly defined, it's considered a gauge. A common optimisation is to use recording rules with `increase()` to generate “delta” samples at regular intervals. When calculating the increase over a longer period of time, instead of loading large volumes of raw cumulative counter data, the stored deltas can be summed over time. Non-monotonic cumulative sums in OTEL are already ingested as Prometheus gauges, meaning there is precedent for counter-like OTEL metrics being converted to Prometheus gauge types.
+Prometheus already uses gauges to represent deltas. While gauges ingested into Prometheus via scraping represent sampled values rather than a count within a interval, there are other sources that can ingest "delta" gauges. For example, `increase()` outputs the delta count of a series over an specified interval. While the output type is not explicitly defined, it's considered a gauge. A common optimisation is to use recording rules with `increase()` to generate “delta” samples at regular intervals. When calculating the increase over a longer period of time, instead of loading large volumes of raw cumulative counter data, the stored deltas can be summed over time. Non-monotonic cumulative sums in OTEL are already ingested as Prometheus gauges, meaning there is precedent for counter-like OTEL metrics being converted to Prometheus gauge types.  Another way of putting it is that deltas are already a subset of the Prometheus gauge type.
 
 This approach leverages an existing Prometheus metric type, avoiding the changes to the core Prometheus data model.
 
@@ -136,7 +136,7 @@ As per [Prometheus documentation](https://prometheus.io/docs/concepts/metric_typ
 
 An alternative/potential future extension is to add a temporality property to the Prometheus counter type and allow OTEL deltas to be ingested as Prometheus counters, discussed in [Ingest as counter with `__temporality__` label](#ingest-as-counter-with-__temporality__-label). That option is a bigger change since it alters the Prometheus model rather than reusing a pre-existing type. However, could be less confusing as it aligns the Prometheus data model more closely to the OTEL one.
 
-#### Add otel metric properties as labels
+#### Add otel metric properties as informational labels
 
 The key problem of ingesting OTEL deltas as Prometheus gauges is the lack of distinction between OTEL gauges and OTEL deltas, even though their semantics differ. There are issues like:
 
@@ -206,7 +206,7 @@ If we do not modify prometheusremotewritereceiver, then as the metric metadata t
 
 For this initial proposal, existing functions will be used for querying deltas.
 
-`rate()` and `increase()` will not work, since they assume cumulative metrics. Instead, the `sum_over_time()` function can be used to get the increase in the range, and `sum_over_time(metric[<range>]) / <range>` can be used for the rate. `metric / interval` can also be used to calculate a rate if the collection interval is known.
+`rate()` and `increase()` will not work, since they assume cumulative metrics. Instead, the `sum_over_time()` function can be used to get the increase in the range, and `sum_over_time(metric[<range>]) / <range>` can be used for the rate. A single delta sample can also be meaningful without aggregating over time as unlike cumulative metrics, each delta sample is independent. `metric / interval` can also be used to calculate a rate if the collection interval is known.
 
 Having different functions for delta and cumulative counters mean that if the temporality of a metric changes, queries will have to be updated.
 
@@ -285,7 +285,7 @@ Potential extensions, some may require dedicated proposals.
 
 ### Ingest as counter with `__temporality__` label
 
-This option extends the metadata labels proposal (PROM-39).
+This option is a more generic solution to adding deltas to Prometheus, modifying the Prometheus model to allow counters to have either cumulative or delta temporality. It extends the metadata labels proposal (PROM-39).
 
 Ingest delta metrics as Prometheus counters. When ingesting a delta metric via the OTLP endpoint, the metric type is set to `counter` / `histogram` (and thus the `__type__` label will be `counter` / `histogram`). To be able to distinguish from cumulative counters, an additional `__temporality__` metadata label will be added. The value of this label would be either `delta` or `cumulative`. If the temporality label is missing, the temporality should be assumed to be cumulative.
 
@@ -311,7 +311,7 @@ Cumulative counter-like metrics ingested via the OTLP endpoint will also have a 
 * Dependent on the `__type__` and `__unit__` feature, which is itself experimental and requires more testing and usage for refinement.
 * Systems or scripts that handle Prometheus metrics may be unaware of the new `__temporality__` label and could incorrectly treat all counter-like metrics as cumulative, resulting in hard-to-notice calculation errors.
 
-We decided not to go for this approach for the initial version as it is more invasive to the Prometheus model - it changes the definition of a Prometheus counter, especially if we allow non-monotonic deltas to be ingested as counters. This would mean we won't always be able convert Prometheus delta counters to Prometheus cumulative counters, as Prometheus cumulative counters have to monotonic (as drops are detected as resets). There's no actual use case yet for being able to convert delta counters to cumulative ones but it makes the Prometheus data model more complex (counters sometimes need to be monotonic, but not always).
+We decided not to go for this approach for the initial version as it is more invasive to the Prometheus model - it changes the definition of a Prometheus counter, especially if we allow non-monotonic deltas to be ingested as counters. This would mean we won't always be able convert Prometheus delta counters to Prometheus cumulative counters, as Prometheus cumulative counters have to monotonic (as drops are detected as resets). There's no actual use case yet for being able to convert delta counters to cumulative ones but it makes the Prometheus data model more complex (counters sometimes need to be monotonic, but not always). An alternative is allow cumulative counters to be non-monotonic (by setting a `__monontonicity__="false"` label) and adding warnings if a non-monotonic cumulative counter is used with `rate()`, but that makes `rate()` usages more confusing.
 
 With the `__otel_...` labels approach, the core Prometheus types do not change, just additional metadata that can help users decide how to write queries. However, if it seems like the `__otel_...` labels is too confusing, or there are use cases for delta temporality outside of OTEL, we may decide to change to this option.
 
