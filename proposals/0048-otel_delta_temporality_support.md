@@ -152,13 +152,11 @@ Therefore it is important to maintain information about the OTEL metric properti
 * `__temporality__="delta"`
 * `__monotonicity__="true"/"false"` - as mentioned in [Monotonicity](#monotonicity), it is important to be able to ingest non-monotonic counters. Therefore this label is added to be able to distinguish between monotonic and non-monotonic cases.
 
-The temporality and monotonicity labels do not have the `otel_` prefix, since they don't clash with any reserved labels in Prometheus.
-
 This is similar to the approach taken for type and unit labels in PROM-39. However, since these are new labels being added, there is not a strong dependency so does not require `--enable-feature=type-and-unit-labels` to be enabled. At query time, these should be dropped in the same way as the other metadata labels (as per PROM-39: "When a query drops the metric name in an effect of an operation or function, `__type__` and `__unit__` will also be dropped"), as these labels do provide type information about the metric and that changes when certain operations/functions are applied.
 
-This approach makes delta support more OTEL-specific, rather than a more generic Prometheus feature. Prometheus does not natively produce deltas anyway as discussed in [Scraping](#scraping) (though users could push deltas to Prometheus via remote write). It may also be preferable to acknowledge the fundamental differences between the OTEL and Prometheus metric models, and treat OTEL deltas as a special case for compatibility, instead of integrating them as a core Prometheus feature.
+The temporality and monotonicity labels do not have the `otel_` prefix, since they don't clash with any reserved labels in Prometheus. This means that metrics ingested via other sources (e.g. remote write) could add `__temporality__="delta"` and `__monotonicity__="true"/"false"` labels too as a way of ingesting delta metrics.
 
-There is a risk that tooling and workflows could rely too much on the OTEL-added labels rather than Prometheus native types where possible, leading to inconsistent user experience depending on whether OTEL or Prometheus is used for ingestion. This can also be confusing, as OTEL users would need to understand there are two different types - the OTEL types and the Prometheus types. For example, knowing that an OTEL gauge is not the same as a Prometheus gauge and there's also a separate type label to consider.
+There is a risk that tooling and workflows could rely too much on the OTEL-added labels rather than Prometheus native types where possible, leading to inconsistent user experience depending on whether OTEL or Prometheus is used for ingestion. This can also be confusing, as OTEL users would need to understand there are two different types - the OTEL types and the Prometheus types. For example, knowing that an OTEL gauge is not the same as a Prometheus gauge and there's also additional labels to consider.
 
 #### Metric names
 
