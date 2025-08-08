@@ -208,7 +208,7 @@ For this initial proposal, existing functions will be used for querying deltas.
 
 Having different functions for delta and cumulative counters mean that if the temporality of a metric changes, queries will have to be updated.
 
-Possible improvements to rate/increase calculations and user experience can be found in [Rate calculation extensions](#rate-calculation-extensions) and [Function overloading](#function-overloading).
+Possible improvements to rate/increase calculations and user experience can be found in [Rate calculation extensions](#rate-calculation-extensions-without-ct-per-sample) and [Function overloading](#function-overloading).
 
 Note: With [left-open range selectors](https://prometheus.io/docs/prometheus/3.5/migration/#range-selectors-and-lookback-exclude-samples-coinciding-with-the-left-boundary) introduced in Prometheus 3.0, queries such as `sum_over_time(metric[<interval>])` will exclude the sample at the left boundary. This is a fortunate usability improvement for querying deltas - with Prometheus 2, a `1m` interval actually covered `1m1s`, which could lead to double counting samples in consecutive steps and inflated sums; to get the actual value within `1m`, the awkward `59s999ms` had to be used instead.
 
@@ -315,9 +315,7 @@ CT-per-sample is not a blocker for deltas - before this is ready, `StartTimeUnix
 
 Having CT-per-sample can improve the `rate()` calculation - the collection interval for each sample will be directly available, rather than having to guess the interval based on gaps. It also means a single sample in the range can result in a result from `rate()` as the range will effectively have an additional point at `StartTimeUnixNano`. 
 
-There are unknowns over the performance and storage of essentially doubling the number of samples with this approach.
-
-An additional consideration would be any CreatedTimestamp features would need to work for both Prometheus counters and gauges, so that `StartTimeUnixNano` would be able to be preserved for deltas-as-gauges.
+There are unknowns over the performance and storage with this approach.
 
 ### OTEL metric properties on all metrics
 
@@ -333,11 +331,13 @@ If CT-per-sample takes too long, this could be a temporary solution.
 
 It's possible for the StartTimeUnixNano of a sample to be the same as the TimeUnixNano of the preceding sample; care would need to be taken to not overwrite the non-zero sample value.
 
-### Rate calculation extensions
+### Rate calculation extensions (without CT-per-sample)
 
 [Querying deltas](#querying-deltas) outlined the caveats of using `sum_over_time(...[<interval>]) / <interval>` to calculate the increase for delta metrics. In this section, we explore possible alternative implementations for delta metrics. 
 
 This section assumes knowledge of [Extended range selectors semantics proposal](https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md) which introduces the `smoothed` and `anchored` modifers to range selectors, in particular for `rate()` and `increase()` for cumulative counters.
+
+This also assumes CT-per-sample is not available. A possibly simpler solution if CT-per-sample is available is discussed in [Treat as mini-cumulative](#treat-as-mini-cumulative).
 
 ##### Lookahead and lookbehind of range
 
@@ -419,14 +419,10 @@ Also to take into account are the new `smoothed` and `anchored` modifiers in the
 A possible proposal would be:
 
 * no modifier - just use use `sum_over_time()` to calculate the increase (and divide by range to get rate). 
-* `anchored` - same as no modifer. In the extended range selectors proposal, anchored will add the sample before the start of the range as a sample at the range start boundary before doing the usual rate calculation. Similar to the `smoothed` case, while this works for cumulative metrics, it does not work for deltas. To get the same output in the cumulative and delta cases given the same input to the initial instrumented counter, the delta case should use `sum_over_time()`.
+* `anchored` - same as no modifer. In the extended range selectors proposal, anchored will add the sample before the start of the range as a sample at the range start boundary before doing the usual rate calculation. Similar to the `smoothed` case, while this works for cumulative metrics, it does not work for deltas (if CT-per-sample is not implemented). To get the same output in the cumulative and delta cases given the same input to the initial instrumented counter, the delta case should use `sum_over_time()`.
 * `smoothed` - Logic as described in [Lookahead and lookbehind](#lookahead-and-lookbehind-of-range).
 
 One problem with reusing the range selector modifiers is that they are more generic than just modifiers for `rate()` and `increase()`, so adding delta-specific logic for these modifiers for `rate()` and `increase()` may be confusing.
-
-#### How to proceed
-
-Before committing to moving forward with function overloading, we should first gain practical experience with the use of  `sum_over_time()` for delta metrics and see if there's a real need for overloading, and observe how the `smoothed` and `anchored` modifiers work in practice for cumulative metrics.
 
 ### `delta_*` functions
 
@@ -434,19 +430,33 @@ An alternative to function overloading, but allowing more choices on how rate ca
 
 This has the problem of having to use different functions for delta and cumulative metrics (switching cost, possibly poor user experience).
 
-## Discarded alternatives
-
-### Ingesting deltas alternatives 
-
-#### Treat as “mini-cumulative”
+### Treat as “mini-cumulative”
 
 Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions. 
 
 This requires CT-per-sample (or some kind of precise CT tracking) to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
 
-Functions will not take into account delta-specific characteristics. The OTEL SDKs only emit datapoints when there is a change in the interval. `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate, which is not always true for delta samples. 
+The standard `rate()`/`increase()` functions do not work well with delta-specific characteristics, especially without CT-per-sample. The OTEL SDKs only emit datapoints when there is a change in the interval so samples might not come at consistent intervals. But `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate. 
 
-This also does not work for samples missing StartTimeUnixNano.
+With CT-per-sample, `rate()` can make this information to more accurately calculate the intervals between samples. Assuming `rate()` continues to be constrained to only looking at the samples with timestamps within its bounds though, it will still not be able to accurately predict whether to extrapolate at the end of the time range is. The reason for extrapolating is that there might be a sample with timestamp outside of the range, but its CT is within the range of the query. With sparse delta series which only push updates when there is a change, a long gap between samples does not mean the series is definitively ending.
+
+However, the experimental `anchored` and `smoothed` modifiers could be used in conjunction with CT-per-sample to be able to calculate `rate()` without needing to extrapolate (and so does not encounter the issue not being able to accurately guess when a series ends). The improvement of having CT-per-sample over [extending these modifiers but without CT-per sample](#rate-calculation-extensions-without-ct-per-sample) is that, aside from not needing delta special-casing, is that `smoothed` has better information about the actual interval for samples rather than having to assume samples are evenly spaced and continuous.
+
+For samples missing missing StartTimeUnixNano, the CT can be set equal to the sample timestamp, indicating the value was recorded for a single instant in time. `rate()` might be able to work with this without any special adjustments (it would see sample interval is equal to 0 and this would stop any extrapolation).
+
+The benefit of this "mini-cumulative" approach is that we would not need to introduce a new type (or subtype) for deltas, the current counter type definition would be sufficient for monotonic deltas. Additionally, `rate()` could be used without needing function overloading - deltas will be operated on as regular cumulative counters without special casing.
+
+Additionally, having CT-per-sample could allow for non-monotonic OTELs sums for both cumulative and delta temporality to be supported as counters (as we will not need to use drops in the metric value to detect counter resets).
+
+In comparison to the initial proposal: The distinguishing labels suggested in the initial proposal (like `__temporality__`) would not be necessary in terms of querying, however, they could be kept for enabling translation back into OTEL. Knowing the temporality could also be useful for understanding the raw data. `sum_over_time()` would still be able to be used on the ingested delta metrics. `__type__` would change from `gauge` to `counter`.
+
+### How to proceed
+
+Before committing to moving forward with any of the extensions , we should first gain practical experience with treating delta metrics as gauges and using `sum_over_time()` to query, and observe how the `smoothed` and `anchored` modifiers work in practice for cumulative metrics.
+
+## Discarded alternatives
+
+### Ingesting deltas alternatives 
 
 #### Convert to rate on ingest
 
