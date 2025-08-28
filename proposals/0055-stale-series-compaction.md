@@ -50,7 +50,9 @@ We will have two thresholds to trigger stale series compaction, `p%` and `q%`, `
 
 **Part 1**
 
-At a regular interval (say 15 mins), we check if the stale series have crossed p% of the total series. If it has, we trigger a compaction that simply flushes these stale series into a block and removes it from the Head block (can be more than one block if the series crosses the block boundary). We skip WAL truncation and m-map files truncation at this stage and let the usual compaction cycle handle it. How we drop these compacted series during WAL replay is TBD during implementation (may need a new WAL record or use tombstone records).
+At a regular interval (say 15 mins), we check if the stale series have crossed p% of the total series. If it has, we trigger a compaction that simply flushes these stale series into a block and removes it from the Head block (can be more than one block if the series crosses the block boundary). We skip WAL truncation and m-map files truncation at this stage and let the usual compaction cycle handle it.
+
+While removing the stale series from the head block, we add tombstones only in the WAL for these stale series with deleted time range as `[MinInt64, MaxInt64]`. WAL replay will simply drop these series from the head as soon as it encounters this record in the WAL. This was we don't spike up the memory during WAL replay.
 
 Since these are stale series, there won’t be any races when compacting it in most cases. We will still lock the series and take required measures so that we don’t cause race with an incoming sample for any stale series.
 
@@ -64,9 +66,9 @@ To avoid back to back stale series compactions, we can choose to have a cooldown
 
 Implementation detail: if the usual head compaction is about to happen very soon, we should skip the stale series compaction and simply wait for the usual head compaction. The buffer can be hardcoded.
 
-## Alternatives
+## Future consideration 
 
-### Alternative for tracking stale series
+### For tracking stale series
 
 Consider when was the last sample scraped *in addition to* the above proposal.
 
@@ -79,6 +81,18 @@ Cons over only the above proposal:
 * Will have to scan all series periodically to identify how many stale series we have. Can be expensive if we have too many series.
 
 Purely because of the added complexity of proposal 2, we can start with proposal 1 and consider proposal 2 as a follow up in the future.
+
+### Defaults for stale series compaction thresholds
+
+Once this feature is well tested, we can have some defaults for the thresholds and interval mentioned above and the user only needs to enable the feature.
+
+## Alternatives
+
+### Tweaking `min-block-duration`
+
+We have an option to reduce the `storage.tsdb.min-block-duration` config to 1h instead of current default 2h so that head compaction happens more often.
+
+This may work well if the churn is slow. But if you want to do frequent rollouts, the stale series pile up quickly and the smaller block duration doesn't help.   
 
 ### Alternative for stale series compaction
 
