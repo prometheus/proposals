@@ -74,14 +74,14 @@ When a query for a metric returns multiple metrics with a different `__type__` o
 In the initial iteration of this feature flag we also propose that:
 
 * In Prometheus UI, users will see the `__type__` or `__unit__` labels next to other labels if they are defined as API returns them. In the future [we might add UI elements that extract those and display type and unit in a different way than just labels](#prometheus-ui-changes).
-* When a query drops the metric name in an effect of an operation or function, `__type__` and `__unit__` will also be dropped. In the future, [we might want to make certain functions return a useful type and unit e.g. a rate over a counter is technically a gauge metric](#handle-__type__-and-__unit__-in-promql-operations). 
+* When a query drops the metric name in an effect of an operation or function, `__type__` and `__unit__` will also be dropped. In the future, [we might want to make certain functions return a useful type and unit e.g. a rate over a counter is technically a gauge metric](#handle-type-and-unit-in-promql-operations).
 
 Users should see no change to the current exposition formats as a result of this proposal.
 
 ### Complex metrics without native type e.g. classic Histogram and Summary
 
 Given this proposal adds a type and unit dimension to every single series, we propose all the series of a single classic histograms and summaries "metric family", should use the same unit and type.
- 
+
 For example:
 
 ```
@@ -104,7 +104,7 @@ foo_sum 324789.3
 
 In this case, semantically one could say `_count` and `_bucket` series values represent a unit of `observations` or `1`. The `seconds` unit relate only to `le` label and `_sum` values in this case.
 
-For simplicity, we propose that PromQL should expect all the above series to have `__type__=histogram` and `__unit__=seconds` regardless. See [the related alternative](#omit-__unit__-label-from-counting-series-for-summaries-and-histograms).
+For simplicity, we propose that PromQL should expect all the above series to have `__type__=histogram` and `__unit__=seconds` regardless. See [the related alternative](#omit-unit-label-from-counting-series-for-summaries-and-histograms).
 
 ### PromQL Changes
 
@@ -114,12 +114,12 @@ Aggregations and label matches ignore `__unit__` and `__type__` and any operatio
 
 ### Prometheus Server Ingestion
 
-When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats, the type and unit of the metric are interpreted from **the metadata fields** and added as the `__type__` and `__unit__` labels. 
- 
-Generally clients should never expose type and unit labels directly as it's a special label starting with `__`. However, it can happen by accident or intentionally to support ingestion methods without metadata fields (e.g. PRW 1.0). That's why any existing user provided labels for `__unit__` and `__type__` should be *overridden* by the existing metadata mechanisms in current exposition and ingestion formats, otherwise we keep them on. 
- 
+When receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats, the type and unit of the metric are interpreted from **the metadata fields** and added as the `__type__` and `__unit__` labels.
+
+Generally clients should never expose type and unit labels directly as it's a special label starting with `__`. However, it can happen by accident or intentionally to support ingestion methods without metadata fields (e.g. PRW 1.0). That's why any existing user provided labels for `__unit__` and `__type__` should be *overridden* by the existing metadata mechanisms in current exposition and ingestion formats, otherwise we keep them on.
+
 Typeless (including unknown type), nameless and unitless entries will NOT produce any labels.
- 
+
 The Prometheus interpretation or validation of type and unit **values** may change in the future, and it depends on the parser/ingestion. For example for OpenMetrics parser, the [type is validated](https://github.com/prometheus/prometheus/blob/2aaafae36fc0ba53b3a56643f6d6784c3d67002a/model/textparse/openmetricsparse.go#L464) to be case-sensitive subset [the defined OpenMetrics 1,0 types](https://prometheus.io/docs/specs/om/open_metrics_spec/#metric-types). Unit can be any string, with [some soft recommendations from OpenMetrics](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units). In other places, when we see an unsupported type value, Prometheus might normalize the value to the `unknown` string. Again, this may change and [another proposal for PromQL type and unit definition is required](#more-strict-unit-and-type-value-definition).
 
 Users would be able to modify the type and unit of a metric at ingestion time by using `metric_relabel_configs`, and relabeling the `__type__` and `__unit__` labels.
@@ -129,9 +129,9 @@ Users would be able to modify the type and unit of a metric at ingestion time by
 This solution solves all goals mentioned in [Goals](#goals). It also comes with certain disadvantages:
 
 * As [@pracucci mentioned](https://github.com/prometheus/proposals/pull/39/files#r19428174750), this change will technically allow users to query for "all" counters or "all" metrics with units which will likely pose DoS/cost for operators, long term storage systems and vendors. Given existing TSDB indexing, `__type__` and `__unit__` postings will have extreme amount of series referenced. More work **has to be done to detect, handle or even forbid such selectors, on their own**. On top of that TSDB posting index size will increase too. This is however similar or arguable "easier" problem to solve vs any popular labels like `env=prod`:
-  
+
 > @beorn7: I would argue the latter is an even worse problem. Not only has env="prod" a very similar shape as type="counter", there are even many common and actually useful queries that include a selector like env="prod", while users will rarely ask for "all metrics that are counters".
-> 
+>
 > So the problem already exists, but in more relevant form. I don't see how adding the type and unit labels makes things really worse.
 
 * All API parts (Series, LabelNames, LabelValues, Recordings/Alerts, remote APIs) will expose new labels without control. This means ecosystem will start depending on this, once this feature gets more mature, **potentially prohibiting the alternative approaches (e.g. only exposing `~seconds.counter` special syntax instead of raw `__type__=~".*"` selectors)**. We accept that risk.
@@ -150,7 +150,7 @@ This is scoped down from the initial implementation due to complexity of the spe
 ### More strict unit and type value definition
 
 The current plan delegates the unit and type label definitions to exposition and ingestion formats. Generally, it's not feasible to expect all of the backends to be compatible with all the different types and units. For example:
- 
+
 * For unit [OM unit is free-form string with the bias towards base units](https://prometheus.io/docs/specs/om/open_metrics_spec/#units-and-base-units) for OTLP semantic conventions it's [the UCUM](https://unitsofmeasure.org/ucum) standard.
 * For types OpenMetrics defines types (e.g. stateset) that neither Prometheus nor OTLP natively support. OTLP defines `UpDownCounter` which does not natively exist in Prometheus or OpenMetrics.
 
@@ -169,7 +169,7 @@ For metric selection, currently our proposal aims for standard label matcher syn
 my_metric{__unit__="seconds", __type__="counter"}
 {__name__"my_metric",__unit__="seconds", __type__="counter"}
 {"my_metric",__unit__="seconds", __type__="counter"} 
-``` 
+```
 
 This is functional and feels familiar for labels, but similar to special `__name__` label, a much more convenient syntax would be possible e.g.
 
@@ -202,7 +202,7 @@ This extension/alternative has been discussed and rejected initially on the [202
 
 While rejected, we ([@bwplotka](https://github.com/bwplotka), [@beorn7](https://github.com/beorn7)) still believe it's a valid alternative or extension to do. Something to consider once/if type and unit labels is adopted.
 
-### Handle __type__ and __unit__ in PromQL operations
+### Handle `__type__` and `__unit__` in PromQL operations
 
 Initially, aggregations and label matches will ignore `__unit__` and `__type__` and all the PromQL operations that removes the `__name__` also removes the `__unit__` and `__type__`. Over time, we can update each function to keep these labels by implementing the appropriate logic. For example, adding two gauges together should yield a gauge, a rate of a counter, should probably be assumed to be a gauge.
 
@@ -229,7 +229,7 @@ This solution is not chosen because:
 * Requires intrusive changes to all formats (text, proto, etc.).
 * Requires new PromQL syntax for querying the type and unit.
 
-### "Hide" __type__ and __unit__ labels in PromQL, instead of UI
+### "Hide" `__type__` and `__unit__` labels in PromQL, instead of UI
 
 Existing UIs don't handle the `__type__` and `__unit__` labels. To mitigate this, PromQL could omit the `__type__` and `__unit__` labels from the query response. Doing this would avoid requiring UIs to update to handle the new labels.
 
@@ -239,7 +239,7 @@ This solution is not chosen because:
 * We expect metadata, like type and unit to be useful to display in the UI, and want to enable these use-cases.
 * It should be a small amount of effort to hide these labels.
 
-### Omit __unit__ label from counting series for summaries and histograms
+### Omit `__unit__` label from counting series for summaries and histograms
 
 As explained in [complex values](#complex-metrics-without-native-type-eg-classic-histogram-and-summary) `_count` and `_bucket` has a unit of `observations` or `1`, not the histogram unit that relates to boundaries (`le` label) and `_sum` value. We could drop `__unit__` label for the `_count` and `_bucket` series (and similar for summaries).
 
@@ -247,13 +247,13 @@ However, this would re-introduce part of the problem we are trying to solve. His
 
 The `_count` series of histograms and summaries could omit the `__unit__` label without this consequence, since the count does not have any relation to the unit. This proposal includes the `__unit__` label for consistency so that users can always query for metrics that have a specific unit.
 
-### Special __type__ values for some classic histogram and summary series
+### Special `__type__` values for some classic histogram and summary series
 
 We also discussed special [types](https://github.com/prometheus/proposals/pull/39#discussion_r1927374088) and could put to histogram e.g. _count series.
 
 Rejected due to complexity.
 
-### __type__ and __unit__ from client libraries
+### `__type__` and `__unit__` from client libraries
 
 There is an unwritten rule, claiming that client libraries are not allowed to expose special labels starting with `__` e.g. see [the client_golang check](https://github.com/prometheus/client_golang/blob/34eaefd8a58ff01b243b36a369615859932de9d8/prometheus/labels.go#L187).
 
@@ -280,7 +280,7 @@ See: https://github.com/prometheus/prometheus/pull/16228
 
 Add a feature flag: `--enable-feature=type-and-unit-labels`. When enabled, `__type__` and `__unit__` labels are added when receiving OTLP or PRW 2.0, or when scraping the text, OM, or proto formats. Implement any changes required to allow relabeling `__type__` and `__unit__` in `metric_relabel_configs`.
 
-This will also handle basic PromQL semantics (when __name__ is dropped we also drop __type__ and __unit__). Also, the query should return info annotation, which is surfaced to the user in the UI, if the PromQL selection contains mixed units or types.
+This will also handle basic PromQL semantics (when **name** is dropped we also drop `__type__` and `__unit__`). Also, the query should return info annotation, which is surfaced to the user in the UI, if the PromQL selection contains mixed units or types.
 
 ### Milestone 2: Add no translation option for OTLP translation
 

@@ -48,7 +48,7 @@ The solution described here is valid for all forms of metrics ingestion, may it 
 We must consider edge cases in which a blocks database has persisted metrics or labels that may have been written by different versions of code.
 There are multiple ways this can (and will) happen:
 
-* An older version of Prometheus ingests names from a newer metrics producer. In this case, names would be escaped with any of the available escaping methods.  If Prometheus is upgraded, newer blocks will be written in UTF-8.
+* An older version of Prometheus ingests names from a newer metrics producer. In this case, names would be escaped with any of the available escaping methods. If Prometheus is upgraded, newer blocks will be written in UTF-8.
 * A newer Prometheus receives names from an older producer, which is later upgraded. In this case, older names might be escaped using the replace-with-underscores method, and newer names will be UTF-8. This will often happen when Prometheus is receiving Open Telemetry metrics.
 * A newer Prometheus receives names from a mix of new and old producers, in which case the same block could contain escaped and UTF-8 data representing the same intended names.
 
@@ -96,7 +96,7 @@ We propose to do this by expanding a lookup for a UTF-8 metric or label name int
 
 1. **UTF-8**
 2. **underscore-replaced**: All unsupported characters are converted to underscores.
-3. **U__ escaping**:  As described in the UTF-8 proposal, strings with invalid characters can be escaped by prepending `U__` and replacing all invalid characters with `_[UTF8 value]_`.
+3. **U__ escaping**: As described in the UTF-8 proposal, strings with invalid characters can be escaped by prepending `U__` and replacing all invalid characters with `_[UTF8 value]_`.
 4. **[Datadog proxy](https://github.com/grafana/mimir-proxies/blob/main/pkg/datadog/ddprom/naming.go#L30-L34) escaping pattern**: "`.`" becomes "`_dot_`" and "`_`" becomes "`__`".
 
 In PromQL, the expansion would look something like this under the hood:
@@ -123,7 +123,7 @@ We will do performance testing to identify possible issues.
 
 If the user is querying for metrics using a regex lookup for the `__name__` label, attempting to rewrite that query to account for other name encodings would be overly complex and error-prone.
 Therefore we will not try to rewrite the regex to account for multiple escaping methods and the regex will be passed through as-is.
-Users will need to write custom regex queries to account for metric name changes during the transition period in this case. 
+Users will need to write custom regex queries to account for metric name changes during the transition period in this case.
 Since regex queries on metrics names are relatively rare and the domain of advanced users, we feel this is an acceptable approach.
 
 ### Name Collisions

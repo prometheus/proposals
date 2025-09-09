@@ -19,9 +19,7 @@ OTel resource attributes model metadata about the environment producing metrics 
 Typically, OTel users want to include some of these attributes (as `target_info` labels) in their Prometheus query results, to correlate them with entities of theirs (e.g. K8s pods). This is similar to copying target labels from Service Discovery attributes. For example, users commonly copy `namespace`, `deployment`, etc. labels to make it easier to query the metrics. They should be able to copy over similar attributes when ingesting OTLP, i.e, `k8s.namespace.name`, `k8s.deployment.name`, etc.
 
 Based on user demand, it would be preferable if Prometheus were to have better UX for including OTel resource attributes in query results.
-The current solution is to join with `target_info in queries, to pick also the labels one is interested in (corresponding to OTel resource attributes).
-This requires relatively advanced knowledge of PromQL though and is a barrier to many users.
-Take as an example querying HTTP request rates per K8s cluster and status code, while having to join with the `target_info` metric to obtain the `k8s.cluster.name` resource attribute (encoded as `k8s_cluster_name`):
+The current solution is to join with `target_info in queries, to pick also the labels one is interested in (corresponding to OTel resource attributes). This requires relatively advanced knowledge of PromQL though and is a barrier to many users. Take as an example querying HTTP request rates per K8s cluster and status code, while having to join with the `target_info`metric to obtain the`k8s.cluster.name`resource attribute (encoded as`k8s_cluster_name`):
 
 ```promql
 # Join with target_info on job and instance labels, to include k8s_cluster_name.

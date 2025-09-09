@@ -3,4 +3,4 @@ version: 1
 # Don't check external URLs, currently it can timeout a lot on CI.
 validators:
   - type: ignore
-    regex: https://.*
+    regex: http(s|)://.*

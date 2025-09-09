@@ -69,5 +69,5 @@ The section stating potential alternatives. Highlight the objections reader shou
 
 The tasks to do in order to migrate to the new idea.
 
-* [ ] Task one <GH issue>
-* [ ] Task two <GH issue> ...
+* [ ] Task one `<GH issue>`
+* [ ] Task two `<GH issue>` ...
