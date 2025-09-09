@@ -2,18 +2,17 @@
 
 * **Owners:**
   * [@bwplotka](https://github.com/bwplotka)
- 
+
 * **Contributors:**
   * [@krajorama](https://github.com/krajorama)
   * [@ArthurSens](https://github.com/ArthurSens)
-  
+
 * **Implementation Status:** `Implemented`
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/test-infra/issues/659
   * https://github.com/prometheus/prometheus/pull/15682
   * https://github.com/prometheus/test-infra/pull/812
-
 
 > TL;DR: We propose a way for maintainers to deploy custom Prombench benchmarks. We propose adding two flags to `/prombench`: `--bench.version=<branch or @commit SHA>` and `--bench.directory=<name of the benchmark scenario directory>` to customize benchmark scenarios.
 
@@ -26,23 +25,23 @@ We invest and maintain a healthy **standard benchmarking scenario** that starts 
 Standard benchmark is a great way to have a uniform understanding of the efficiency for the generic Prometheus setup, especially useful before Prometheus releases. However, with more contributors and Prometheus features, there is an increasing amount of reasons to perform special, perhaps one-off benchmarking scenarios that target specific feature flags, Prometheus modes, custom setups or to elevate certain issues.
 
 In other words, ideally Prombench would support a way to perform a custom benchmark when triggered it via Pull Request in Prometheus repo e.g. `/prombench v3.0.0 <please run agent mode with only native histograms load, OTLP receiving and remote write 2.0 with experimental arrow format`.
- 
+
 Non-exhausting list of custom benchmarks that would be epic to do, discussed among community:
 
 * Different configurations, e.g.:
   * Custom flag changes (especially [feature flags](https://prometheus.io/docs/prometheus/latest/feature_flags/))
     * *Is my improvement to CT meaningful, for `created-timestamp-zero-ingestion` feature flag enabled?*
   * Custom configuration file / different recording rule
-    * *Did I fix an overhead of "alwaysScrapeHistograms" scrape option?* 
+    * *Did I fix an overhead of "alwaysScrapeHistograms" scrape option?*
     * *Do we have a less overhead if all recording rules have this special label?*
-  
+
 * Different environment, e.g. to elevate certain issue:
-    * only native histograms metrics
-    * only PromQL histogram_quantile queries
-    * bigger load
-    * smaller load
-    * long term blocks
-    * remote write failures
+  * only native histograms metrics
+  * only PromQL histogram_quantile queries
+  * bigger load
+  * smaller load
+  * long term blocks
+  * remote write failures
 
 * Compare two, same version Prometheus-es, across features or environments, e.g.:
   * *How better or worse it is when we enable feature X?*
@@ -87,20 +86,20 @@ NOTE: Technically there are some limited and hacky ways for custom scenarios e.g
 
 First, we propose to maintain the current standard benchmark flow: on the https://github.com/prometheus/test-infra `master` branch, in `/prombench/manifests/prombench` directory, we maintain the standard, single benchmarking scenario used as an acceptance validation for Prometheus. It's important to ensure it represents common Prometheus configuration. The only user related parameter for the standard scenario is `RELEASE` version.
 
-On top of that, we propose to add two flags that will allow customizing and testing benchmark scenarios: 
+On top of that, we propose to add two flags that will allow customizing and testing benchmark scenarios:
 
 ### Version flag
 
 Currently, the [Prometheus prombench GH job](https://github.com/prometheus/prometheus/blob/main/.github/workflows/prombench.yml) uses configuration from the `/prombench/manifests/prombench` directory stored in the `docker://prominfra/prombench:master` image.
 
 We propose to add the `--bench.version=<branch|@commit>` flag to `/prombench` GH PR command, with the default value `master`. This flag will cause [the prombench GH action](https://github.com/prometheus/prometheus/blob/main/.github/workflows/prombench.yml) to pull specific commit SHA (if `--bench.version` value is prefixed with `@`) or branch from the https://github.com/prometheus/test-infra before deploying (or cleaning) test benchmark run. For the default `master` value, it will use the existing flow with the `docker://prominfra/prombench:master` image files.
- 
+
 Here are an example steps to customize and run a customized benchmark with `--bench.version` flag.
 
 1. Create a new branch on https://github.com/prometheus/test-infra e.g. `benchmark/scenario1`.
 2. Modify the contents of `/prombench/manifests/prombench` directory to your liking e.g. changing query load, metric load of advanced Prometheus configuration. It's also possible to make Prometheus deployments and versions exactly the same, but vary in a single configuration flag, for feature benchmarking.
 
-   > WARN: When customizing this directory, don't change `1a_namespace.yaml` or `1c_cluster-role-binding.yaml` filenames as they are used for cleanup routine. Or, if you change it, know what you're doing in relation to [`make clean` job](../../Makefile).
+   > WARN: When customizing this directory, don't change `1a_namespace.yaml` or `1c_cluster-role-binding.yaml` filenames as they are used for cleanup routine. Or, if you change it, know what you're doing in relation to [`make clean` job](../Makefile).
 
 3. Push changes to the new branch.
 4. From the Prometheus PR comment, call prombench as `/prombench <release> --bench.version=benchmark/scenario1` or `/prombench <release> --bench.version=@<relevant commit SHA from the benchmark/scenario1>` to use configuration files from this custom branch.
@@ -151,13 +150,14 @@ Pros:
 
 One could add a big configuration file/flag surface to `/prombench` allowing to carefully change various aspects.
 
-e.g. 
+e.g.
+
 ```
 /prombench main
 /extra-args --enable-features=native-histograms,wal-records --web.enable-otlp-receiver
 /with avalanche
 /with agent-mode
-``` 
+```
 
 This is similar to how [Prow](https://docs.prow.k8s.io/docs/overview/) parses comments to add extra functionality to plugins.
 

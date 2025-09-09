@@ -18,7 +18,6 @@
     * Previous proposal by @TheSpiritXIII
   * https://stackoverflow.com/questions/43609144/can-prometheus-store-basic-auth-passwords-in-any-format-other-then-plain-text
   * https://groups.google.com/g/prometheus-users/c/yWLE9qoG5GU/m/ke8ewxjIAQAJ
-  
 
 > TL;DR: This proposal introduces "secret providers" for Prometheus and Alertmanager, enabling them to fetch secrets from external systems. The config format will allow specifying a provider and its parameters for `<secret>` fields.
 
@@ -40,7 +39,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 * Allow Prometheus to read secrets remotely from secret providers.
   * Anywhere in the configs([1](https://prometheus.io/docs/prometheus/latest/configuration/configuration/),[2](https://prometheus.io/docs/alerting/latest/configuration/#configuration-file-introduction)) with the `<secret>` type, it should be possible to fetch from secret providers
-  * This will include Alertmanager 
+  * This will include Alertmanager
 * Introduce secret discovery, similar to service discovery, where different secret providers can contribute code to read secrets from their respective API.
 * Backwards compatibility for secrets in config
 
@@ -61,7 +60,6 @@ Goals and use cases for the solution as proposed in [How](#how):
   * This will be left to a follow up proposal if needed
 
 ## How
-
 
 ### Configuration
 
@@ -88,6 +86,7 @@ For example when specifying a password fetched from the kubernetes provider with
 ### Inline secrets
 
 When specifying secrets inline in the config file, a string can be passed in as usual for backwards compatibility.
+
 ```
         password: my_important_secret
 ```
@@ -126,6 +125,7 @@ scrape_configs:
           key: "password"
           refresh_interval: 30m # Override default for this secret
 ```
+
 #### Error-Triggered Refresh
 
 If using a cached secret results in a specific permission or authentication error, this might indicate the cached secret is no longer valid. Hence, the user of the new secrets API should ask for an immediate refresh attempt for that specific secret is triggered, bypassing the regular refresh interval. The responsibility for determining which specific errors (e.g., HTTP 401/403 responses, database authentication failures) warrant signaling for a refresh lies within caller of the new secrets API.
@@ -134,10 +134,9 @@ If using a cached secret results in a specific permission or authentication erro
 
 If a scheduled background refresh attempt fails (e.g., due to network issues, temporary provider unavailability, invalid credentials after rotation), Prometheus will continue to use the last successfully fetched secret value. This ensures components relying on the secret can continue operating with the last known good credential, preventing outages due to transient refresh problems. Failed refresh attempts will be logged, and the `prometheus_remote_secret_state` metric will reflect the 'stale' state.
 
-
 ### Secret rotation
 
-When a secret is rotated, it is possible for this to happen out of sync. For  example, one of the following could happen with secrets used for target scraping:
+When a secret is rotated, it is possible for this to happen out of sync. For example, one of the following could happen with secrets used for target scraping:
 
 1. The scrape target's secret updated but the currently stored secret hasn't updated yet.
 2. The secret provider's secret changes but the scrape target hasn't updated to the new secret yet.
@@ -179,6 +178,7 @@ prometheus_remote_secret_fetch_success_total{provider="kubernetes", secret_id="a
 ```
 
 Total number of failed secret fetches:
+
 ```
 # HELP prometheus_remote_secret_fetch_failures_total Total number of failed secret fetches.
 # TYPE prometheus_remote_secret_fetch_failures_total counter
@@ -215,9 +215,10 @@ Both the Alertmanager and Prometheus repos will be able to use secret providers.
 * What is the process for creating a secret provider implementation?
 * How can we prevent too many dependencies from getting pulled in from different providers?
 
-## Secret provider interfaces in the wild 
+## Secret provider interfaces in the wild
 
 A summary of popular secret providers
+
 ### [HashiCorp Vault](https://developer.hashicorp.com/hcp/docs/vault-secrets)
 
 ```
@@ -300,7 +301,7 @@ secret_object = get_kubernetes_secret(secret_namespace, secret_name, kubernetes_
 
 ## Action Plan
 
-* [ ] Implement core secret provider framework (initial API definition, caching, refresh, metrics) 
+* [ ] Implement core secret provider framework (initial API definition, caching, refresh, metrics)
 * [ ] Integrate secret provider support into Prometheus configuration and components
 * [ ] Integrate secret provider support into Alertmanager
 * [ ] Establish shared code structure/repository for providers
@@ -308,4 +309,3 @@ secret_object = get_kubernetes_secret(secret_namespace, secret_name, kubernetes_
 * [ ] Implement initial set of key secret providers
 * [ ] Add user documentation for configuring secret providers in Prometheus & Alertmanager
 * [ ] Announce feature availability and usage guidelines
-
