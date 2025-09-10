@@ -48,6 +48,7 @@ Client library maintainers, OpenMetrics, and Prometheus scrape maintainers.
 ## How
 
 Extend the OpenMetrics text format to allow structured values instead of only float values for specific series of a histogram type. This structured value will be used to encode a structure with the same fields as is exposed using the [protobuf exposition format](https://github.com/prometheus/client_model/blob/master/io/prometheus/client/metrics.proto). Starting with examples and then breaking up the format:
+
 ```
 # TYPE nativehistogram histogram
 # HELP nativehistogram Is a basic example of a native histogram.
@@ -86,6 +87,7 @@ Positive infinity, negative infinity, and non number values will be represented 
 Note that in this initial implementation float histograms are not supported. Float histograms are rarely used in exposition, and OpenMetrics does not support classic float histograms either. Support could be added in the future by adding fields for `count_float`, `zero_count_float`, `negative_counts`, and `positive_counts`.
 
 If native histograms and a classic histogram are exposed simultaneously the native histogram must come first for any labelset. For example:
+
 ```
 # TYPE hist_with_classic_buckets histogram
 # HELP hist_with_classic_buckets Is an example of combining native and classic histograms for two labelsets.
@@ -104,6 +106,7 @@ hist_with_classic_buckets_created{foo="baz"} 1717536098
 ```
 
 Finally, multiple exemplars will also be supported in the exposition format by providing a list of exemplars at the end of any line, separated by `#`. Note that having spaces around the hashes is required and matches the [ABNF specification in OpenMetrics](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#abnf). For example:
+
 ```
 # TYPE exemplar_example histogram
 # HELP exemplar_example Is an example of a native histogram with exemplars.
@@ -115,10 +118,13 @@ nativehistogram {count:24,sum:100,schema:0,zero_threshold:0.001,zero_count:4,pos
 After discussions with a few people it is believed that these changes can be made in a 1.x release of OpenMetrics. OpenMetrics 1.x parsers that support native histograms will still be able to read OpenMetrics 1.0 responses, therefore this change is backwards compatible. However, this change is not forwards compatible, i.e. an OpenMetrics 1.0 parser will not be able to read an OpenMetrics >= 1.1 response. Any producers implementing native histograms MUST also implement content negotiation and fall back to OpenMetrics 1.0.0, and therefore not expose native histograms, if a supported version cannot be negotiated. Note that the behavior to fall back to 1.0.0 is already part of the [OpenMetrics spec](https://github.com/prometheus/OpenMetrics/blob/v1.0.0/specification/OpenMetrics.md#protocol-negotiation).
 
 Until a version of OpenMetrics is released that contains a stable version of native histograms consumers can determine if native histograms may be present by asking for a `nativehistogram` pre-release identifier. For example,
+
 ```
 Accept: application/openmetrics-text;version=1.1.0-nativehistogram.*,application/openmetrics-text;version=1.0.0,text/plain;version=0.0.4
 ```
+
 would mean the consumer can accept any nativehistogram enabled pre-release version of OpenMetrics 1.1.0, the base 1.0.0 version of OpenMetrics, or the 0.0.4 version of the classic Prometheus text format. Producers must include the proper content type for their version, such as the first nativehistogram pre-release:
+
 ```
 Content-Type: application/openmetrics-text;version=1.1.0-nativehistogram.0
 ```

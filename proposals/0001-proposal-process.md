@@ -62,7 +62,7 @@ I propose to host in git only accepted proposals, simply in the root directory. 
 Given that, the process of proposing change with the design doc would look as follows (we can use the below text as the initial instruction):
 
 1. Fork `github.com/prometheus/proposals`.
-2. Create a GitHub Pull Request with a design document in markdown format to the repository's root directory. Make sure to use [template](../0000-00-00_template.md) as the guide for what sections should be present in the document. Put the creation date (the day you started preparing this design doc) as the prefix and some unique name as the suffix in the file name.
+2. Create a GitHub Pull Request with a design document in markdown format to the repository's root directory. Make sure to use [template](../0000-template.md) as the guide for what sections should be present in the document. Put the creation date (the day you started preparing this design doc) as the prefix and some unique name as the suffix in the file name.
    1. If you prefer Google Docs to any other collaboration tool, feel free to use it in the initial state. We recommend [Open Source Design Doc Template](https://docs.google.com/document/d/1zeElxolajNyGUB8J6aDXwxngHynh4iOuEzy3ylLc72U/edit#). However, the approval process will only happen officially in the Pull Request.
 3. Automatic formatter is enabled in the repository. Use `make` locally to format it. Use `make check` to check all links (will be done on the CI too).
 4. The design is accepted if the PR is merged into this repository. It's ok to eventually decide to reject the proposal and close the PR with meaningful reasons for why it was rejected.

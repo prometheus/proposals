@@ -83,9 +83,9 @@ Prometheus maintainers.
 ## How
 
 * Simplify the inclusion of info metric labels in PromQL through a new `info` function: `info(v instant-vector[, ls data-label-selector])`.
-  * If no data label matchers are provided, _all_ the data labels of found info metrics are added to the resulting time series.
+  * If no data label matchers are provided, *all* the data labels of found info metrics are added to the resulting time series.
   * If data label matchers are provided, only info metrics with matching data labels are considered.
-  * If data label matchers are provided, _precisely_ the data labels specified by the label matchers are added to the returned time series.
+  * If data label matchers are provided, *precisely* the data labels specified by the label matchers are added to the returned time series.
   * If data label matchers are provided, time series are only included in the result if matching data labels from info metrics were found.
   * A data label matcher like `k8s_cluster_name=~".+"` guarantees that each returned time series has a non-empty `k8s_cluster_name` label, implying that time series for which no matching info metrics have a data label named `k8s_cluster_name` (including the case where no matching info metric exists at all) will be excluded from the result.
   * A special case: If a data label matcher allows empty labels (equivalent to missing labels, e.g. `k8s_cluster_name=~".*"`), it will not exclude time series from the result even if there's no matching info metric.

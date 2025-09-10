@@ -12,7 +12,7 @@
   * [Slack Discussion](https://cloud-native.slack.com/archives/C01AUBA4PFE/p1726674665380109)
 
 > This effort aims to experiment with direct I/O to determine whether it can enhance user
-experience and provide performance improvements.
+> experience and provide performance improvements.
 
 ## Why
 
@@ -42,7 +42,7 @@ useless.
 
 * Reduce concerns and misconceptions about page cache overhead caused by writes.
 * Establish a foundation and gain familiarity with direct I/O; even if it proves unsuccessful in
-this context, the knowledge can be applied elsewhere.
+  this context, the knowledge can be applied elsewhere.
 
 ### Audience
 
@@ -51,7 +51,7 @@ this context, the knowledge can be applied elsewhere.
 * Switch all reads/writes to direct I/O.
 * Eliminate the page cache, even if it results in significantly increased CPU or disk I/O usage.
 * Remove I/O buffering in Prometheus code, as direct I/O does not imply the absence of user-space
-buffering.
+  buffering.
 
 ## How
 
@@ -77,17 +77,17 @@ by `bufio.Writer`):
 
 ```go
 type BufWriter interface {
-    // Writes data to the buffer and returns the number of bytes written.
-    // May trigger an implicit flush if necessary.
-    Write([]byte) (int, error)
+	// Writes data to the buffer and returns the number of bytes written.
+	// May trigger an implicit flush if necessary.
+	Write([]byte) (int, error)
 
-    // Flushes any buffered data to the file.
-    // The writer may not be usable after a call to Flush().
-    Flush() error
+	// Flushes any buffered data to the file.
+	// The writer may not be usable after a call to Flush().
+	Flush() error
 
-    // Discards any unflushed buffered data and clears any errors.
-    // Resets the writer to use the specified file.
-    Reset(f *os.File) error
+	// Discards any unflushed buffered data and clears any errors.
+	// Resets the writer to use the specified file.
+	Reset(f *os.File) error
 }
 ```
 
@@ -99,10 +99,10 @@ Additional utilities will also need to be developed to:
   // directIORqmts holds the alignment requirements for direct I/O.
   // All fields are in bytes.
   type directIORqmts struct {
-    // The required alignment for memory buffers addresses.
-    memoryAlign int
-    // The required alignment for I/O segment lengths and file offsets.
-    offsetAlign int
+  	// The required alignment for memory buffers addresses.
+  	memoryAlign int
+  	// The required alignment for I/O segment lengths and file offsets.
+  	offsetAlign int
   }
 
   func fetchDirectIORqmts(fd uintptr) (*directIORqmts, error)
@@ -155,10 +155,11 @@ adverse effects on CPU or disk I/O were observed.
 ## Alternatives
 
 - An alternative approach is to focus on enhancing user understanding of page cache behavior within
-Prometheus, helping them better interpret and adapt to it, without making any changes.
+  Prometheus, helping them better interpret and adapt to it, without making any changes.
 
 - [@dgl](https://github.com/dgl) has proposed using page cache hints to help with unpredictable
   memory reclaim:
+
   ```
   Using posix_fadvise with POSIX_FADV_DONTNEED could be an option if it doesn't make sense
   to totally avoid the cache (there's also Linux specific memory management options like
@@ -169,13 +170,13 @@ Prometheus, helping them better interpret and adapt to it, without making any ch
 - The work [work](https://lore.kernel.org/linux-fsdevel/20241111234842.2024180-1-axboe@kernel.dk/T/#cluster-upstream-ci)
   on introducing the `RWF_UNCACHED` flag for uncached buffered I/O has resumed, Provided no concessions
   or major changes are made solely to implement direct I/O support, direct I/O integration can always
-  be challenged when `RWF_UNCACHED` is released and proven effective. 
+  be challenged when `RWF_UNCACHED` is released and proven effective.
 
 ## Action Plan
 
 * [ ] Implement the direct I/O writer and its utils and use it for chunks writing
-during compaction (behind `use-uncached-io`): <https://github.com/prometheus/prometheus/pull/15365>
+  during compaction (behind `use-uncached-io`): https://github.com/prometheus/prometheus/pull/15365
 * [ ] Add more tests, identify or/add relevant Benchmarks and metrics (maybe add them to the
-prombench dashboard if needed).
+  prombench dashboard if needed).
 * [ ] Identify more use cases for direct I/O.
 * [ ] Add support for more OSes.

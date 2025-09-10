@@ -8,7 +8,7 @@
 * **Related Issues and PRs:**
   * https://github.com/prometheus/alertmanager/pull/2237
 
-> NOTE(bwplotka): This proposal was moved from [Alertmanager repo](https://github.com/prometheus/alertmanager/blob/6ef6e6868dbeb7984d2d577dd4bf75c65bf1904f/doc/design/secure-cluster-traffic.md) before we had [unified proposal process](2022-11-23-proposal-process.md), so it does not follow consistent style guide. For new proposal see [README](/README.md).
+> NOTE(bwplotka): This proposal was moved from [Alertmanager repo](https://github.com/prometheus/alertmanager/blob/6ef6e6868dbeb7984d2d577dd4bf75c65bf1904f/doc/design/secure-cluster-traffic.md) before we had [unified proposal process](0001-proposal-process.md), so it does not follow consistent style guide. For new proposal see [README](/README.md).
 
 ## Status Quo
 
