@@ -1,12 +1,12 @@
 # Early Compaction of Stale Series from the Head Block
 
 * **Owners:**
-    * Ganesh Vernekar (@codesome)
+  * Ganesh Vernekar (@codesome)
 
 * **Implementation Status:** Not implemented
 
 * **Related Issues and PRs:**
-    * https://github.com/prometheus/prometheus/issues/13616 
+  * https://github.com/prometheus/prometheus/issues/13616
 
 > TL;DR: This document is proposing a way of tracking stale series and compacting them (i.e. remove from in-memory head block) early when there are a lot of stale series.
 
@@ -28,7 +28,7 @@ There is no mechanism to proactively get rid of stale series from the head block
 
 ## Goals
 
-* Have a simple and efficient  mechanism in the TSDB to track and identify stale series.
+* Have a simple and efficient mechanism in the TSDB to track and identify stale series.
 * Compact the stale series when they reach a certain configurable threshold (% of total series).
 
 ## Non-Goals
@@ -66,7 +66,7 @@ To avoid back to back stale series compactions, we can choose to have a cooldown
 
 Implementation detail: if the usual head compaction is about to happen very soon, we should skip the stale series compaction and simply wait for the usual head compaction. The buffer can be hardcoded.
 
-## Future consideration 
+## Future consideration
 
 ### For tracking stale series
 
@@ -92,7 +92,7 @@ Once this feature is well tested, we can have some defaults for the thresholds a
 
 We have an option to reduce the `storage.tsdb.min-block-duration` config to 1h instead of current default 2h so that head compaction happens more often.
 
-This may work well if the churn is slow. But if you want to do frequent rollouts, the stale series pile up quickly and the smaller block duration doesn't help.   
+This may work well if the churn is slow. But if you want to do frequent rollouts, the stale series pile up quickly and the smaller block duration doesn't help.
 
 ### Alternative for stale series compaction
 
@@ -108,4 +108,3 @@ Only do either part 1 or part 2 from the above proposal. PS: doing both is not a
 * Dynamic adjustment of the thresholds based on memory pressure.
 
 # Consensus
-
