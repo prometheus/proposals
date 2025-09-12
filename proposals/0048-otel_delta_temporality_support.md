@@ -1,3 +1,5 @@
+**In the delta support wg, we have changed our preferred approach from the one suggested in this proposal (type as gauges, add otel labels) and instead would like to jump straight to the [Treat as mini-cumulative](#treat-as-mini-cumulative) approach. This would allow us to support deltas within the existing framework and without requiring the rate function to do different things depending on type/temporality. This requires the [CT per sample proposal](https://github.com/prometheus/proposals/pull/60) to be implemented. This proposal will on hold until CT per sample has advanced enough for us to be confident it will work for deltas (or choose a different approach if it does not).**
+
 # OTEL delta temporality support
 
 * **Owners:**
@@ -433,7 +435,7 @@ This has the problem of having to use different functions for delta and cumulati
 
 Deltas can be thought of as cumulative counters that reset after every sample. So it is technically possible to ingest as cumulative and on querying just use the cumulative functions.
 
-This requires CT-per-sample (or some kind of precise CT tracking) to be implemented. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
+This requires CT-per-sample (or some kind of precise CT tracking) to be implemented and it to be taken into acount for the `rate()`/`increase()` calculations. Just zero-injection of StartTimeUnixNano would not work all the time. If there are samples at consecutive intervals, the StartTimeUnixNano for a sample would be the same as the TimeUnixNano for the preceding sample and cannot be injected.
 
 The standard `rate()`/`increase()` functions do not work well with delta-specific characteristics, especially without CT-per-sample. The OTEL SDKs only emit datapoints when there is a change in the interval so samples might not come at consistent intervals. But `rate()` assumes samples in a range are equally spaced to figure out how much to extrapolate.
 
