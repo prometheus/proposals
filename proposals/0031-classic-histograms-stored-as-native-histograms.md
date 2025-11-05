@@ -6,7 +6,7 @@
 * **Contributors:**
   * Bartłomiej (Bartek) Płotka[@bwplotka](https://github.com/bwplotka) [bwplotka@gmail.com](mailto:bwplotka@gmail.com)
 
-* **Implementation Status:** Not implemented
+* **Implementation Status:** Implemented
 
 * **Related Issues and PRs:**
   * [histograms: custom bucket layouts](https://github.com/prometheus/prometheus/issues/11277)
