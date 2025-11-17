@@ -124,6 +124,10 @@ Some items might exist in multiple categories.
 
 We do not differentiate between a feature that is simply disabled and one that is missing because it was not compiled in. There is no separate "build" category. Instead, if a feature depends on a compile-time flag, it will appear under its relevant category. If it is not built-in or disabled, it should be set to `false`. Implementations MAY omit features set to `false`, and clients MUST treat absent features as equivalent to `false`.
 
+## Stability
+
+The `/api/v1/features` endpoint is stable for 3.x as part of the v1 HTTP API. Category names and feature names are stable within a major version and MUST NOT be renamed or removed. New categories and features MAY be added at any time. Features that need to be removed SHOULD be set to `false` and only removed in the next major version.
+
 ## Alternatives
 
 - Flat list: Having categories makes it easier for things like PromQL functions.
