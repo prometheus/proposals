@@ -112,7 +112,7 @@ Example response:
 }
 ```
 
-Naming conventions:
+Semantics:
 - All names MUST use `snake_case`
 - Each category value is a map from unique feature name to a boolean
 - Clients MUST ignore unknown feature names and categories
