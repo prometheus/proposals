@@ -16,7 +16,7 @@
 
 ## Why
 
-The OpenTelemetry Collector ecosystem faces a significant challenge: many components in collector-contrib are "drop-in" replacements for existing Prometheus exporters but often become unmaintained before reaching stability. This duplication of effort occurs because the promise of "one binary to collect all telemetry" is valuable to users, leading to reimplementation of functionality that already exists in mature Prometheus exporters.
+The OpenTelemetry Collector ecosystem faces a significant challenge: many components in collector-contrib are "drop-in" replacements for existing Prometheus exporters but often become unmaintained before reaching stability. This duplication of effort occurs because users increasingly adopt a "single binary to collect all telemetry" approach, leading to reimplementation of functionality that already exists in mature Prometheus exporters.
 
 This issue became particularly visible during OpenTelemetry's CNCF Graduation attempt, where feedback highlighted that users often feel frustrated when upgrading versions. In response, the Collector SIG decided to be stricter about accepting new components and more proactive in removing unmaintained or low-quality ones.
 
@@ -38,7 +38,7 @@ Meanwhile, the Prometheus community has developed hundreds of exporters over man
 
 * Enable embedding of Prometheus exporters as native OpenTelemetry Collector receivers via the OpenTelemetry Collector Builder (OCB).
 * Reduce duplication of effort between Prometheus and OpenTelemetry communities.
-* Maintain the "single binary" promise for users who want comprehensive telemetry collection.
+* Maintain the "single binary" promise for users who follow the single binary approach.
 * Leverage existing, mature Prometheus exporters instead of reimplementing them in OTel Collector's side.
 * Unify the two ecosystems to increase the likelihood of attracting more maintainers and contributors.
 
@@ -243,7 +243,7 @@ service:
 
 ### Known Problems
 
-1. **Dependency conflicts**: Prometheus exporters and OpenTelemetry collector-contrib use different dependency versions. Building a distribution with both may require dependency alignment or replace directives.
+1. **Dependency conflicts**: Prometheus exporters and OpenTelemetry collector-contrib use different dependency versions. Building a distribution with both may require dependency alignment or replace directives in the OCB yaml file.
 
 2. **Scope of adoption**: It's unclear how many Prometheus exporters will adopt these interfaces. The proposal targets exporters in the `prometheus` and `prometheus-community` GitHub organizations initially.
 
