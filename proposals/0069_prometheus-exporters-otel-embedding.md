@@ -64,7 +64,7 @@ Prometheus exporters function similarly to OpenTelemetry Collector receivers: th
 
 This proposal introduces a bridge between these two paradigms by:
 
-1. **Defining new interfaces** in the `exporter-toolkit` project that Prometheus exporters can implement
+1. **Creating a new Go library** (`prometheus-collector-bridge`) that defines interfaces Prometheus exporters can implement
 2. **Providing adapter code** that converts Prometheus Registry metrics to OpenTelemetry's pmetric format
 3. **Implementing OpenTelemetry Collector receiver interfaces** that wrap the adapter and Prometheus exporter
 
@@ -88,10 +88,10 @@ This proposal introduces a bridge between these two paradigms by:
 │  │  └─────────────────────────────────────────────┘   │     │
 │  │                      │                             │     │
 │  │                      ▼                             │     │
-│  │  ┌─────────────────────────────────────────────┐   │     │
-│  │  │     Exporter-toolkit (Registry → pmetric)   │   │     │
-│  │  │   (Periodic collection + conversion)        │   │     │
-│  │  └─────────────────────────────────────────────┘   │     │
+│  │  ┌───────────────────────────────────────────────┐ │     │
+│  │  │Prometheus-Collector-Bridge(Registry → pmetric)│ │     │
+│  │  │  (Periodic collection + conversion)           │ │     │
+│  │  └───────────────────────────────────────────────┘ │     │
 │  │                      │                             │     │
 │  └──────────────────────┼─────────────────────────────┘     │
 │                         ▼                                   │
@@ -112,9 +112,9 @@ This proposal introduces a bridge between these two paradigms by:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### New Interfaces in exporter-toolkit
+### New Interfaces in prometheus-collector-bridge
 
-The `exporter-toolkit` project will provide new interfaces that Prometheus exporters can implement:
+The new `prometheus-collector-bridge` library will be created in a dedicated repository under the Prometheus organization. This library will define interfaces that Prometheus exporters must implement to be embeddable in OpenTelemetry Collectors:
 
 #### ExporterLifecycleManager Interface
 
@@ -165,7 +165,7 @@ type ReceiverConfig struct {
 
 ### Prometheus Registry to pmetric Conversion
 
-The adapter will include a scraper component that:
+The `prometheus-collector-bridge` library will include a scraper component that:
 
 1. Calls `registry.Gather()` to collect metrics from the Prometheus Registry
 2. Converts Prometheus metric families to OpenTelemetry's pmetric format
@@ -174,7 +174,7 @@ This conversion logic can leverage or adapt existing conversion code from the Op
 
 ### OpenTelemetry Collector Receiver Implementation
 
-The `exporter-toolkit` will provide a complete implementation of OpenTelemetry's receiver interfaces:
+The `prometheus-collector-bridge` library will provide a complete implementation of OpenTelemetry's receiver interfaces:
 
 1. **component.Factory** - for component type and default configuration
 2. **component.Component** - for lifecycle management
@@ -227,19 +227,19 @@ service:
 
 ### Implementation Steps
 
-1. **Extend exporter-toolkit** with the new interfaces and OpenTelemetry Collector receiver implementation
-2. **Implement the Prometheus to pmetric converter** (potentially adapting existing code)
-3. **Update one reference exporter** (e.g., node_exporter) to implement the new interfaces as a proof of concept
-4. **Validate** with OpenTelemetry Collector Builder
-5. **Document** the integration pattern for other exporters
-6. **Gradually adopt** across other Prometheus exporters based on community interest
+1. **Create the prometheus-collector-bridge repository** under the Prometheus organization
+2. **Define the interfaces** in the new library (ExporterLifecycleManager, ConfigUnmarshaler, Config)
+3. **Implement the Prometheus to pmetric converter** (potentially adapting existing code)
+4. **Update one reference exporter** (e.g., node_exporter) to implement the new interfaces as a proof of concept
+5. **Validate** with OpenTelemetry Collector Builder
+6. **Document** the integration pattern for other exporters
+7. **Gradually adopt** across other Prometheus exporters based on community interest
 
 ### Migration and Compatibility
 
 * **No breaking changes** to existing Prometheus exporters that don't adopt the interfaces
 * **Opt-in adoption** - exporters can choose when/if to implement embedding support
 * **Backward compatibility** - embedded exporters still work as standalone exporters
-
 
 ### Known Problems
 
@@ -273,7 +273,13 @@ Rely solely on OpenTelemetry's existing Prometheus receiver that scrapes Prometh
 
 **Rejected because**: This doesn't solve the "single binary" goal and still requires running separate exporter processes. It also doesn't address the underlying duplication problem for new infrastructure integrations.
 
-### 4. Wait for universal OTLP adoption
+### 4. Use exporter-toolkit for adapter implementation
+
+Extend the existing `exporter-toolkit` project to include the adapter code and interfaces for embedding exporters.
+
+**Rejected because**: The exporter-toolkit was designed specifically to facilitate HTTP interactions (TLS, authentication, etc.) for Prometheus exporters. Adding adapter logic and OpenTelemetry receiver interfaces would expand its scope beyond its original purpose and design. A dedicated library with a clear focus on the bridge between Prometheus exporters and OpenTelemetry Collectors is more appropriate.
+
+### 5. Wait for universal OTLP adoption
 
 Wait until all infrastructure components natively export OTLP metrics.
 
