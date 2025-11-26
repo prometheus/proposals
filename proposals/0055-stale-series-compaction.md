@@ -46,25 +46,27 @@ We can keep a running counter that tracks how many series are stale at the momen
 
 ### Compacting Stale Series
 
-We will have two thresholds to trigger stale series compaction, `p%` and `q%`, `q > p` (both indicating % of total series that are stale in the head). Both will be configurable and default to 0% (meaning stale series compaction is disabled).
+We will have a single thresholds to trigger stale series compaction, `R`, which is the ratio of stale series count to total series count. It will be configurable and default to 0 (meaning stale series compaction is disabled).
 
-**Part 1**
+As soon as the ratio of stale series to total series reaches `R`, we trigger the stale series compaction that simply flushes these stale series into a block and removes it from the Head block (can be more than one block if the series crosses the block boundary). We skip WAL truncation and m-map files truncation at this stage and let the usual compaction cycle handle it.
 
-At a regular interval (say 15 mins), we check if the stale series have crossed p% of the total series. If it has, we trigger a compaction that simply flushes these stale series into a block and removes it from the Head block (can be more than one block if the series crosses the block boundary). We skip WAL truncation and m-map files truncation at this stage and let the usual compaction cycle handle it.
-
-While removing the stale series from the head block, we add tombstones only in the WAL for these stale series with deleted time range as `[MinInt64, MaxInt64]`. WAL replay will simply drop these series from the head as soon as it encounters this record in the WAL. This was we don't spike up the memory during WAL replay.
+While removing the stale series from the head block, we add tombstones only in the WAL for these stale series with deleted time range as `[MinInt64, MaxInt64]`. WAL replay will simply drop these series from the head as soon as it encounters this record in the WAL. This way we don't spike up the memory during WAL replay.
 
 Since these are stale series, there won’t be any races when compacting it in most cases. We will still lock the series and take required measures so that we don’t cause race with an incoming sample for any stale series.
 
-This way of compaction will make it more predictable when the stale series compaction happens.
+Implementation detail: if the usual head compaction is about to happen very soon, we should skip the stale series compaction and simply wait for the usual head compaction.
 
-**Part 2**
+### Experimental Analysis and Trade-offs
 
-To be more reactive to sudden rise in stale series, we will perform the stale series compaction as soon as the stale series crosses the higher q% threshold.
+Running Prombench on https://github.com/prometheus/prometheus/pull/16929 and running a version of that at Reddit uncovered a few learnings
 
-To avoid back to back stale series compactions, we can choose to have a cooldown period after a stale series compaction where it does not trigger again (e.g. 5-10 mins).
+* When stale series compaction runs, a large number of instant queries can increase both the CPU and memory until the next regular compaction. This is because instant queries will now have to merge data from the memory and the stale series block from disk.
+* When the `R` is set close to the peak of possible stale series ratio, it might actually use more memory than it would have at the peak stale series ratio. This was observed with `R=0.2` internally at Reddit where at peak the Prometheus would have held 30% stale series. Since there are a lot of rules running, holding 30% stale series took less memory than running stale series compaction at `R=0.2`.
 
-Implementation detail: if the usual head compaction is about to happen very soon, we should skip the stale series compaction and simply wait for the usual head compaction. The buffer can be hardcoded.
+**Conclusions**
+* Stale series compaction should not be used to reduce the memory usage under normal operations (less churn), since it will work the opposite.
+* We should set `R` to a high enough number so that it is triggered less often and mainly used to cap the memory during high frequency rollout / high churn.
+  * The choice of `R` where you start seeing the benefits will vary heavily depending on number of instant queries.
 
 ## Future consideration
 
@@ -93,10 +95,6 @@ Once this feature is well tested, we can have some defaults for the thresholds a
 We have an option to reduce the `storage.tsdb.min-block-duration` config to 1h instead of current default 2h so that head compaction happens more often.
 
 This may work well if the churn is slow. But if you want to do frequent rollouts, the stale series pile up quickly and the smaller block duration doesn't help.
-
-### Alternative for stale series compaction
-
-Only do either part 1 or part 2 from the above proposal. PS: doing both is not a big jump in work and probably a good tradeoff.
 
 ## Action Plan
 
