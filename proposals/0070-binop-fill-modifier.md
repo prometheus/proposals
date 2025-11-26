@@ -111,6 +111,16 @@ Example for filling in missing series on the "one" side (allowed, but joined lab
 \                                   /                                                                                            \                                                                  /
 ```
 
+### Possible parameter-less variants of the modifiers
+
+To reduce verbosity, parameter-less variants of the modifiers could be introduced that use common default values, e.g.:
+
+```
+vector1 + fill vector2      # equivalent to vector1 + fill(0) vector2
+```
+
+For addition and subtraction, sensible default values could be `0`, while for multiplication and division, `1` could be used (less clear, often doesn't make sense). For other operations, there is likely no sensible default value.
+
 ## Alternatives
 
 * Do nothing and keep relying on the `or` operator to create default-valued series where needed. This is more cumbersome and less efficient, but avoids adding complexity to the binary operation syntax.
