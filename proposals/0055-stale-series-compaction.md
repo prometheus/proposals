@@ -46,7 +46,7 @@ We can keep a running counter that tracks how many series are stale at the momen
 
 ### Compacting Stale Series
 
-We will have a single thresholds to trigger stale series compaction, `R`, which is the ratio of stale series count to total series count. It will be configurable and default to 0 (meaning stale series compaction is disabled).
+We will have a single threshold to trigger stale series compaction, `R`, which is the ratio of stale series count to total series count. It will be configurable and default to 0 (meaning stale series compaction is disabled).
 
 As soon as the ratio of stale series to total series reaches `R`, we trigger the stale series compaction that simply flushes these stale series into a block and removes it from the Head block (can be more than one block if the series crosses the block boundary). We skip WAL truncation and m-map files truncation at this stage and let the usual compaction cycle handle it.
 
@@ -84,9 +84,9 @@ Cons over only the above proposal:
 
 Purely because of the added complexity of proposal 2, we can start with proposal 1 and consider proposal 2 as a follow up in the future.
 
-### Defaults for stale series compaction thresholds
+### Default for stale series compaction threshold
 
-Once this feature is well tested, we can have some defaults for the thresholds and interval mentioned above and the user only needs to enable the feature.
+Once this feature is well tested, we can have some default for the threshold and the user only needs to enable the feature.
 
 ## Alternatives
 
@@ -104,5 +104,3 @@ This may work well if the churn is slow. But if you want to do frequent rollouts
 # Future Consideration
 
 * Dynamic adjustment of the thresholds based on memory pressure.
-
-# Consensus
