@@ -118,8 +118,8 @@ The same addition, but only filling in missing series on the right side:
 
 When using fill modifiers in combination with `group_left` or `group_right`, there are some limitations:
 
-* If a fill modifier is used on the side that is being grouped (i.e., the "many" side), filling in missing series is not allowed, as it would be ambiguous which of the grouped series to fill in (the extra cardinality on the "many" side that would otherwise have made it into the result is not known). So `metric1 + on(...) group_left(...) fill_left(0) metric2` should yield a PromQL error.
-* If a fill modifier is used on the side that is not being grouped (i.e., the "one" side), filling in missing series is allowed as normal. However, if the grouping modifier specifies label names to join in from the "one" side, those labels cannot be filled in for missing series, as there is no source for their values.
+* If a fill modifier is used on the side that is being grouped (i.e., the "many" side), filling in missing series is not allowed, as the extra label cardinality on the "many" side that would otherwise have served to create multiple distinctly labeled output series for the group is not known. So `metric1 + on(...) group_left(...) fill_left(0) metric2` should yield a PromQL error.
+* If a fill modifier is used on the side that is not being grouped (i.e., the "one" side), filling in missing series is allowed as normal. However, if the grouping modifier specifies label names to join in from the "one" side, those labels cannot be filled in for missing series, as there is no source for their values. A possible future extension could allow specifying default values for those joined-in labels as well, but that is out of scope for this proposal.
 
 Example for trying to fill in missing series on the "many" side (not allowed):
 
@@ -176,9 +176,9 @@ Not supported are:
 ## Alternatives
 
 * Do nothing and keep relying on the `or` operator to create default-valued series where needed. This is more cumbersome and less efficient, but avoids adding complexity to the binary operation syntax.
-* Introduce a separate function (e.g., `fill_missing(series, default_value)`) that can be applied to either side of a binary operation. This would avoid modifying the binary operation syntax, but it would make no sense in isolation, since it would always need to be paired with a binary operation.
-* Call the modifier `outer` (similar to OUTER joins in SQL) and have it always fill in missing series on both sides with automatic default values (like `0` for addition). This would be less flexible than allowing users to specify the default value and individual sides to fill in.
-* Modify the operator syntax itself to indicate that missing series should be filled in. This would be more compact and more discoverable by autocompletion, but it's questionable whether this particular modifier should be treated as special as opposoed to all the other existing modifiers (`on`, `ignoring`, `group_left`, `group_right`).:
+* Introduce a separate function (e.g., `fill_missing(series, default_value)`) that can be applied to either side of a binary operation. This would avoid modifying the binary operation syntax, but it would make no sense in isolation, since it would always need to be paired with a binary operation and then do a special cross-AST-node computation.
+* Call the modifier `outer` (similar to OUTER joins in SQL) and have it always fill in missing series on both sides with automatic default values (like `0` for addition). This would be less flexible than allowing users to specify the default value and individual sides to fill in. The naming would also be very SQL-like and not very in line with existing PromQL terminology.
+* Modify the operator syntax itself to indicate that missing series should be filled in. This would be more compact and more discoverable by autocompletion, but it's questionable whether this particular modifier should be treated as special as opposoed to all the other existing modifiers (`on`, `ignoring`, `group_left`, `group_right`). E.g.:
   * `vector1 +? vector2`: Fill in missing series with an automatic default value (e.g., `0` for addition).
   * `vector1 +?=23 vector2` to indicate filling in missing series with `23`. But: How would this work for the left side only or right side only?
 
