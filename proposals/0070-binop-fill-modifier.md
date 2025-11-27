@@ -17,12 +17,14 @@ The current behavior of Prometheus' vector-to-vector binary operations is to dro
 Examples:
 
 ```
-# Adding two rate vectors where each may be missing some series, but where you still wanti to return values if a series is present on either side:
+# Adding two rate vectors where each may be missing some series, but where
+# you still want to return values if a series is present on either side:
 rate(successful_requests[5m]) + fill(0) rate(failed_requests[5m])
 ```
 
 ```
-# Filtering error rates by a set of label-based thresholds, or a default threshold value of 42 where no custom threshold is defined for a given label set:
+# Filtering error rates by a set of label-based thresholds, or a default threshold
+# value of 42 where no custom threshold is defined for a given label set:
 rate(errors_total[5m]) > fill_right(42) rate_threshold
 ```
 
@@ -82,7 +84,15 @@ Three new modifiers would be added to the binary operation syntax: `fill(<defaul
 * For each series on the right side, if there is no matching series on the left side and the modifier is `fill` or `fill_left`, a new series is filled in with the specified default value.
 * The binary operation is then performed as usual, using the original and filled-in series.
 
-The following diagrams illustrates some examples of the fill-in process.
+The modifiers may be used in the following combinations:
+
+* `fill(<default>)`
+* `fill_left(<default>)`
+* `fill_right(<default>)`
+* `fill_left(<default>) fill_right(<default>)`
+* `fill_right(<default>) fill_left(<default>)`
+
+The following diagrams illustrate some examples of the fill-in process.
 
 Adding two vectors and using `0` as a default value for missing series on either side:
 
