@@ -12,7 +12,7 @@
 
 ## Why
 
-The current behavior of Prometheus' vector-to-vector binary operations is to drop series that do not have a matching counterpart on the other side of the operation. While this is often the desired behavior, there are cases (as outlined in https://github.com/prometheus/prometheus/issues/13625 and discussed in other places) where users want to treat missing series as having a specific default value (e.g., `0` in the face of addition), allowing for outputs in cases where operands are known to have incomplete series sets.
+The current behavior of Prometheus' vector-to-vector binary operations is to drop series that do not have a matching counterpart on the other side of the operation. While this is often the desired behavior, there are cases (as outlined in https://github.com/prometheus/prometheus/issues/13625 and discussed in other places) where users want to treat missing series as having a specific default value (e.g., `0` in the face of addition) and still create outputs for their label sets.
 
 Examples:
 
@@ -28,7 +28,37 @@ rate(errors_total[5m]) > fill_right(42) rate_threshold
 
 ### Pitfalls of the current solution
 
-I still believe that the current behavior is the right default for the majority of use cases, since it avoids silently producing potentially misleading data. However, there are use cases where users want to have more control over how missing series are handled. The current workaround for this is to use the `or` operator to explicitly create series with default values, which can become cumbersome and less efficient.
+I still believe that the current behavior of dropping series without a match is the right default for the majority of use cases, since it avoids silently producing potentially misleading data. However, there are use cases where users want to have more control over how missing series are handled.
+
+A current workaround for filling in missing series is to use the `or` operator, which can become cumbersome to write and read.
+
+For example, to add two vectors while treating missing series as `0`, you could currently write:
+
+```
+vector1 + vector2 or vector1 or vector2
+```
+
+For default values other than `0` (`23` for the right side, `42` for the left side), you could write:
+
+```
+(vector1 + vector2) or (vector1 + 23) or (42 + vector2)
+```
+
+Note that this may inadvertently reintroduce the metric name on the resulting series, since arithmetic and trigonometric binary operations drop the metric name, but `or` retains it.
+
+To also drop the metric name like the binary operator would, and to handle `on` / `ignoring` clauses, you could say:
+
+```
+  vector1
++ on(label1, label2)
+  vector2
+or
+  sum by(label1, label2) (vector1) + 23
+or
+  42 + sum by(label1, label2) (vector2)
+```
+
+The `sum()` aggregator removes both the metric name and any labels not in the `by(...)` clause. This works fine for 1:1 matches (since no actual series reduction takes place), but many-to-one or one-to-many situations become even more complex to handle correctly.
 
 ## Goals
 
@@ -121,11 +151,26 @@ vector1 + fill vector2      # equivalent to vector1 + fill(0) vector2
 
 For addition and subtraction, sensible default values could be `0`, while for multiplication and division, `1` could be used (less clear, often doesn't make sense). For other operations, there is likely no sensible default value.
 
+### Supported operators
+
+The new modifiers would be supported for:
+
+* Arithmetic binary operators: `+`, `-`, `*`, `/`, `%`, `^`
+* Comparison binary operators: `==`, `!=`, `>`, `<`, `>=`, `<=`
+* Trigonometric binary operators: `atan2`
+
+Not supported are:
+
+* Set operators: `and`, `or`, `unless` (these already have their own semantics for handling missing series)
+
 ## Alternatives
 
 * Do nothing and keep relying on the `or` operator to create default-valued series where needed. This is more cumbersome and less efficient, but avoids adding complexity to the binary operation syntax.
 * Introduce a separate function (e.g., `fill_missing(series, default_value)`) that can be applied to either side of a binary operation. This would avoid modifying the binary operation syntax, but it would make no sense in isolation, since it would always need to be paired with a binary operation.
 * Call the modifier `outer` (similar to OUTER joins in SQL) and have it always fill in missing series on both sides with automatic default values (like `0` for addition). This would be less flexible than allowing users to specify the default value and individual sides to fill in.
+* Modify the operator syntax itself to indicate that missing series should be filled in. This would be more compact and more discoverable by autocompletion, but it's questionable whether this particular modifier should be treated as special as opposoed to all the other existing modifiers (`on`, `ignoring`, `group_left`, `group_right`).:
+  * `vector1 +? vector2`: Fill in missing series with an automatic default value (e.g., `0` for addition).
+  * `vector1 +?=23 vector2` to indicate filling in missing series with `23`. But: How would this work for the left side only or right side only?
 
 ## Action Plan
 
