@@ -82,7 +82,13 @@ These labels indicate whether an issue has been evaluated and is ready for work:
 - **`triage/accepted`**: Issue has been triaged and accepted as valid work. It is ready for someone to work on.
 - **`triage/needs-information`**: Issue needs more details from the author before it can be properly evaluated or worked on.
 
-**Workflow**: All issues start with `triage/needs-triage`. During triage, maintainers either replace this with another triage label or remove it entirely. The absence of any triage label (along with issue comments) indicates that triage action has been taken and the issue is currently being worked on. Declined or duplicate issues should also have no `triage/` label.
+**Workflow**: All issues start with `triage/needs-triage`. During triage,
+maintainers either replace this with another triage label or remove it entirely.
+
+Instead a `kind/` label should be added. The absence of any triage label (along
+with issue comments) indicates that triage action has been taken and the issue
+is currently being worked on. Declined or duplicate issues should also have no
+`triage/` label.
 
 #### 2. Review Labels
 
@@ -126,8 +132,8 @@ Labels from different categories work together:
 
 This section documents the existing label taxonomies currently in use across
 Prometheus repositories, particularly in prometheus/prometheus. These labels are
-included here for documentation purposes and reflect current practice. The
-proposal above aims to replace some of the currently in use labels.
+included here for documentation purposes, to reflect current practice and to propose
+how to handle these labels going forward.
 
 #### Component and area Labels
 
@@ -153,6 +159,10 @@ indicate the affected areas. Multiple component labels may be applied if changes
 span multiple components. Area labels are less commonly used than component
 labels and typically indicate cross-cutting concerns or specific initiatives.
 
+**Proposal**: Keep the `component/` and `area/` prefixes and leave the suffixes
+unspecified so that developers can add them as needed. Move any current labels
+to use the prefixes where needed.
+
 #### Kind Labels
 
 Kind labels categorize the type of change or issue:
@@ -167,6 +177,9 @@ Kind labels categorize the type of change or issue:
 
 **Usage**: Issues and PRs typically have exactly one kind label to indicate the primary nature of the change. The kind label helps communicate the impact and urgency of the change.
 
+**Proposal**: Keep the labels and recommend to add them manually to issues after
+triage and to PRs as needed.
+
 #### Priority Labels
 
 Priority labels indicate the urgency and importance of an issue or PR:
@@ -179,20 +192,12 @@ Priority labels indicate the urgency and importance of an issue or PR:
 
 **Usage**: Priority labels are typically assigned during triage and help maintainers and contributors understand what to work on first. Not all issues have priority labels assigned.
 
+**Proposal**: Keep the labels and recommend to use as needed.
+
 #### Other Common Labels
 
-Many other labels are currently in use. this proposal does not seek to prescribe
-any changes to how all labels are used. For example to following are well
-established and usefule:
-
-- **`help wanted`**: Good issues for external contributors
-- **`good first issue`**: Good for newcomers to the project
-- **`low hanging fruit`**: Easy to implement
-- **`not-as-easy-as-it-looks`**: Appears simple but has hidden complexity
-
-Other labels should probably be unified into the label taxonomy proposed above.
-
-For example:
+Many other labels are currently in use. Many overlap with the taxonomy proposed
+here, for example:
 
 - **`duplicate`**: Duplicate of another issue
 - **`invalid`**: Issue is not valid or is spam
@@ -200,10 +205,26 @@ For example:
 - **`stale`**: No recent activity
 - **`keepalive`**: Should not be marked stale or auto-closed
 
+Some currently used labels are well established and seem useful but don't fit
+well into the proposed taxonomy:
+
+- **`help wanted`**: Good issues for external contributors, might require specific expertise
+- **`good first issue`**: Good for newcomers to the project
+- **`not-as-easy-as-it-looks`**: Appears simple but has hidden complexity
+- `dependencies`: Used by dependeabot
+
+A few labels have served a temporary purpose:
+
+- `hacktoberfest`
+- `backport-*`: Track backports for LTS releases
+
 **Usage**: These labels serve various workflow and community needs. Some are
 applied manually, while others (like `dependencies`) are often applied
-automatically. Some labels should be abandoned in favor of the structured labels
-proposed above.
+automatically.
+
+**Proposal**: Most labels should be abandoned in favor of the structured labels
+proposed above. Keep a few regular exceptions and the option for temporary
+labels for a specific purpose.
 
 ### Implementation Considerations
 
