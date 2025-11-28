@@ -24,8 +24,8 @@ As Prometheus projects grow, the volume of issues and pull requests increases.
 Without a clear labeling system, it becomes difficult to:
 
 - Identify which issues and PRs need immediate attention
-- Understand whether action is required from maintainers, reviewers, or authors
-- Distinguish between items that are ready for work versus those that are blocked
+- Understand whether action is required from maintainers, reviewers or author
+- Clearly mark items that can be worked on by (new) contributors versus ones that need to be evaluated for validity, e.g. bugs that are considered invalid
 - Maintain an efficient review and triage workflow
 
 A systematic approach to labels helps contributors and maintainers quickly
@@ -40,6 +40,7 @@ Currently, there is no standardized label system across Prometheus projects. Thi
 - PRs and issues that languish without clear ownership or next steps
 - No clear signal for when an item is blocked versus ready for action
 - Maintainer time wasted re-evaluating items that haven't changed state
+- Contributors time wasted by working on untriaged issues which might be invalid
 
 ## Goals
 
@@ -51,6 +52,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 * Enable automated tooling to assist with workflow management
 * Create consistency across Prometheus ecosystem repositories
 * Reduce maintainer cognitive load when evaluating what needs attention
+* Help new contributors to identify suitable issues to work on
 
 ### Audience
 
@@ -80,7 +82,7 @@ These labels indicate whether an issue has been evaluated and is ready for work:
 - **`triage/accepted`**: Issue has been triaged and accepted as valid work. It is ready for someone to work on.
 - **`triage/needs-information`**: Issue needs more details from the author before it can be properly evaluated or worked on.
 
-**Workflow**: All issues start with `triage/needs-triage`. During triage, maintainers either replace this with another triage label or remove it entirely. The absence of any triage label (along with issue comments) indicates that triage action has been taken, such as declining or marking as duplicate.
+**Workflow**: All issues start with `triage/needs-triage`. During triage, maintainers either replace this with another triage label or remove it entirely. The absence of any triage label (along with issue comments) indicates that triage action has been taken and the issue is currently being worked on. Declined or duplicate issues should also have no `triage/` label.
 
 #### 2. Review Labels
 
@@ -88,10 +90,9 @@ These labels manage the pull request review lifecycle:
 
 - **`review/needs-review`**: Initial state for all new PRs. Indicates the PR needs review from maintainers.
 - **`review/changes-requested`**: Reviewers have requested changes. Author action is needed.
-- **`review/lgtm`**: "Looks Good To Me" - PR has received technical approval from a reviewer with domain expertise.
-- **`review/approved`**: PR has received final approval from a maintainer with merge rights (per OWNERS or equivalent).
+- **`review/lgtm`**: "Looks Good To Me" - PR has received approval from reviewers. If an approving reviewer is code owner the PR is ready to be merged.
 
-**Workflow**: All PRs start with `review/needs-review`. After review, this transitions to either `review/changes-requested` or `review/lgtm`. Once approved by appropriate maintainers, it becomes `review/approved`.
+**Workflow**: All PRs start with `review/needs-review`. After review, this transitions to either `review/changes-requested` or `review/lgtm`. After requested changes have been addressed, a PR transitions back to `review/needs-review`. Once approved by appropriate maintainers, it becomes `review/lgtm`.
 
 #### 3. Blocking Labels
 
@@ -103,15 +104,12 @@ These labels indicate that an issue or PR cannot proceed:
 
 **Workflow**: These labels can be applied at any time when the item becomes blocked. They should be removed when the blocking condition is resolved.
 
-#### 4. Lifecycle Labels (Optional)
+#### 4. Lifecycle Labels
 
-These labels track the activity status of issues and PRs. This category is optional and would only be implemented if automated lifecycle management is adopted in the future:
+These labels track the activity status of issues and PRs. Prometheus has an [automation in place](https://github.com/prometheus/prometheus/blob/96d3d641e329c049f649edbd4c2695345c027c56/.github/workflows/stale.yml) that would only require adjusting the label values.
 
-- **`lifecycle/stale`**: No activity for an extended period (e.g., 90 days). Candidate for closure if no activity resumes.
-- **`lifecycle/frozen`**: Should not be auto-closed due to inactivity. Reserved for important long-running items.
-- **`lifecycle/rotten`**: No activity after being marked stale (e.g., 30 additional days). Will be auto-closed soon.
-
-**Workflow**: These would typically be managed by automation based on activity timestamps. Currently, Prometheus projects do not use automated lifecycle management, so these labels are reserved for potential future use.
+- **`lifecycle/stale`**: No activity for an extended period (currently 30 days). Candidate for closure if no activity resumes.
+- **`lifecycle/keepalive`**: Should not be marked stale due to inactivity. Reserved for important long-running items.
 
 ### Label Interactions
 
@@ -119,7 +117,7 @@ Labels from different categories work together:
 
 - **Active PR ready for review**: `review/needs-review` (no blocking labels)
 - **PR waiting on author**: `review/changes-requested`
-- **PR approved but held**: `review/approved` + `blocked/hold`
+- **PR approved but held**: `review/lgtm` + `blocked/hold`
 - **Issue accepted and ready**: `triage/accepted` (no blocking labels)
 - **Issue needing more info**: `triage/needs-information`
 - **Issue declined or duplicate**: No triage label (removed after triage with explanatory comment)
@@ -162,7 +160,7 @@ Kind labels categorize the type of change or issue:
 - **`kind/bug`**: Something is broken or not working as intended
 - **`kind/enhancement`**: Improvement to existing functionality
 - **`kind/feature`**: Entirely new functionality
-- **`kind/cleanup`**: Code cleanup, refactoring, or technical debt reduction
+- **`kind/cleanup`**: Code cleanup, refactoring or technical debt reduction
 - **`kind/optimization`**: Performance improvements
 - **`kind/change`**: General change that doesn't fit other categories
 - **`kind/breaking`**: Breaking change that affects backward compatibility
@@ -233,13 +231,13 @@ Use only `needs-triage`, `needs-review`, and `hold` labels.
 
 **Rationale for rejection**: Too minimal. Doesn't provide enough granularity to distinguish between "waiting on author" vs "waiting on maintainer" vs "blocked externally", which are common and important states.
 
-### Alternative 3: Use Existing GitHub Features Only
+### Alternative 2: Use Existing GitHub Features Only
 
 Rely on GitHub's built-in review states, assignees, and milestones without custom labels.
 
 **Rationale for rejection**: GitHub's native features don't provide sufficient granularity for triage states or blocking conditions. Custom labels allow for automation and clearer communication of project-specific workflow.
 
-### Alternative 4: Adopt Kubernetes Labels Exactly
+### Alternative 3: Adopt Kubernetes Labels Exactly
 
 Use the exact label names and taxonomy from Kubernetes.
 
