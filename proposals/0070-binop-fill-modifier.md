@@ -116,37 +116,37 @@ The same addition, but only filling in missing series on the right side:
 
 ### Limitations for many-to-one and one-to-many matches (`group_left` / `group_right`)
 
-When using fill modifiers in combination with `group_left` or `group_right`, there are some limitations:
+When using fill modifiers in combination with `group_left` or `group_right`, there are some things to note:
 
-* If a fill modifier is used on the side that is being grouped (i.e., the "many" side), filling in missing series is not allowed, as the extra label cardinality on the "many" side that would otherwise have served to create multiple distinctly labeled output series for the group is not known. So `metric1 + on(...) group_left(...) fill_left(0) metric2` should yield a PromQL error.
-* If a fill modifier is used on the side that is not being grouped (i.e., the "one" side), filling in missing series is allowed as normal. However, if the grouping modifier specifies label names to join in from the "one" side, those labels cannot be filled in for missing series, as there is no source for their values. A possible future extension could allow specifying default values for those joined-in labels as well, but that is out of scope for this proposal.
+* If a fill modifier is used on the "many" side of a match, we will not know which extra differentiating labels would have existed on the (potentially multiple) missing series if they had been present. Therefore, we can only fill in a single series for the missing "many" side of that match group, using the group's matching labels as the series identity.
+* If a fill modifier is used on the side that is not being grouped (i.e., the "one" side), filling in missing series is allowed as normal. However, if the grouping modifier specifies label names to include from the "one" side, those labels cannot be filled in for missing series, as there is no source for their values. A possible future extension could allow specifying default values for those joined-in labels as well, but that is out of scope for this proposal.
 
-Example for trying to fill in missing series on the "many" side (not allowed):
+Example for filling in missing series on the "many" side (only a single series with the match group's labels is filled in):
 
 ```
-# This is NOT allowed and should produce an error.
-
-/                                   \
-| method="GET",  status="200"  3455 |                                        /                    \
-| method="POST", status="200"   567 |                                        | status="200"  1234 |
-|              <missing>            |  + on(status) group_left fill_left(0)  | status="404"   341 |
-|              <missing>            |                                        | status="500"   771 |
-| method="GET",  status="500"       |                                        \                    /
-| method="POST", status="500"       |
-\                                   /
+/                                   \                                                                   /                                                   \
+| method="GET",  status="200"  3455 |                                        /                    \     | method="GET",  status="200"  (3455 + 1234) = 4689 |
+| method="POST", status="200"   567 |                                        | status="200"  1234 |     | method="POST", status="200"   (567 + 1234) = 1801 |
+|                                   |                                        |                    |     |                                                   |
+|              <missing>            |  + on(status) group_left fill_left(0)  | status="404"   341 |  =  |                status="404"      (0 + 341) =  341 |
+|              <missing>            |                                        |                    |     |                                                   |
+|                                   |                                        | status="500"   771 |     |                                                   |
+| method="GET",  status="500"   23  |                                        \                    /     | method="GET",  status="500"     (23 + 771) =  794 |
+| method="POST", status="500"   42  |                                                                   | method="POST", status="500"     (42 + 771) =  813 |
+\                                   /                                                                   \                                                   /
 ```
 
-Example for filling in missing series on the "one" side (allowed, but joined labels will not be filled in):
+Example for filling in missing series on the "one" side (joined labels will not be filled in):
 
 ```
 /                                   \                                                                                            /                                                                  \
-| method="GET",  status="200"  3455 |                                                                                            | method="GET",  status="200", cluster="eu1"  (3455 + 1234) = 4689 |
-| method="POST", status="200"   567 |                                                  /                                   \     | method="POST", status="200", cluster="eu1"   (567 + 1234) = 1801 |
-|                                   |                                                  | status="200", cluster="eu1"  1234 |     |                                                                  |
-| method="GET",  status="404"     0 |  + on(status) group_left(cluster) fill_right(0)  |                <missing>          |  =  | method="GET",  status="404"                       (0 + 0) =    0 |
-| method="POST", status="404"     3 |                                                  | status="500", cluster="eu1"   771 |     | method="POST", status="404"                       (3 + 0) =    3 |
-|                                   |                                                  \                                   /     |                                                                  |
-| method="GET",  status="500"    23 |                                                                                            | method="GET",  status="500", cluster="eu1"     (23 + 771) =  794 |
+| method="GET",  status="200"  3455 |                                                  /                                   \     | method="GET",  status="200", cluster="eu1"  (3455 + 1234) = 4689 |
+| method="POST", status="200"   567 |                                                  | status="200", cluster="eu1"  1234 |     | method="POST", status="200", cluster="eu1"   (567 + 1234) = 1801 |
+|                                   |                                                  |                                   |     |                                                                  |
+| method="GET",  status="404"     0 |  + on(status) group_left(cluster) fill_right(0)  |            <missing>              |  =  | method="GET",  status="404"                       (0 + 0) =    0 |
+| method="POST", status="404"     3 |                                                  |                                   |     | method="POST", status="404"                       (3 + 0) =    3 |
+|                                   |                                                  | status="500", cluster="eu1"   771 |     |                                                                  |
+| method="GET",  status="500"    23 |                                                  \                                   /     | method="GET",  status="500", cluster="eu1"     (23 + 771) =  794 |
 | method="POST", status="500"    42 |                                                                                            | method="POST", status="500", cluster="eu1"     (42 + 771) =  813 |
 \                                   /                                                                                            \                                                                  /
 ```
