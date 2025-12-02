@@ -77,7 +77,11 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 ## How
 
-Three new modifiers would be added to the binary operation syntax: `fill(<default>)`, `fill_left(<default>)`, and `fill_right(<default>)`. The semantics would be as follows:
+Three new modifiers would be added to the binary operation syntax: `fill(<default>)`, `fill_left(<default>)`, and `fill_right(<default>)`.
+
+The `<default>` value may only be a single number literal (with optional preceding unary `+` or `-` operator) in the first iteration, but could conceivably be extended to support arbitrary scalar-typed expressions in the future.
+
+The semantics would be as follows:
 
 * When a binary operation with a `fill`, `fill_left`, or `fill_right` modifier is evaluated, the engine first identifies all series present on both sides of the operation.
 * For each series on the left side, if there is no matching series on the right side and the modifier is `fill` or `fill_right`, a new series is filled in with the specified default value.
