@@ -679,7 +679,7 @@ An SD-derived entity is created when a target with matching `__meta_*` labels fi
 When a target is re-discovered (on each SD refresh) and `entity_from_sd: true`:
 1. Entity identifying labels are checked against existing entities
 2. If entity exists, descriptive labels are compared
-3. If descriptive labels changed, a new snapshot is recorded (see [04-storage.md](./04-storage.md))
+3. If descriptive labels changed, a new snapshot is recorded (see [05-storage.md](./05-storage.md))
 
 ### Entity Staleness
 
@@ -783,9 +783,9 @@ When multiple SD mechanisms can discover similar resources (e.g., EC2, Azure, GC
 
 - [01-context.md](./01-context.md) - Problem statement, motivation, and use cases
 - [02-exposition-formats.md](./02-exposition-formats.md) - How entities are represented in wire formats
-- [04-storage.md](./04-storage.md) - How entities are stored in the TSDB
-- [05-querying.md](./05-querying.md) - PromQL extensions for working with entities
-- [06-web-ui-and-apis.md](./06-web-ui-and-apis.md) - How entities are displayed and accessed
+- [05-storage.md](./05-storage.md) - How entities are stored in the TSDB
+- [06-querying.md](./06-querying.md) - PromQL extensions for working with entities
+- [07-web-ui-and-apis.md](./07-web-ui-and-apis.md) - How entities are displayed and accessed
 
 ---
 

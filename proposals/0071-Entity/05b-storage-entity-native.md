@@ -1,6 +1,6 @@
 # Storage Design: Entity-Native Model
 
-> **Alternative Approach**: This document describes an alternative storage design where series identity is based only on metric labels, with samples grouped into "streams" by entity. While this approach offers stronger alignment with OpenTelemetry's data model and addresses cardinality at a fundamental level, it requires significant changes to Prometheus's core architecture. We recommend the correlation-based approach described in [04-storage.md](04-storage.md) for initial implementation, as it can be built incrementally on the existing TSDB without breaking backward compatibility. This entity-native design remains valuable as a potential future evolution once entities prove their value in production.
+> **Alternative Approach**: This document describes an alternative storage design where series identity is based only on metric labels, with samples grouped into "streams" by entity. While this approach offers stronger alignment with OpenTelemetry's data model and addresses cardinality at a fundamental level, it requires significant changes to Prometheus's core architecture. We recommend the correlation-based approach described in [05-storage.md](05-storage.md) for initial implementation, as it can be built incrementally on the existing TSDB without breaking backward compatibility. This entity-native design remains valuable as a potential future evolution once entities prove their value in production.
 
 ## Executive Summary
 

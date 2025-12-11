@@ -552,4 +552,4 @@ func (e *EntityTypeOr) Matches(types map[string]bool) bool {
 
 ---
 
-The next document will cover [Web UI and APIs](./06-web-ui-and-apis.md), detailing how these capabilities are exposed in Prometheus's user interface and HTTP APIs.
+The next document will cover [Web UI and APIs](./07-web-ui-and-apis.md), detailing how these capabilities are exposed in Prometheus's user interface and HTTP APIs.

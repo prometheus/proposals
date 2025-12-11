@@ -167,11 +167,11 @@ k8s.pod{k8s.namespace.name="default",k8s.pod.uid="550e8400",k8s.pod.name="nginx"
 container_cpu_usage_seconds_total{k8s.namespace.name="default",k8s.pod.uid="550e8400",container="app"} 1234.5
 ```
 
-Correlation is computed at ingestion time when Prometheus parses the exposition format. See [04-storage.md](./04-storage.md#correlation-index) for how Prometheus builds and maintains these correlations in storage.
+Correlation is computed at ingestion time when Prometheus parses the exposition format. See [05-storage.md](./05-storage.md#correlation-index) for how Prometheus builds and maintains these correlations in storage.
 
 ### Conflict Detection
 
-When a metric correlates with an entity, the query engine enriches the metric's labels with the entity's descriptive labels (see [05-querying.md](./05-querying.md)). This creates the possibility of label conflicts—a metric might have a label with the same name as an entity's descriptive label.
+When a metric correlates with an entity, the query engine enriches the metric's labels with the entity's descriptive labels (see [06-querying.md](./06-querying.md)). This creates the possibility of label conflicts—a metric might have a label with the same name as an entity's descriptive label.
 
 A conflict occurs when:
 - A metric correlates with an entity (has all identifying labels)
@@ -220,7 +220,7 @@ Note that **identifying labels cannot conflict** because they must be present on
 
 ## Technical Implementation
 
-This section provides detailed implementation guidance for parsing entities and integrating with the scrape loop. The implementation should align with the storage layer defined in [04-storage.md](./04-storage.md).
+This section provides detailed implementation guidance for parsing entities and integrating with the scrape loop. The implementation should align with the storage layer defined in [05-storage.md](./05-storage.md).
 
 ### Parser Interface Extensions
 
@@ -576,10 +576,11 @@ In the [storage](04-storage.md) document, we go over the correlation index, WAL 
 ## Related Documents
 
 - [01-context.md](./01-context.md) - Problem statement and motivation
-- [03-service-discovery.md](./03-service-discovery.md) - How entities relate to Prometheus targets
-- [04-storage.md](./04-storage.md) - How entities are stored in the TSDB
-- [05-querying.md](./05-querying.md) - PromQL extensions for working with entities
-- [06-web-ui-and-apis.md](./06-web-ui-and-apis.md) - How entities are displayed and accessed
+- [03-sdk.md](./03-sdk.md) - How Prometheus client libraries support entities
+- [04-service-discovery.md](./04-service-discovery.md) - How entities relate to Prometheus targets
+- [05-storage.md](./05-storage.md) - How entities are stored in the TSDB
+- [06-querying.md](./06-querying.md) - PromQL extensions for working with entities
+- [07-web-ui-and-apis.md](./07-web-ui-and-apis.md) - How entities are displayed and accessed
 
 ---
 

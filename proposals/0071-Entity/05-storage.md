@@ -1,6 +1,6 @@
 # Entity Storage
 
-> **Recommended Approach**: This document describes the correlation-based storage design, which we recommend for initial implementation due to its incremental nature and backward compatibility. An alternative design that fundamentally changes how series identity works is described in [04b-storage-entity-native.md](04b-storage-entity-native.md).
+> **Recommended Approach**: This document describes the correlation-based storage design, which we recommend for initial implementation due to its incremental nature and backward compatibility. An alternative design that fundamentally changes how series identity works is described in [05b-storage-entity-native.md](05b-storage-entity-native.md).
 
 ## Abstract
 
