@@ -447,8 +447,8 @@ This document establishes the context and motivation for native Entity support i
 - **[Storage](./05-storage.md)**: How entities are stored efficiently in the TSDB
 - **[Querying](./06-querying.md)**: PromQL extensions for working with entities
 - **[Web UI and APIs](./07-web-ui-and-apis.md)**: How entities are displayed and accessed
+- **[Alerting](./08-alerting.md)**: How entities interact with alerting rules and Alertmanager
 - **Remote Write (TBD)**: Protocol changes for transmitting entities over remote write
-- **Alerting (TBD)**: How entities interact with alerting rules and Alertmanager
 
 ---
 
