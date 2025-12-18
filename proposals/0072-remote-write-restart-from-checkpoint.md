@@ -75,8 +75,6 @@ A basic replay to accomplishing all non-stretch goals would be as follows
 
 ### Code flow
 
-Enabling replay will require changes across `remote.WriteStorage`, `remote.QueueManager`, and `wlog.Watcher`. Implementing https://github.com/prometheus/prometheus/issues/17616 will help as it will provide a hook to signal when segments have been fully read from the watcher through `remote.WriteStorage`. Anytime the `wlog.Watcher` [changes the current segment](https://github.com/prometheus/prometheus/blob/18efd9d629c467877ebe674bbc1edbba8abe54be/tsdb/wlog/watcher.go#L314) the following would happen,
-
 1. Adding another configurable timer to [`remote.WriteStorage.run()`](https://github.com/prometheus/prometheus/blob/f50ff0a40ad4ef24d9bb8e81a6546c8c994a924a/storage/remote/write.go#L114-L125) periodically persisting the current segments for each queue.
 2. Ensure `remote.WriteStorage.Close()` will also attempt to write current segments
 3. Read persisted queue segment positions in `remote.NewWriteStorage()`
