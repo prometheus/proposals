@@ -60,6 +60,7 @@ This proposal targets:
 
 - Prometheus maintainers who need to triage and review issues/PRs
 - Contributors who need to understand the state of their submissions
+- New contributors who are looking for issues to work on
 - Automated tooling that helps manage workflow
 
 ## Non-Goals
@@ -192,7 +193,9 @@ Priority labels indicate the urgency and importance of an issue or PR:
 
 **Usage**: Priority labels are typically assigned during triage and help maintainers and contributors understand what to work on first. Not all issues have priority labels assigned.
 
-**Proposal**: Keep the labels and recommend to use as needed.
+**Proposal**: Remove `priority/Pmaybe`. The absence of a `triage/` label and a
+respective comment should clearly state whether an issue can be worked on or
+not. Keep the other labels and recommend to use as needed.
 
 #### Other Common Labels
 
