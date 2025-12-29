@@ -252,252 +252,30 @@ Note that **identifying labels cannot conflict** because they must be present on
 
 ---
 
-## Technical Implementation
+## Implementation Overview
 
-### Parser Interface Extensions
+This section summarizes the key implementation changes required to support the exposition format extensions. Detailed implementation specifics are deferred until the fundamental direction is agreed upon.
 
-The existing `Parser` interface needs minimal changes:
+### Parser Changes
 
-#### New Entry Types
+The text parser requires two new entry types:
 
-```go
-const (
-    EntryInvalid   Entry = -1
-    EntryType      Entry = 0
-    EntryHelp      Entry = 1
-    EntrySeries    Entry = 2
-    EntryComment   Entry = 3
-    EntryUnit      Entry = 4
-    EntryHistogram Entry = 5
-    
-    // NEW: Identifying labels declaration
-    EntryIdentifyingLabels Entry = 6  // # IDENTIFYING_LABELS <label1> <label2> ...
-    // NEW: Info section delimiter
-    EntryInfoDelimiter     Entry = 7  // --- (marks end of info metrics section)
-)
-```
+1. **`EntryIdentifyingLabels`** — Returned when the parser encounters `# IDENTIFYING_LABELS`
+2. **`EntryInfoDelimiter`** — Returned when the parser encounters `---`
 
-#### New Parser Method
+A new method `IdentifyingLabels()` returns the list of label names declared in the `# IDENTIFYING_LABELS` line.
 
-```go
-// Parser interface addition
-type Parser interface {
-    // ... existing methods (Series, Histogram, Help, Type, Unit, etc.) ...
-    
-    // IdentifyingLabels returns the list of identifying label names.
-    // Must only be called after Next() returned EntryIdentifyingLabels.
-    // The returned slice becomes invalid after the next call to Next.
-    IdentifyingLabels() [][]byte
-}
-```
+### Scrape Loop Changes
 
-### Scrape Loop Integration
+The scrape loop needs to:
 
-The scrape loop tracks info metrics with identifying labels separately:
+1. **Track info metric state during parsing** — Remember which info type is being parsed and its identifying label names
+2. **Enforce ordering** — Reject info metrics that appear after the `---` delimiter
+3. **Split labels** — Separate identifying labels from descriptive labels based on the declaration
+4. **Build correlations** — When processing regular metrics, check if they contain identifying labels that match any parsed info metric
+5. **Detect conflicts** — Fail the scrape if a metric's label conflicts with an info metric's descriptive label
 
-```go
-// Info metric cache entry
-type infoMetricCacheEntry struct {
-    ref               storage.SeriesRef
-    lastIter          uint64
-    hash              uint64
-    identifyingLabels labels.Labels
-    descriptiveLabels labels.Labels
-    infoType          string  // Derived from metric name (e.g., "kube_pod" from "kube_pod_info")
-}
-
-type scrapeCache struct {
-    // ... existing fields ...
-    
-    // Info metric parsing state (reset each scrape)
-    currentInfoType          string   // Current info metric name being parsed
-    currentIdentifyingNames  []string // Identifying label names for current info metric
-    infoSectionEnded         bool     // True after --- delimiter is encountered
-    
-    // Info metric tracking (persists across scrapes)
-    infoMetrics     map[string]*infoMetricCacheEntry  // key: hash of type + identifying labels
-    infoMetricsCur  map[storage.SeriesRef]*infoMetricCacheEntry
-    infoMetricsPrev map[storage.SeriesRef]*infoMetricCacheEntry
-}
-```
-
-#### Processing in append()
-
-```go
-func (sl *scrapeLoop) append(app storage.Appender, b []byte, contentType string, ts time.Time) (total, added, seriesAdded int, err error) {
-    defTime := timestamp.FromTime(ts)
-    
-    var currentMetricName string
-    var currentMetricType textparse.MetricType
-    
-loop:
-    for {
-        et, err := p.Next()
-        if err != nil {
-            if errors.Is(err, io.EOF) {
-                err = nil
-            }
-            break
-        }
-        
-        switch et {
-        case textparse.EntryType:
-            currentMetricName, currentMetricType = p.Type()
-            // Reset identifying labels for new metric family
-            sl.cache.currentIdentifyingNames = nil
-            if currentMetricType == textparse.MetricTypeInfo {
-                // Info metrics not allowed after delimiter
-                if sl.cache.infoSectionEnded {
-                    return 0, 0, 0, fmt.Errorf("TYPE info not allowed after --- delimiter")
-                }
-                sl.cache.currentInfoType = deriveInfoType(string(currentMetricName))
-            } else {
-                sl.cache.currentInfoType = ""
-            }
-            continue
-            
-        case textparse.EntryIdentifyingLabels:
-            // Only valid after TYPE info declaration
-            if sl.cache.currentInfoType == "" {
-                return 0, 0, 0, fmt.Errorf("IDENTIFYING_LABELS without preceding TYPE info declaration")
-            }
-            names := p.IdentifyingLabels()
-            sl.cache.currentIdentifyingNames = make([]string, len(names))
-            for i, name := range names {
-                sl.cache.currentIdentifyingNames[i] = string(name)
-            }
-            continue
-            
-        case textparse.EntryInfoDelimiter:
-            sl.cache.infoSectionEnded = true
-            continue
-            
-        case textparse.EntrySeries:
-            // Info metrics require IDENTIFYING_LABELS
-            if sl.cache.currentInfoType != "" && len(sl.cache.currentIdentifyingNames) == 0 {
-                return 0, 0, 0, fmt.Errorf("TYPE info requires IDENTIFYING_LABELS declaration")
-            }
-            
-            // Process info metric
-            if sl.cache.currentInfoType != "" {
-                if err := sl.processInfoMetric(app, p, defTime); err != nil {
-                    sl.l.Debug("Info metric processing error", "err", err)
-                }
-            }
-            // Continue with normal series processing...
-            
-        // ... rest of existing handling ...
-        }
-    }
-    
-    return total, added, seriesAdded, err
-}
-
-// deriveInfoType extracts the type from an info metric name
-func deriveInfoType(metricName string) string {
-    if strings.HasSuffix(metricName, "_info") {
-        return strings.TrimSuffix(metricName, "_info")
-    }
-    return metricName
-}
-```
-
-#### Info Metric Processing
-
-```go
-func (sl *scrapeLoop) processInfoMetric(app storage.Appender, p textparse.Parser, ts int64) error {
-    var allLabels labels.Labels
-    p.Labels(&allLabels)
-    
-    // Split into identifying and descriptive labels
-    identifying, descriptive := sl.splitInfoLabels(allLabels)
-    
-    // Validate: all identifying labels must be present
-    if len(identifying) != len(sl.cache.currentIdentifyingNames) {
-        return fmt.Errorf("info metric missing required identifying labels: expected %v",
-            sl.cache.currentIdentifyingNames)
-    }
-    
-    hash := identifying.Hash()
-    hashKey := fmt.Sprintf("%s:%d", sl.cache.currentInfoType, hash)
-    
-    // Check cache and update
-    ce, cached := sl.cache.infoMetrics[hashKey]
-    if cached {
-        ce.lastIter = sl.cache.iter
-        
-        // Check if descriptive labels changed
-        if !labels.Equal(ce.descriptiveLabels, descriptive) {
-            ce.descriptiveLabels = descriptive
-        }
-    }
-    
-    // Store info metric metadata for correlation
-    ref, err := app.AppendInfoMetric(
-        sl.cache.currentInfoType,
-        identifying,
-        descriptive,
-        ts,
-    )
-    if err != nil {
-        return err
-    }
-    
-    if !cached {
-        ce = &infoMetricCacheEntry{
-            ref:               ref,
-            lastIter:          sl.cache.iter,
-            hash:              hash,
-            identifyingLabels: identifying,
-            descriptiveLabels: descriptive,
-            infoType:          sl.cache.currentInfoType,
-        }
-        sl.cache.infoMetrics[hashKey] = ce
-    } else {
-        ce.ref = ref
-    }
-    
-    sl.cache.infoMetricsCur[ref] = ce
-    return nil
-}
-
-func (sl *scrapeLoop) splitInfoLabels(allLabels labels.Labels) (labels.Labels, labels.Labels) {
-    identifyingSet := make(map[string]struct{})
-    for _, name := range sl.cache.currentIdentifyingNames {
-        identifyingSet[name] = struct{}{}
-    }
-    
-    var identifying, descriptive labels.Labels
-    allLabels.Range(func(l labels.Label) {
-        if _, ok := identifyingSet[l.Name]; ok {
-            identifying = append(identifying, l)
-        } else {
-            descriptive = append(descriptive, l)
-        }
-    })
-    
-    return identifying, descriptive
-}
-```
-
-### Scrape Configuration
-
-```go
-type ScrapeConfig struct {
-    // ... existing fields ...
-    
-    // EnableInfoMetricCorrelation enables processing of IDENTIFYING_LABELS
-    // and automatic enrichment of correlated metrics.
-    // Default: false for backward compatibility.
-    EnableInfoMetricCorrelation bool `yaml:"enable_info_metric_correlation,omitempty"`
-    
-    // InfoMetricLimit is the maximum number of info metrics with identifying
-    // labels per scrape target. 0 means no limit.
-    InfoMetricLimit int `yaml:"info_metric_limit,omitempty"`
-}
-```
-
-### Data Flow Summary
+### Data Flow
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
@@ -507,39 +285,26 @@ type ScrapeConfig struct {
   Target /metrics                    Prometheus Scrape Loop
   ┌─────────────────┐                ┌─────────────────────────────────────────┐
   │ # TYPE pod info │                │                                         │
-  │ # IDENT_LABELS  │ ──HTTP GET──►  │  1. Create Parser (textparse.New)       │
-  │ pod_info{...} 1 │                │                                         │
-  │ ---             │                │  2. Loop: p.Next()                      │
-  │ # TYPE metric   │                │     ├─ EntryType → check if info type   │
-  │ metric{...} 123 │                │     ├─ EntryIdentifyingLabels → cache   │
-  │ # EOF           │                │     ├─ EntrySeries (info) → process     │
-  └─────────────────┘                │     │   └─ app.AppendInfoMetric()       │
-                                     │     ├─ EntryInfoDelimiter → mark ended  │
-                                     │     ├─ EntrySeries → checkConflicts()   │
-                                     │     │   └─ app.Append()                 │
-                                     │     └─ EntryHistogram → ...             │
+  │ # IDENT_LABELS  │ ──HTTP GET──►  │  1. Parse info metrics first            │
+  │ pod_info{...} 1 │                │     - Extract identifying labels        │
+  │ ---             │                │     - Store for correlation             │
+  │ # TYPE metric   │                │                                         │
+  │ metric{...} 123 │                │  2. Parse regular metrics               │
+  │ # EOF           │                │     - Check for correlation matches     │
+  └─────────────────┘                │     - Detect label conflicts            │
                                      │                                         │
-                                     │  3. updateStaleMarkers()                │
-                                     │     ├─ Series: Write StaleNaN           │
-                                     │     └─ Info metrics: mark stale         │
-                                     │                                         │
-                                     │  4. app.Commit()                        │
-                                     │     ├─ Write WAL records                │
-                                     │     ├─ Update Head structures           │
-                                     │     └─ Build correlation index          │
+                                     │  3. Commit to storage                   │
+                                     │     - Write info metric metadata        │
+                                     │     - Write series samples              │
+                                     │     - Build correlation index           │
                                      └─────────────────────────────────────────┘
                                                         │
                                                         ▼
                                      ┌─────────────────────────────────────────┐
                                      │             Storage (TSDB)              │
-                                     │  ┌─────────────┐  ┌─────────────────┐   │
-                                     │  │ WAL Records │  │ Head Block      │   │
-                                     │  │ - Series    │  │ - memSeries     │   │
-                                     │  │ - Samples   │  │ - infoMetric    │   │
-                                     │  │ - InfoMeta  │  │   Metadata      │   │
-                                     │  └─────────────┘  │ - Correlation   │   │
-                                     │                   │   Index         │   │
-                                     │                   └─────────────────┘   │
+                                     │  - Info metric metadata                 │
+                                     │  - Series data                          │
+                                     │  - Correlation index                    │
                                      └─────────────────────────────────────────┘
 ```
 

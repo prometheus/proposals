@@ -1,7 +1,5 @@
 # Entity Storage
 
-> **Recommended Approach**: This document describes the correlation-based storage design, which we recommend for initial implementation due to its incremental nature and backward compatibility. An alternative design that fundamentally changes how series identity works is described in [05b-storage-entity-native.md](05b-storage-entity-native.md).
-
 ## Abstract
 
 This document specifies how Prometheus stores entities reliably and efficiently. Entities represent the things that produce telemetry (pods, nodes, services) and need different storage semantics than traditional time series: they have immutable identifying labels, mutable descriptive labels that change over time, and lifecycle boundaries (creation and deletion). This document covers the in-memory structures, Write-Ahead Log integration, block persistence, and the correlation index that links entities to their associated metrics.
@@ -63,7 +61,7 @@ Each entity in memory is represented by the following structure:
 
 ```go
 type memEntity struct {
-    // Immutable after creation - no lock needed for these fields
+    // Immutable after creation
     ref              EntityRef      // Unique identifier (uint64, auto-incrementing)
     entityType       string         // e.g., "k8s.pod", "service", "k8s.node"
     identifyingLabels labels.Labels // Immutable labels that define identity
@@ -72,7 +70,7 @@ type memEntity struct {
     startTime     int64          // When this entity incarnation was created
     endTime       int64          // When deleted (0 if still alive)
     
-    // Mutable - requires lock
+    // Mutable
     sync.Mutex
     descriptiveSnapshots []labelSnapshot // Historical descriptive labels
     lastSeen      int64          // Last scrape timestamp (for staleness checking)
@@ -127,14 +125,6 @@ descriptiveSnapshots: [
 ]
 ```
 
-**Why snapshots instead of an event log?**
-
-An event log (storing only deltas) would save storage space but impose query-time costs. To answer "what were the descriptive labels at time T?", a query would need to:
-1. Find all change events before T
-2. Replay them to reconstruct the state
-
-With snapshots, the query simply finds the latest snapshot where `snapshot.timestamp <= T`.
-
 ### Entity Lifecycle
 
 Each entity has explicit lifecycle boundaries:
@@ -186,102 +176,27 @@ Entity A and Entity B have the same identifying labels but different EntityRefs 
 
 #### Entity Storage in Head
 
-The Head block is extended with entity storage:
+The Head block is extended with:
 
-```go
-type Head struct {
-    // ... existing fields ...
-    
-    // Entity storage
-    entities       *stripeEntities       // All entities by ref or identifying attrs hash
-    entityPostings *EntityMemPostings    // Inverted index for entity labels
-    
-    // Correlation index
-    seriesToEntities map[HeadSeriesRef][]EntityRef
-    entitiesToSeries map[EntityRef][]HeadSeriesRef
-    correlationMtx   sync.RWMutex
-    
-    lastEntityID     atomic.Uint64        // For generating EntityRefs
-}
-```
+| Component | Purpose |
+|-----------|---------|
+| **Entity storage** | Sharded map (like `stripeSeries`) storing `memEntity` by ref or identifying labels hash |
+| **Entity postings** | Inverted index mapping `(label_name, label_value)` → entity refs |
+| **Correlation index** | Bidirectional maps: `series_ref ↔ entity_refs` |
 
-#### stripeEntities
-
-Similar to `stripeSeries`, provides sharded concurrent access to entities:
-
-```go
-type stripeEntities struct {
-    size   int
-    series []map[EntityRef]*memEntity
-    hashes []map[uint64][]*memEntity  // hash(identifyingAttrs) -> entities
-    locks  []sync.RWMutex
-}
-
-// Get entity by ref
-func (s *stripeEntities) getByRef(ref EntityRef) *memEntity
-
-// Get entity by identifying labels (may return multiple for historical)
-func (s *stripeEntities) getByIdentifyingLabels(hash uint64, lbls labels.Labels) []*memEntity
-
-func (s *stripeEntities) getAliveByIdentifyingLabels(hash uint64, lbls labels.Labels) *memEntity
-```
-
-#### EntityMemPostings
-
-An inverted index mapping label name/value pairs to entity references:
-
-```go
-type EntityMemPostings struct {
-    mtx sync.RWMutex
-    m   map[string]map[string][]EntityRef  // label name -> label value -> entity refs
-}
-
-// Example contents:
-// "k8s.namespace.name" -> "production" -> [EntityRef(1), EntityRef(5), EntityRef(12)]
-// "k8s.node.name" -> "worker-1" -> [EntityRef(1), EntityRef(3)]
-```
-
-This enables efficient lookups like "find all entities in namespace X" or "find all entities on node Y".
+The entity storage and postings follow the same sharding patterns as the existing series storage to support concurrent access.
 
 #### Correlation Index
 
-The correlation index maintains the many-to-many relationship between series and entities:
+The correlation index maintains the many-to-many relationship between series and entities as two bidirectional maps:
+- **Series → Entities**: "which entities does this series correlate with?"
+- **Entities → Series**: "which series are associated with this entity?"
 
-```go
-// Series -> Entities: "which entities does this series correlate with?"
-seriesToEntities map[HeadSeriesRef][]EntityRef
+**Building correlations at ingestion time:**
 
-// Entities -> Series: "which series are associated with this entity?"
-entitiesToSeries map[EntityRef][]HeadSeriesRef
-```
+When a **new series** is created, Prometheus checks each registered entity type. If the series labels contain all of an entity type's identifying labels, it looks up the corresponding entity and adds the correlation.
 
-**Building the correlation at ingestion time:**
-
-When a new series is created:
-```
-series.labels = {__name__="container_cpu", k8s.namespace.name="prod", k8s.pod.uid="abc", k8s.node.uid="xyz"}
-
-For each registered entity type:
-  k8s.pod: requires {k8s.namespace.name, k8s.pod.uid}
-    → series has both → find entity with these identifying attrs
-    → if found and alive: add to correlation index
-    
-  k8s.node: requires {k8s.node.uid}
-    → series has this → find entity with this identifying attr
-    → if found and alive: add to correlation index
-
-Result: seriesToEntities[series.ref] = [podEntityRef, nodeEntityRef]
-```
-
-When a new entity is created:
-```
-entity.identifyingAttrs = {k8s.namespace.name="prod", k8s.pod.uid="abc"}
-
-Find all series whose labels contain ALL of entity's identifying attrs:
-  → Use postings index: intersect(postings["k8s.namespace.name"]["prod"], 
-                                  postings["k8s.pod.uid"]["abc"])
-  → For each matching series: add to correlation index
-```
+When a **new entity** is created, Prometheus uses the postings index to find all series whose labels contain all of the entity's identifying labels, then adds correlations for each match.
 
 **Correlation and Entity Lifecycle**
 
@@ -352,56 +267,6 @@ Entity records are written to WAL in these situations:
 
 Writing full records (not deltas) simplifies replay and allows any single record to fully describe entity state at that point.
 
-#### WAL Replay Behavior
-
-On startup, entity records are replayed to reconstruct the Head's entity state:
-
-```go
-func (h *Head) replayEntityRecord(rec RefEntity) error {
-    existing := h.entities.getByRef(rec.Ref)
-    
-    if existing == nil {
-        // New entity - create it
-        entity := &memEntity{
-            ref:               rec.Ref,
-            entityType:        rec.EntityType,
-            identifyingLabels: rec.IdentifyingLabels,
-            startTime:         rec.StartTime,
-            endTime:           rec.EndTime,
-        }
-        if len(rec.DescriptiveLabels) > 0 {
-            entity.descriptiveSnapshots = []labelSnapshot{
-                {timestamp: rec.Timestamp, labels: rec.DescriptiveLabels},
-            }
-        }
-        h.entities.set(entity)
-    } else {
-        // Update existing entity
-        existing.Lock()
-        existing.endTime = rec.EndTime
-        if len(rec.DescriptiveLabels) > 0 {
-            // Check if labels changed from last snapshot
-            if shouldAddSnapshot(existing, rec.DescriptiveLabels) {
-                existing.descriptiveSnapshots = append(
-                    existing.descriptiveSnapshots,
-                    labelSnapshot{timestamp: rec.Timestamp, labels: rec.DescriptiveLabels},
-                )
-            }
-        }
-        existing.Unlock()
-    }
-    
-    // Update lastEntityID if needed
-    if uint64(rec.Ref) > h.lastEntityID.Load() {
-        h.lastEntityID.Store(uint64(rec.Ref))
-    }
-    
-    return nil
-}
-```
-
-The correlation index is rebuilt after all WAL records are replayed, by iterating all entities and series and computing correlations.
-
 ### Block Persistence
 
 When the Head is compacted into a persistent block, entities must also be persisted.
@@ -453,20 +318,6 @@ The entity index file structure:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Compaction Behavior
-
-During compaction:
-
-1. **Entity Selection**: Include entities whose lifecycle overlaps with the block's time range
-   ```
-   Include entity if: entity.startTime < block.maxTime AND 
-                      (entity.endTime == 0 OR entity.endTime > block.minTime)
-   ```
-
-2. **Snapshot Filtering**: Only include descriptive snapshots within the block's time range
-
-3. **Deduplication**: If compacting multiple blocks, entities with the same EntityRef are merged, keeping all unique snapshots
-
 #### Entity Retention
 
 Entities follow the same retention policy as series data. Prometheus deletes blocks based on `RetentionDuration` (time-based) or `MaxBytes` (size-based). When blocks are deleted, entities are handled as follows:
@@ -493,70 +344,6 @@ When Block 1 and Block 2 are deleted due to retention:
 
 This ensures historical queries can always resolve entity correlations for the data that remains.
 
-#### Head Entity Garbage Collection
-
-The Head block periodically runs garbage collection to remove entities that are no longer needed in memory. This mirrors how series GC works in `Head.gc()`.
-
-**GC Eligibility**: An entity in the Head is eligible for garbage collection when:
-1. The entity is dead (`endTime != 0`), AND
-2. The entity's entire lifecycle is before `Head.MinTime()` (fully compacted to blocks)
-
-```go
-func (h *Head) gcEntities() map[EntityRef]struct{} {
-    mint := h.MinTime()
-    deleted := make(map[EntityRef]struct{})
-    
-    h.entities.iter(func(entity *memEntity) {
-        // Only consider dead entities
-        if entity.endTime == 0 {
-            return  // Still alive, keep in Head
-        }
-        
-        // If the entity's entire lifecycle is before Head's minTime,
-        // it has been fully compacted to blocks and can be removed
-        if entity.endTime < mint {
-            deleted[entity.ref] = struct{}{}
-        }
-    })
-    
-    // Remove from entity storage
-    for ref := range deleted {
-        entity := h.entities.getByRef(ref)
-        h.entities.delete(ref)
-        h.entityPostings.Delete(ref, entity.identifyingLabels)
-    }
-    
-    // Clean up correlation index
-    h.correlationMtx.Lock()
-    for ref := range deleted {
-        // Remove entity from all series correlations
-        for _, seriesRef := range h.entitiesToSeries[ref] {
-            h.seriesToEntities[seriesRef] = removeEntityRef(
-                h.seriesToEntities[seriesRef], ref)
-        }
-        delete(h.entitiesToSeries, ref)
-    }
-    h.correlationMtx.Unlock()
-    
-    return deleted
-}
-```
-
-**Integration with Head.gc()**: Entity GC runs alongside series GC during `truncateMemory()`:
-
-```go
-func (h *Head) truncateSeriesAndChunkDiskMapper(caller string) error {
-    // ... existing series GC ...
-    actualInOrderMint, minOOOTime, minMmapFile := h.gc()
-    
-    // Entity GC
-    deletedEntities := h.gcEntities()
-    h.metrics.entitiesRemoved.Add(float64(len(deletedEntities)))
-    
-    // ... rest of truncation ...
-}
-```
-
 ## Ingestion Flow
 
 ### Extended Appender Interface
@@ -578,178 +365,16 @@ type Appender interface {
 }
 ```
 
-### headAppender Implementation
+### AppendEntity Behavior
 
-```go
-func (a *headAppender) AppendEntity(
-    entityType string,
-    identifyingAttrs labels.Labels,
-    descriptiveAttrs labels.Labels,
-    timestamp int64,
-) (EntityRef, error) {
-    
-    // Validate inputs
-    if entityType == "" {
-        return 0, fmt.Errorf("entity type cannot be empty")
-    }
-    if len(identifyingLabels) == 0 {
-        return 0, fmt.Errorf("identifying labels cannot be empty")
-    }
-    
-    // Sort labels for consistent hashing
-    sort.Sort(identifyingLabels)
-    sort.Sort(descriptiveLabels)
-    
-    hash := identifyingLabels.Hash()
-    
-    // Check for existing alive entity
-    entity := a.head.entities.getAliveByIdentifyingLabels(hash, identifyingLabels)
-    
-    if entity == nil {
-        // Create new entity
-        ref := EntityRef(a.head.lastEntityID.Inc())
-        entity = &memEntity{
-            ref:               ref,
-            entityType:        entityType,
-            identifyingLabels: identifyingLabels,
-            startTime:         timestamp,
-            endTime:           0,
-            lastSeen:          timestamp,
-        }
-        
-        if len(descriptiveLabels) > 0 {
-            entity.descriptiveSnapshots = []labelSnapshot{
-                {timestamp: timestamp, labels: descriptiveLabels},
-            }
-        }
-        
-        // Stage for commit
-        a.pendingEntities = append(a.pendingEntities, entity)
-        a.pendingEntityRecords = append(a.pendingEntityRecords, RefEntity{
-            Ref:               ref,
-            EntityType:        entityType,
-            IdentifyingLabels: identifyingLabels,
-            DescriptiveLabels: descriptiveLabels,
-            StartTime:         timestamp,
-            EndTime:           0,
-            Timestamp:         timestamp,
-        })
-        
-        return ref, nil
-    }
-    
-    // Update existing entity
-    entity.Lock()
-    entity.lastSeen = timestamp
-    
-    // Check if descriptive labels changed
-    needsSnapshot := false
-    if len(entity.descriptiveSnapshots) == 0 {
-        needsSnapshot = len(descriptiveLabels) > 0
-    } else {
-        lastSnapshot := entity.descriptiveSnapshots[len(entity.descriptiveSnapshots)-1]
-        needsSnapshot = !labels.Equal(lastSnapshot.labels, descriptiveLabels)
-    }
-    
-    if needsSnapshot {
-        entity.descriptiveSnapshots = append(entity.descriptiveSnapshots, labelSnapshot{
-            timestamp: timestamp,
-            labels:    descriptiveLabels,
-        })
-        
-        // Stage WAL record for changed labels
-        a.pendingEntityRecords = append(a.pendingEntityRecords, RefEntity{
-            Ref:               entity.ref,
-            EntityType:        entity.entityType,
-            IdentifyingLabels: entity.identifyingLabels,
-            DescriptiveLabels: descriptiveLabels,
-            StartTime:         entity.startTime,
-            EndTime:           0,
-            Timestamp:         timestamp,
-        })
-    }
-    
-    entity.Unlock()
-    return entity.ref, nil
-}
-```
+When `AppendEntity` is called:
 
-### Commit and Rollback
+1. **Validate** — Entity type and identifying labels must be non-empty
+2. **Lookup** — Search for an existing alive entity with the same identifying labels
+3. **If not found** — Create a new entity with a fresh EntityRef, set `startTime` to now, stage for WAL write
+4. **If found** — Update `lastSeen` timestamp; if descriptive labels changed, append a new snapshot and stage a WAL record
 
-**Commit** persists all pending entities to WAL and updates indexes:
-
-```go
-func (a *headAppender) Commit() error {
-    // ... existing commit logic for samples ...
-    
-    // Write entity records to WAL
-    if len(a.pendingEntityRecords) > 0 {
-        if err := a.logEntities(); err != nil {
-            return err
-        }
-    }
-    
-    // Add new entities to Head
-    for _, entity := range a.pendingEntities {
-        a.head.entities.set(entity)
-        a.head.entityPostings.Add(entity.ref, entity.identifyingLabels)
-        
-        // Build correlations with existing series
-        a.head.buildEntityCorrelations(entity)
-    }
-    
-    // Clear pending state
-    a.pendingEntities = a.pendingEntities[:0]
-    a.pendingEntityRecords = a.pendingEntityRecords[:0]
-    
-    return nil
-}
-```
-
-**Rollback** discards all pending changes:
-
-```go
-func (a *headAppender) Rollback() error {
-    // ... existing rollback logic ...
-    
-    // Simply discard pending entities - they were never added to Head
-    a.pendingEntities = a.pendingEntities[:0]
-    a.pendingEntityRecords = a.pendingEntityRecords[:0]
-    
-    return nil
-}
-```
-
-### Correlation Index Updates
-
-When building correlations for a new entity:
-
-```go
-func (h *Head) buildEntityCorrelations(entity *memEntity) {
-    // Find all series that have ALL of the entity's identifying labels
-    var postingsLists []Postings
-    
-    entity.identifyingLabels.Range(func(l labels.Label) {
-        postingsLists = append(postingsLists, h.postings.Get(l.Name, l.Value))
-    })
-    
-    // Intersect all postings lists
-    intersection := Intersect(postingsLists...)
-    
-    h.correlationMtx.Lock()
-    defer h.correlationMtx.Unlock()
-    
-    for intersection.Next() {
-        seriesRef := intersection.At()
-        
-        // Add bidirectional correlation
-        h.seriesToEntities[seriesRef] = append(h.seriesToEntities[seriesRef], entity.ref)
-        h.entitiesToSeries[entity.ref] = append(h.entitiesToSeries[entity.ref], seriesRef)
-    }
-}
-```
-
-When a new series is created, correlations are built similarly by finding all alive entities whose identifying labels are a subset of the series labels.
+New entities and WAL records are staged (not committed) until `Commit()` is called, following the same transactional pattern as sample appends.
 
 ## Query Support
 
@@ -779,122 +404,8 @@ type EntityQuerier interface {
 ### Time-Range Filtering
 
 Queries specify a time range `[mint, maxt]`. Entity results are filtered by lifecycle:
-
-```go
-func (e *memEntity) isAliveAt(t int64) bool {
-    return e.startTime <= t && (e.endTime == 0 || e.endTime > t)
-}
-
-func (e *memEntity) overlapsRange(mint, maxt int64) bool {
-    return e.startTime < maxt && (e.endTime == 0 || e.endTime > mint)
-}
-```
-
-### Descriptive Label Lookup
-
-To get descriptive labels at a specific timestamp:
-
-```go
-func (e *memEntity) descriptiveLabelsAt(t int64) labels.Labels {
-    if !e.isAliveAt(t) {
-        return labels.EmptyLabels()
-    }
-    
-    snapshots := e.descriptiveSnapshots
-    if len(snapshots) == 0 {
-        return labels.EmptyLabels()
-    }
-    
-    // Binary search: find the first snapshot where timestamp > t
-    // Then the snapshot we want is at index i-1
-    i := sort.Search(len(snapshots), func(i int) bool {
-        return snapshots[i].timestamp > t
-    })
-    
-    if i == 0 {
-        // All snapshots are after time t
-        return labels.EmptyLabels()
-    }
-    
-    return snapshots[i-1].labels
-}
-```
-
-## Remote Write Considerations
-
-Entities need to be transmitted over Prometheus remote write protocol. This requires extending the protobuf definitions:
-
-```protobuf
-message EntityWriteRequest {
-    repeated Entity entities = 1;
-}
-
-message Entity {
-    string entity_type = 1;
-    repeated Label identifying_labels = 2;
-    repeated Label descriptive_labels = 3;
-    int64 start_time_ms = 4;
-    int64 end_time_ms = 5;  // 0 if alive
-    int64 timestamp_ms = 6; // When this state was observed
-}
-```
-
-Key considerations for remote write:
-
-1. **Incremental Updates**: Only send entity records when state changes (new entity, attrs changed, entity died)
-2. **Receiver Reconciliation**: Receivers must handle out-of-order entity records and merge appropriately
-3. **Correlation Rebuild**: Receivers rebuild correlation indexes locally based on their series data
-
-Detailed remote write protocol changes are specified in a separate document.
-
-## Trade-offs and Design Decisions
-
-### Separate Entity Storage vs Embedding in Series
-
-**Decision**: Separate storage structure for entities
-
-**Rationale**:
-- Entities have different access patterns (lookup by identifying labels vs. time-range queries)
-- Many-to-many relationship with series doesn't fit the one-to-one series model
-- Entity lifecycle (explicit start/end) differs from series staleness
-- Descriptive labels are string-valued, not numeric samples
-
-**Trade-off**: Additional complexity in storage layer, but cleaner semantics and better query performance.
-
-### Snapshots vs Event Log for Descriptive Labels
-
-**Decision**: Store complete snapshots at each change point
-
-**Rationale**:
-- Point-in-time queries are common ("what was this pod's node at time T?")
-- Snapshots enable O(log n) lookup via binary search
-- Event log would require O(n) replay to reconstruct state
-- Descriptive labels change infrequently, limiting snapshot count
-
-**Trade-off**: Higher storage per change, but faster queries and simpler implementation.
-
-### Correlation at Ingestion Time vs Query Time
-
-**Decision**: Build correlation index at ingestion time
-
-**Rationale**:
-- Queries should be fast; correlation lookup is O(1) with pre-built index
-- Ingestion can afford extra work; it's already doing label processing
-- Correlation relationships are stable (based on immutable identifying labels)
-
-**Trade-off**: Ingestion overhead for maintaining correlation index, but significantly faster queries.
-
-### Single WAL Record Type vs Multiple
-
-**Decision**: Single comprehensive entity record type
-
-**Rationale**:
-- Simplifies WAL encoding/decoding logic
-- Any single record fully describes entity state (no partial records)
-- Replay is straightforward—each record is self-contained
-- Matches pattern used for series (full labels in each Series record)
-
-**Trade-off**: Slightly larger WAL records, but simpler and more robust.
+- **isAliveAt(t)**: True if `startTime <= t` and (`endTime == 0` or `endTime > t`)
+- **overlapsRange(mint, maxt)**: True if the entity's lifecycle overlaps the query range
 
 ## Open Questions / Future Work
 
@@ -954,45 +465,8 @@ These topics need benchmarking with realistic workloads before finalizing the im
 
 ---
 
-## TODO: Columnar Storage Strategies
-
-This section outlines potential optimizations for entity label storage that warrant further exploration:
-
-### Background
-
-Descriptive labels are fundamentally different from time series samples:
-- They are **string-valued**, not numeric
-- They change **infrequently** (entity metadata doesn't update every scrape)
-- They are often **queried together** (users typically want all labels of an entity, not just one)
-- They benefit from **compression** due to repetitive patterns (many pods have similar labels)
-
-These characteristics suggest that columnar storage techniques, commonly used in analytical databases, might offer significant benefits.
-
-### Areas to Explore
-
-- **Column-oriented label storage**: Instead of storing all labels for a snapshot together (row-oriented), store each label name as a column with its values across entities. This could improve compression and enable efficient filtering by specific labels.
-
-- **Dictionary encoding**: Entity labels often have low cardinality (e.g., `k8s.pod.status.phase` has only a few possible values). Dictionary encoding could dramatically reduce storage for descriptive labels.
-
-- **Run-length encoding for temporal data**: When descriptive labels don't change across many snapshots, run-length encoding could eliminate redundant storage.
-
-- **Label projection pushdown**: When queries only need specific entity labels (e.g., `sum by (k8s.node.name)`), the storage layer could avoid reading unnecessary labels.
-
-- **Separate label storage files**: Similar to how chunks are stored separately from the index, entity labels could have dedicated storage with format optimized for their access patterns.
-
-### Trade-offs to Consider
-
-- Implementation complexity vs. storage/query benefits
-- Read vs. write optimization (columnar is typically better for reads)
-- Memory overhead of maintaining multiple storage formats
-- Compatibility with existing TSDB compaction and retention logic
-
-This is a potential future optimization and not required for the initial implementation.
-
----
-
 ## What's Next
 
-- [Querying](05-querying.md): How PromQL is extended to query entities and correlations
-- [Web UI and APIs](06-web-ui-and-apis.md): HTTP API endpoints and UI for entity exploration
+- [Querying](06-querying.md): How PromQL is extended to query entities and correlations
+- [Web UI and APIs](07-web-ui-and-apis.md): HTTP API endpoints and UI for entity exploration
 

@@ -171,26 +171,12 @@ See [01-context.md](./01-context.md#collection-architectures-direct-scraping-vs-
 
 ## Configuration
 
-### ScrapeConfig Extension
+### New Configuration Options
 
-The `ScrapeConfig` struct in `config/config.go` is extended:
-
-```go
-type ScrapeConfig struct {
-    // ... existing fields ...
-    
-    // EntityFromSD controls SD-derived entity generation.
-    // When true, Prometheus generates entities from __meta_* labels
-    // according to the built-in mappings for each SD type.
-    // Default: false (for backward compatibility)
-    EntityFromSD bool `yaml:"entity_from_sd,omitempty"`
-    
-    // EntityLimit is the maximum number of distinct entities per target.
-    // A single target may correlate with multiple entities (e.g., pod + node).
-    // 0 means no limit.
-    EntityLimit int `yaml:"entity_limit,omitempty"`
-}
-```
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `entity_from_sd` | bool | `false` | When true, generates entities from `__meta_*` labels using built-in mappings |
+| `entity_limit` | int | `0` | Maximum distinct entities per target (0 = no limit) |
 
 ### Configuration Examples
 
@@ -385,121 +371,19 @@ The implementation will be straightforward once a convention is chosen—the tec
 
 ---
 
-## Implementation Details
+## Implementation Overview
 
-### Entity Generation in the Scrape Pipeline
+### Where Entity Generation Happens
 
-Entity generation happens during target creation, before `__meta_*` labels are discarded:
+Entity generation occurs during target creation in `PopulateLabels()`, **before** `__meta_*` labels are discarded. This timing is critical—once relabeling deletes the meta labels, the raw SD metadata is lost.
 
-```go
-// In scrape/target.go - modified PopulateLabels
-func PopulateLabels(lb *labels.Builder, cfg *config.ScrapeConfig, 
-                    tLabels, tgLabels model.LabelSet) (labels.Labels, []*Entity, error) {
-    PopulateDiscoveredLabels(lb, cfg, tLabels, tgLabels)
-    
-    // NEW: Generate entities from __meta_* labels BEFORE relabeling
-    var entities []*Entity
-    if cfg.EntityFromSD {
-        entities = generateEntitiesFromMeta(lb, cfg)
-    }
-    
-    // Apply relabeling (existing behavior)
-    keep := relabel.ProcessBuilder(lb, cfg.RelabelConfigs...)
-    if !keep {
-        return labels.EmptyLabels(), nil, nil
-    }
-    
-    // ... rest of existing validation ...
-    
-    // Delete __meta_* labels (existing behavior)
-    lb.Range(func(l labels.Label) {
-        if strings.HasPrefix(l.Name, model.MetaLabelPrefix) {
-            lb.Del(l.Name)
-        }
-    })
-    
-    // ... rest of existing code ...
-    
-    return res, entities, nil
-}
+When `entity_from_sd: true`:
 
-// generateEntitiesFromMeta extracts entities based on SD-specific mappings
-func generateEntitiesFromMeta(lb *labels.Builder, cfg *config.ScrapeConfig) []*Entity {
-    var entities []*Entity
-    
-    // Detect SD type from __meta_* prefix
-    // Kubernetes: __meta_kubernetes_*
-    // EC2: __meta_ec2_*
-    // etc.
-    
-    if hasKubernetesLabels(lb) {
-        if entity := generateK8sPodEntity(lb); entity != nil {
-            entities = append(entities, entity)
-        }
-        if entity := generateK8sNodeEntity(lb); entity != nil {
-            entities = append(entities, entity)
-        }
-        // ... other K8s entity types
-    }
-    
-    if hasEC2Labels(lb) {
-        if entity := generateHostEntityFromEC2(lb); entity != nil {
-            entities = append(entities, entity)
-        }
-    }
-    
-    // ... other SD types
-    
-    return entities
-}
-```
-
-### Target Structure Extension
-
-The `Target` struct is extended to hold generated entities:
-
-```go
-// In scrape/target.go
-type Target struct {
-    labels       labels.Labels
-    scrapeConfig *config.ScrapeConfig
-    tLabels      model.LabelSet
-    tgLabels     model.LabelSet
-    
-    // NEW: Entities generated from SD metadata
-    sdEntities   []*Entity
-    
-    // ... existing fields ...
-}
-```
-
-### Entity Transmission to Storage
-
-When a target is scraped, its SD-derived entities are appended alongside metrics:
-
-```go
-// In scrape/scrape.go - within scrapeLoop.append()
-func (sl *scrapeLoop) append(app storage.Appender, b []byte, 
-                             contentType string, ts time.Time) (...) {
-    defTime := timestamp.FromTime(ts)
-    
-    // NEW: Append SD-derived entities for this target
-    if sl.sdEntities != nil {
-        for _, entity := range sl.sdEntities {
-            if _, err := app.AppendEntity(
-                entity.Type,
-                entity.IdentifyingLabels,
-                entity.DescriptiveLabels,
-                defTime,
-            ); err != nil {
-                sl.l.Debug("Error appending SD entity", "type", entity.Type, "err", err)
-            }
-        }
-    }
-    
-    // ... existing metric parsing and appending ...
-}
-```
+1. **Detect SD type** — Examine `__meta_*` label prefixes to determine which SD mechanism provided the target
+2. **Apply built-in mappings** — Use the standard mappings for that SD type to extract entity attributes
+3. **Classify labels** — Separate identifying labels (for identity) from descriptive labels (for context)
+4. **Create entities** — Build entity structures with type, identifying labels, and descriptive labels
+5. **Associate with target** — Store the generated entities alongside the target for transmission during scrape
 
 ### Data Flow Diagram
 
@@ -686,52 +570,13 @@ When a target is re-discovered (on each SD refresh) and `entity_from_sd: true`:
 When a target disappears from SD:
 
 1. **Immediate behavior**: The target's scrape loop is stopped
-2. **Entity marking**: The SD-derived entity associated with that target receives an `endTime` timestamp
-3. **Grace period**: Entities remain queryable for historical analysis
-
-**Implementation**:
-
-```go
-// In scrape/scrape.go - when target is removed
-func (sp *scrapePool) sync(targets []*Target) {
-    // ... existing target diff logic ...
-    
-    // For removed targets, mark their entities as potentially stale
-    for fingerprint, loop := range sp.loops {
-        if _, ok := uniqueLoops[fingerprint]; !ok {
-            // Target removed
-            if loop.sdEntities != nil {
-                for _, entity := range loop.sdEntities {
-                    // Don't immediately mark dead - other targets might use same entity
-                    sp.entityRefCounts[entity.Hash()]--
-                    if sp.entityRefCounts[entity.Hash()] == 0 {
-                        // No more targets reference this entity
-                        app.MarkEntityDead(entity.Ref, timestamp.FromTime(time.Now()))
-                    }
-                }
-            }
-            loop.stop()
-        }
-    }
-}
-```
+2. **Reference counting**: The scrape pool tracks how many targets reference each entity
+3. **Entity marking**: When the last target referencing an entity disappears, the entity's `endTime` is set
+4. **Grace period**: Entities remain queryable for historical analysis until retention removes them
 
 ### Entity Deduplication
 
-Multiple targets may correlate with the same entity (e.g., multiple containers in a pod). The entity is only created once:
-
-```go
-// Entity identity is determined by type + identifying labels
-func entityHash(entityType string, identifyingLabels labels.Labels) uint64 {
-    h := fnv.New64a()
-    h.Write([]byte(entityType))
-    identifyingLabels.Range(func(l labels.Label) {
-        h.Write([]byte(l.Name))
-        h.Write([]byte(l.Value))
-    })
-    return h.Sum64()
-}
-```
+Multiple targets may correlate with the same entity (e.g., multiple containers in a pod). Entity identity is determined by type + identifying labels—if two targets generate entities with the same identity, only one entity is stored.
 
 When the same entity is discovered from multiple targets:
 - First discovery creates the entity

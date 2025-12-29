@@ -212,40 +212,12 @@ The `EntityRegistry.Gather()` method is the central coordination point. It accep
 
 ### How Gather Works
 
-```go
-func (er *EntityRegistry) Gather(gatherers ...Gatherer) (*dto.MetricPayload, error) {
-    // 1. Gather metrics from all provided gatherers
-    var allMetrics []*dto.MetricFamily
-    referencedRefs := make(map[uint64]struct{})
-    
-    for _, g := range gatherers {
-        mfs, err := g.Gather()
-        if err != nil {
-            return nil, err
-        }
-        allMetrics = append(allMetrics, mfs...)
-        
-        // Track which entity refs are actually used by metrics
-        for _, mf := range mfs {
-            for _, ref := range mf.GetEntityRefs() {
-                referencedRefs[ref] = struct{}{}
-            }
-        }
-    }
-    
-    // 2. Only include entities that are referenced by at least one metric
-    //    Orphan entities (not referenced by any metric) are excluded
-    entityFamilies := er.collectReferencedEntities(referencedRefs)
-    
-    // 3. Return complete payload
-    //    - All metrics are included (with or without entity refs)
-    //    - Only referenced entities are included
-    return &dto.MetricPayload{
-        EntityFamily: entityFamilies,
-        MetricFamily: allMetrics,
-    }, nil
-}
-```
+The `Gather()` method coordinates metric and entity collection:
+
+1. **Collect metrics** from all provided gatherers
+2. **Track entity references** — identify which entity refs are used by the gathered metrics
+3. **Filter entities** — include only entities that are actually referenced by at least one metric
+4. **Return payload** — combine entity families and metric families into a single `MetricPayload`
 
 This filtering ensures that:
 - **Metrics without entities** are still exposed
@@ -254,25 +226,11 @@ This filtering ensures that:
 
 ### HTTP Handler Updates
 
-The promhttp package needs a handler that works with `EntityRegistry.Gather()`:
+The promhttp package provides `HandlerFor()` that accepts an `EntityRegistry` and metric gatherers, returning an HTTP handler that:
 
-```go
-// HandlerFor creates an HTTP handler that exposes entities and metrics together
-func HandlerFor(er *EntityRegistry, gatherers []Gatherer, opts HandlerOpts) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        payload, err := er.Gather(gatherers...)
-        if err != nil {
-            // error handling...
-        }
-        
-        contentType := expfmt.NegotiateIncludingOpenMetrics(r.Header)
-        w.Header().Set("Content-Type", string(contentType))
-        
-        enc := expfmt.NewPayloadEncoder(w, contentType)
-        enc.EncodePayload(payload)
-    })
-}
-```
+1. Calls `EntityRegistry.Gather()` with the provided gatherers
+2. Negotiates content type (text or protobuf)
+3. Encodes the combined `MetricPayload` to the response
 
 ### Usage Example
 

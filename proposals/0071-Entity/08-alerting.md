@@ -217,146 +217,24 @@ The rest of this document assumes Option B as the target design, with notes on O
 
 ## Prometheus Implementation
 
-### Tracking Explicit Labels
+### How Alert Identity Is Computed
 
-The alerting rule must track which labels were explicitly used in the expression. During rule creation, we parse the expression AST and extract label names from all matchers:
+When an alerting rule is created, Prometheus parses the expression AST to extract which labels are explicitly used in matchers. This set of "explicit labels" is stored with the rule.
 
-```go
-type AlertingRule struct {
-    name         string
-    vector       parser.Expr
-    holdDuration time.Duration
-    labels       labels.Labels
-    annotations  labels.Labels
-    
-    // Labels explicitly referenced in matchers within the expression
-    explicitLabels map[string]struct{}
-    
-    // Reference to entity store for identifying/descriptive label lookup
-    entityStore storage.EntityQuerier
-}
+During alert evaluation, for each result from the query engine:
 
-func NewAlertingRule(name string, expr parser.Expr, ...) *AlertingRule {
-    rule := &AlertingRule{
-        name:   name,
-        vector: expr,
-        // ...
-    }
-    rule.explicitLabels = extractExplicitLabels(expr)
-    return rule
-}
+1. **Classify each label** — Determine if it's an identity label or not:
+   - Metric name → always identity
+   - Entity identifying labels → always identity
+   - Labels explicitly used in the expression → identity (user signaled intent)
+   - Original metric labels (not from entity enrichment) → identity
+   - Enriched descriptive labels → NOT identity
 
-func extractExplicitLabels(expr parser.Expr) map[string]struct{} {
-    explicit := make(map[string]struct{})
-    
-    parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
-        if vs, ok := node.(*parser.VectorSelector); ok {
-            for _, matcher := range vs.LabelMatchers {
-                if matcher.Name != labels.MetricName {
-                    explicit[matcher.Name] = struct{}{}
-                }
-            }
-        }
-        return nil
-    })
-    
-    return explicit
-}
-```
+2. **Compute identity labels** — Subset of all labels that constitute identity
 
-### Computing Identity Labels
+3. **Track state by identity** — Use `IdentityLabels.Fingerprint()` for the `active` map and `for` clause timing
 
-When evaluating an alert, we separate identity labels from the full enriched label set. The query engine returns enriched results as described in [06-querying.md](./06-querying.md), and we filter them:
-
-```go
-func (r *AlertingRule) computeIdentityLabels(allLabels labels.Labels) labels.Labels {
-    builder := labels.NewBuilder(nil)
-    
-    for _, lbl := range allLabels {
-        if r.isIdentityLabel(lbl.Name) {
-            builder.Set(lbl.Name, lbl.Value)
-        }
-    }
-    
-    return builder.Labels()
-}
-
-func (r *AlertingRule) isIdentityLabel(name string) bool {
-    // Metric name is always part of identity
-    if name == labels.MetricName {
-        return true
-    }
-    
-    // Entity identifying labels are always part of identity
-    if r.entityStore != nil && r.entityStore.IsIdentifyingLabel(name) {
-        return true
-    }
-    
-    // Descriptive labels that were explicitly filtered are part of identity
-    if _, explicit := r.explicitLabels[name]; explicit {
-        return true
-    }
-    
-    // If it's NOT a known entity label, it's an original metric label → identity
-    if r.entityStore == nil {
-        return true
-    }
-    if !r.entityStore.IsDescriptiveLabel(name) {
-        return true
-    }
-    
-    // Enriched descriptive label → NOT part of identity
-    return false
-}
-```
-
-### Alert Evaluation Flow
-
-The `Eval` method uses identity labels for internal state while tracking full labels for sending:
-
-```go
-func (r *AlertingRule) Eval(ctx context.Context, ts time.Time, ...) (Vector, error) {
-    // Query engine returns enriched results (see 06-querying.md)
-    res, err := r.vector.Eval(ctx, ts, ...)
-    if err != nil {
-        return nil, err
-    }
-    
-    for _, sample := range res {
-        // Compute identity labels (subset used for fingerprinting)
-        identityLabels := r.computeIdentityLabels(sample.Metric)
-        
-        // Full labels include everything (for sending to Alertmanager)
-        fullLabels := sample.Metric
-        
-        // Add rule-defined labels to both
-        for _, l := range r.labels {
-            identityLabels = append(identityLabels, l)
-            fullLabels = append(fullLabels, l)
-        }
-        
-        // Look up or create alert using IDENTITY labels for fingerprint
-        fp := identityLabels.Fingerprint()
-        alert := r.active[fp]
-        if alert == nil {
-            alert = &Alert{
-                IdentityLabels: identityLabels,
-                Labels:         fullLabels,
-                Annotations:    r.annotations,
-                ActiveAt:       ts,
-            }
-            r.active[fp] = alert
-        } else {
-            // Alert exists—update full labels (descriptive may have changed)
-            alert.Labels = fullLabels
-        }
-        
-        alert.Value = sample.V
-    }
-    
-    // ... rest of evaluation (state transitions, for clause, etc.)
-}
-```
+4. **Send full labels** — When sending to Alertmanager, include all labels (identity + enriched)
 
 ### The Alert Struct
 
