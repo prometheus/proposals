@@ -2,15 +2,15 @@
 
 ## Abstract
 
-This proposal introduces native support for **Entities** in Prometheus—a first-class representation of the things that produce telemetry, distinct from the telemetry they produce.
+This proposal introduces native support for **Entities** in Prometheus—a first-class concept representing **the "things" that produce telemetry**.
 
-Today, Prometheus relies on Info-type metrics to represent metadata about monitored objects: gauges with an `_info` suffix, a constant value of `1`, and labels containing the metadata. But this approach is fundamentally flawed: **the thing that produces metrics is not itself a metric**. A Kubernetes pod, a service instance, or a host are entities with their own identity and lifecycle—they should not be stored as time series with sample values.
+A Kubernetes pod, a service instance, a physical host—these are not metrics themselves, but rather the *sources* of metrics. They have their own identity, lifecycle, and attributes that provide context for understanding the telemetry they produce. Today, Prometheus lacks a native way to represent these "things". While the ecosystem has developed conventions (like info metrics) to work around this gap, Prometheus itself doesn't understand what these conventions represent.
 
-This conflation forces users to rely on verbose `group_left` joins to attach metadata to metrics, creates storage inefficiency for constant values, and loses the semantic distinction between what identifies an entity and what describes it.
+**This proposal establishes Entities as a foundational concept in Prometheus.** An Entity represents a distinct object of interest in your infrastructure or application—something that has an identity, produces telemetry, and whose metadata helps you understand that telemetry. 
 
-By introducing Entities as a native concept, Prometheus can provide cleaner query ergonomics, optimized storage for metadata, explicit lifecycle management, and proper semantics that distinguish between identifying labels (what makes an entity unique) and descriptive labels (additional context about that entity).
+By making Entities first-class, this proposal enables Prometheus to support them consistently across all layers. Exposition formats gain semantics to declare entity information; SDKs provide clean abstractions for instrumenting entities; storage optimizes for entity metadata and relationships; the query language automatically correlates entity context with metrics; and alerting maintains stable alert identity as entity attributes change.
 
-This proposal also aligns with Prometheus's commitment to being the default store for OpenTelemetry metrics. OpenTelemetry's Entity model provides a well-defined structure for representing monitored objects, and native Entity support enables seamless translation between OTel Entities and Prometheus.
+This proposal also aligns with Prometheus's commitment to being the default store for OpenTelemetry metrics, which has a well-defined Entity model. Native Entity support enables seamless integration between OpenTelemetry's view of the world and Prometheus's.
 
 ---
 
@@ -28,11 +28,20 @@ build_info{version="1.2.3", revision="abc123", goversion="go1.21"} 1
 
 #### Entity
 
-An **Entity** represents a distinct object of interest that produces or is associated with telemetry. Unlike Info metrics, Entities are not metrics—they are first-class objects with their own identity, labels, and lifecycle.
+An **Entity** represents a distinct object of interest that produces or is associated with telemetry. Unlike Info metrics, Entities are not metrics—they are first-class objects with their own identity, labels, and 
+lifecycle.
 
-In OpenTelemetry, an entity is an object of interest that produces telemetry data. Entities represent things like services, hosts, containers, or Kubernetes pods. Each entity has a type (e.g., `k8s.pod`, `host`, `service`) and a set of attributes that describe it.
+Examples: a Kubernetes pod, a physical host, a service instance, a database table.
 
-This proposal adopts the Entity concept as the native Prometheus representation for what was previously expressed through Info metric conventions.
+Each entity has:
+- A **type** (e.g., `k8s.pod`, `host`, `service`)
+- **Identifying labels** that uniquely define it (immutable for the entity's lifetime)
+- **Descriptive labels** that provide additional context (may change over time)
+- **Lifecycle boundaries** (creation time, end time)
+
+In OpenTelemetry, an entity is an object of interest that produces telemetry data. This proposal adopts a compatible Entity concept as Prometheus's native representation for what was previously expressed only through info metric conventions.
+
+**The relationship:** Entities are the concept; info metrics are how they're serialized in the exposition format.
 
 #### Resource Attributes
 
@@ -66,46 +75,26 @@ Examples:
 
 ## Problem Statement
 
-### Entities Are Not Metrics
+### Prometheus Is Missing the Entity Concept
 
-At the heart of the Info metric pattern lies a conceptual mismatch: **the thing that produces metrics is not itself a metric**.
+Prometheus has a powerful data model for representing **metrics**—time series of numeric measurements identified by labels. But it lacks a native representation for "things" that produce metrics.
 
-Consider a Kubernetes pod. It has an identity (namespace, UID), labels that describe it (name, node, pod labels), a lifecycle (creation time, termination), and it produces telemetry (CPU usage, memory consumption, request counts). The pod is the *source* of metrics—it is not *a* metric.
+Consider a Kubernetes pod. It has an identity (namespace, UID), labels that describe it (name, node, status), a lifecycle (creation time, termination), and it produces telemetry (CPU usage, memory consumption, request counts). The pod is the *source* of metrics—it is conceptually distinct from the metrics it produces.
 
-Yet today, we represent this pod as a metric:
+Today, the Prometheus ecosystem uses **info metrics** to represent entity metadata:
 
 ```promql
 kube_pod_info{namespace="production", pod="api-server-7b9f5", uid="550e8400", node="worker-2"} 1
 ```
 
-This representation has several conceptual problems:
+Info metrics have served the community well as a **pragmatic convention** for representing entity information. They work, and thousands of dashboards and exporters rely on them. However, because Prometheus treats them as regular metrics rather than recognizing them as entity representations, several limitations emerge:
 
-1. **The value is meaningless**: The `1` carries no information. It exists only because Prometheus's data model requires a numeric value.
-2. **Identity is conflated with data**: All labels are treated equally. There's no distinction between `uid` (which identifies the pod) and `node` (which describes where it's running and could change).
-3. **Lifecycle is implicit**: When a pod is deleted and recreated with the same name, Prometheus sees label churn. There's no explicit representation of "this entity ended, a new one began."
-4. **Correlation requires workarounds**: To associate the pod's metadata with its metrics, users must write complex `group_left` joins—essentially reconstructing a relationship that should be built into the data model.
+1. **The value is a placeholder**: The `1` carries no information—it exists only because Prometheus's storage requires a numeric value for every series.
+2. **Identity is conflated with description**: All labels are treated equally. There's no way to declare that `uid` uniquely identifies the pod while `node` is descriptive metadata that may change.
+3. **Lifecycle is implicit**: When a pod is deleted and recreated, Prometheus sees label churn. There's no first-class representation of "this entity ended; a new one began."
+4. **Correlation is manual**: To associate entity metadata with metrics, users must write complex `group_left` joins—reconstructing a relationship that should be understood by the system.
 
-The Prometheus data model was designed for metrics: measurements that change over time, represented as (timestamp, value) pairs with identifying labels. Entities don't fit this model. They have:
-
-- **Stable identity** (not a stream of values)
-- **Mutable descriptions** (labels that change independently of any "sample")
-- **Explicit lifecycle** (creation and termination events)
-- **Correlation relationships** (many metrics belong to one entity)
-
-**This proposal introduces Entities as a first-class concept in Prometheus**, separate from metrics, with their own storage, lifecycle management, and query semantics. Info metrics will continue to work for backward compatibility, but new instrumentation and the OTel integration can use proper Entity semantics.
-
-### The Current Workaround: Info Metrics as Gauges
-
-Prometheus does not have a native Entity type. Instead, users follow a convention: create a gauge with an `_info` suffix, set its value to `1`, and encode metadata as labels.
-
-```promql
-node_uname_info{nodename="server-1", release="5.15.0", version="#1 SMP", machine="x86_64"} 1
-```
-
-While OpenMetrics formally defines an Info type, the Prometheus text exposition format does not support it. This means:
-- Info metrics consume storage for a constant value (`1`) that carries no information
-- There's no semantic distinction between info metrics and regular gauges
-- Query engines cannot optimize for the unique characteristics of metadata
+What Prometheus needs is not a replacement for info metrics, but rather **recognition of Entities as a first-class concept**. Info metrics are already representing entities—this proposal gives Prometheus the semantics to understand what they represent.
 
 ### Joining Info Metrics Requires `group_left`
 
@@ -371,7 +360,7 @@ The following are explicitly out of scope for this proposal:
 
 ### Changing behavior for existing `*_info` Gauges
 
-This proposal defines new semantics for Entities. Existing gauges with `_info` suffix will continue to work as gauges and joins will continue to work. Migration or automatic conversion is not in scope.
+This proposal defines new semantics for Entities. Existing **gauges** with `_info` suffix will continue to work as gauges and joins will continue to work. Migration or automatic conversion is not in scope.
 
 ### Complete OTel Data Model Parity
 
