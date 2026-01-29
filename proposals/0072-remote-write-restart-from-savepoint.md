@@ -1,4 +1,4 @@
-## Remote Write: Restart from checkpoint
+## Remote Write: Restart from savepoint
 
 * **Owners:**
   * [@kgeckhart](https://github.com/kgeckhart)
@@ -18,7 +18,7 @@ I believe the issue for [tsdb/agent: Prevent unread segments from being truncate
 
 * **Other docs or links:**
 
-> This effort aims to have an agreed upon design with requirements for completing the work to allow remote write to restart data delivery from a checkpoint and not from `time.Now()`
+> This effort aims to have an agreed upon design with requirements for completing the work to allow remote write to restart data delivery from a savepoint and not from `time.Now()`
 
 ## Why
 
@@ -32,9 +32,9 @@ As mentioned in the why, this behavior is often confusing to users who know a WA
 
 ## Goals
 
-1. Support resuming from a checkpoint for each configured `remote_write` destination.
-2. Taking a checkpoint for a remote_write destination should not incur significant overhead.
-3. Changing the `queue_configuration` for a `remote_write` destination should not result in a new checkpoint entry.
+1. Support resuming from a savepoint for each configured `remote_write` destination.
+2. Taking a savepoint for a remote_write destination should not incur significant overhead.
+3. Changing the `queue_configuration` for a `remote_write` destination should not result in a new savepoint entry.
    * The `queue_configuration` includes fields like min/max shards and other performance tuning parameter.s
    * These can be expected to change under normal circumstances and should not trigger a data loss scenario.
 4. Guards need to be in place to protect against infinite WAL growth.
@@ -83,17 +83,17 @@ A basic replay to accomplishing all non-stretch goals would be as follows
 6. Update `wlog.NewWatcher.Run()` to start sending samples if a starting segment is configured
 7. Walk through the `remote.QueueManager` send code to ensure duplicate data errors will not cause slow downs in data delivery (we have a high probability of sending duplicate data).
 
-This flow should be enough to to accomplish Goal 1: Support resuming from a checkpoint for each configured `remote_write` destination.
+This flow should be enough to to accomplish Goal 1: Support resuming from a savepoint for each configured `remote_write` destination.
 
-The act of taking a checkpoint will require a lock to be held but given we do it on a schedule this will be infrequent enough that the implementation should safely accomplish Goal 2: Taking a checkpoint for a remote_write destination should not incur significant overhead (see testing for further info).
+The act of taking a savepoint will require a lock to be held but given we do it on a schedule this will be infrequent enough that the implementation should safely accomplish Goal 2: Taking a savepoint for a remote_write destination should not incur significant overhead (see testing for further info).
 
-### Checkpoint file format/location
+### Savepoint file format/location
 
-The segment checkpoint would be stored in the `remote.WriteStorage.dir` which would be next to the `/wal` directory.
+The savepoint would be stored in the `remote.WriteStorage.dir` which would be next to the `/wal` directory.
 
 We only care about the queue hash and the current segment so a json encoded file seems reasonable for this. A key value format should make it easier to evolve over time vs a more basic delimited file.
 
-Solving for, Goal 3: Changing the `queue_configuration` for a `remote_write` destination should not result in a new checkpoint entry.
+Solving for, Goal 3: Changing the `queue_configuration` for a `remote_write` destination should not result in a new savepoint entry.
 
 This will be done via adding a specific toHash function for RemoteWriteConfig which zeros the QueueConfig before taking the hash. RemoteWriteConfig is managed as a pointer so we'll need to keep the value before, set to empty, and put the original value back but all is reasonably managed. We could look at identifying other "operational" fields which could be excluded from hashing for the same reasons.
 
@@ -103,11 +103,11 @@ This will change existing queue hashes but I don't believe that to be a big prob
 
 Goal 4: Guards need to be in place to protect against infinite WAL growth is capable of being accomplished through adjusting config defaults when replaying is enabled. We would require `remote_write.queue_config.sample_age_limit` be non-zero and would have a default of `2h`.
 
-I believe prombench is sufficient to prove Goal 2: Taking a checkpoint for a remote_write destination should not incur significant overhead. Open to further benchmarking ideas but given the components + time necessary for a proper test ensuring prombench is capable of covering this would be the most ideal.
+I believe prombench is sufficient to prove Goal 2: Taking a savepoint for a remote_write destination should not incur significant overhead. Open to further benchmarking ideas but given the components + time necessary for a proper test ensuring prombench is capable of covering this would be the most ideal.
 
 ### Further reducing duplicated data sent
 
-Replaying a whole segment can still result in a fair amount of duplicated data on startup. If we added tracking the lowest timestamp delivered via remote write to in the checkpoint it could reduce this number (lowest timestamp is required because the WAL supports out of order writes). At startup the tracked lowest timestamp would be used as marker for where to start writing data from within the checkpointed segment ideally reducing the amount of duplicated data replayed. At worst it would start from the beginning of the segment.
+Replaying a whole segment can still result in a fair amount of duplicated data on startup. If we added tracking the lowest timestamp delivered via remote write to in the savepoint it could reduce this number (lowest timestamp is required because the WAL supports out of order writes). At startup the tracked lowest timestamp would be used as marker for where to start writing data, reducing the amount of duplicated data replayed. At worst it would start from the beginning of the segment.
 
 ### Goal 5: Stretch: Remote write supports at-least-once delivery of samples in the WAL.
 
@@ -144,13 +144,13 @@ I believe this bypasses resharding complexity, as a reshard triggers a purging o
 
 ## Alternatives
 
-1. `remote.QueueManager` should own syncing its own checkpoint (most early implementations took this approach).
+1. `remote.QueueManager` should own syncing its own savepoint (most early implementations took this approach).
    * `remote.QueueManager` already has a lot of responsibilities and will take on more for at-least-once.
    * `remote.WriteStorage` has reasonable hook points to run this logic without adding a lot more  complexity.
-2. The checkpoint should be synchronously updated when segments change.
+2. The savepoint should be synchronously updated when segments change.
    * Introducing a bit of time between knowing that a segment changed to persisting it gives us more time to fully deliver the batch before we persist the change.
    * Synchronously committing it makes the potential gap larger.
-   * If we assume a 15 second queue delay then syncing the checkpoint every 30 seconds gives a lot of room for the segment to be fully processed before being committed.
+   * If we assume a 15 second queue delay then syncing the savepoint every 30 seconds gives a lot of room for the segment to be fully processed before being committed.
    * The trade-off being more unnecessary data being replayed on startup.
    * After implementing a solution for at-least-once we can reassess how often we commit/if we should make it synchronous.
 
