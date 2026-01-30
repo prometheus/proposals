@@ -1,8 +1,8 @@
 ## V2 API for labels and values discovery
 
 * **Owners:**
-  * Ismail Simsek [@itsmylife](https://github.com/itsmylife) [ismail.simsek@grafana.com](mailto:ismail.simsek@grafana.com)
-  * Andrew Hall [@tcp13equals2](https://github.com/tcp13equals2) [andrew.hall@grafana.com](mailto:andrew.hall@grafana.com)
+  * Ismail Simsek [@itsmylife](https://github.com/itsmylife) ismail.simsek@grafana.com
+  * Andrew Hall [@tcp13equals2](https://github.com/tcp13equals2) andrew.hall@grafana.com
 
 * **Implementation Status:** Not implemented
 
@@ -27,16 +27,16 @@ These endpoints are heavily relied upon by the Grafana web application for core 
 * **Metrics Explorer / Builder** — a click-based interface for browsing metrics and label dimensions
 * **Metrics Drilldown** — dynamically generating metric panels by iterating over label values
 
-As environments have grown in active series count, label counts, cardinality, and exploratory user activity, and as the Grafana web application itself has grown in complexity, these existing endpoints have increasingly become a limiting factor.
+As environments have grown in active series count, label counts, cardinality, and exploratory user activity, and as the Grafana web application itself has grown in complexity, the existing Prometheus endpoints have increasingly become a limiting factor.
 
-In practice, this manifests as performance bottlenecks in the Grafana UI and constrains the implementation of user-requested discovery features, particularly those that require iterative or interactive exploration of large metadata sets.
+This manifests as performance bottlenecks in the Grafana UI and constrains the implementation of user-requested discovery features, particularly those that require iterative or interactive exploration of large metadata sets.
 
 Grafana has attempted to mitigate these limitations through a range of client-side optimizations and workarounds (see [#100376](https://github.com/grafana/grafana/issues/100376)
 ). However, these approaches add complexity and cannot fully address the underlying scalability and efficiency constraints of the current metadata APIs.
 
 ### Pitfalls of the current solution
 
-Pitfalls of the current metadata endpoints;
+Pitfalls of the current metadata endpoints:
 
 * **Limited client-side filtering**: `match[]` only filters series on the server. For label-name autocomplete clients must download all label names and then filter locally, which is slow at scale.
 * **Limited matching capabilities**: `match[]` supports regex matching of label values, but does not support fuzzy or typo-tolerant matching that discovery UIs require (e.g., user types container.memory and expects container_memory).
@@ -44,7 +44,7 @@ Pitfalls of the current metadata endpoints;
 * **No metadata about further results**: responses do not indicate whether `limit` truncated the result set or how many total values exist, preventing the UI from making informed choices (show “more” affordance, refine query, etc.).
 * **No pagination/cursors**: there is no offset/cursor mechanism; UIs cannot page through thousands of label values without fetching very large responses that may time out or overload the server.
 * **Fragmented calls for full context**: clients must call multiple endpoints (labels, metric metadata, series queries) to assemble a page of enriched metric information, increasing latency and backend load.
-* **No streaming / incremental delivery**: the API returns the full result set only after query completion; clients cannot render partial results quickly for improved interactivity and perceived latency.
+* **No streaming / incremental delivery**: the API returns the full result set only after query completion; clients cannot render partial results quickly for improved interactivity and low latency interactions.
 
 ## Goals
 
@@ -52,62 +52,113 @@ Effective data queries cannot be written if what needs to be queried cannot be i
 
 * **Faster metric name and label identification** - users spend less time hunting for the right metrics and can execute queries sooner, reducing the time from "I need to monitor X" to "I'm looking at data for X"
 * **Better autocomplete performance** - latency-sensitive autocomplete becomes usable at scale by fetching only relevant results instead of downloading large (43MB+) datasets just to filter client-side
-* **Scalable high-cardinality handling** -server-side filtering, streaming and/or pagination enables users to browse thousands of labels/values without timeouts, incomplete data, or memory exhaustion
+* **Scalable high-cardinality handling** - server-side filtering, streaming and/or pagination enables users to browse thousands of labels/values without timeouts, incomplete data, or memory exhaustion
 * **Reduced bandwidth/resource consumption** - server-side filtering, streaming and/or pagination eliminate wasteful large responses, and enriched responses eliminate additional API calls reducing overall latency for the user
 * **Improved AI/ML agent efficiency** - metadata-rich APIs and streaming capabilities enable AI agents (like Grafana Assistant) to make informed decisions, process data progressively, and stop early when confident, reducing redundant API calls and improving response times
 
 ### Audience
 
-* Operators seeking to discover metrics, labels and values
+* Operators seeking to discover metrics, labels and values - operators seeking to create new queries, perform adhoc investigations, create new rule/alerts, cardinality exploration etc
 
 ## Non-Goals
 
-* Changing/enhancing/deprecating any existing Prometheus API endpoints related to labels, values and metadata
-* Addressing OpenTelemetry hidden label limitations. Resource attributes stored in `target_info` rather than on every series and therefor not surfaced in the existing labels' endpoint.
+* Deprecating / replacing any existing Prometheus API endpoints
+* Addressing OpenTelemetry hidden label limitations. Resource attributes stored in `target_info` rather than on every series and therefore not surfaced in the existing labels' endpoint.
 
 ## How
 
-The following API endpoints are proposed. Each endpoint should return data in a NDJSON / chunked encoding streaming format.
+A new set of `search` endpoints are proposed.
 
-### `GET /api/v1/search/metrics`
+* /api/v1/search/metric_names
+* /api/v1/search/label_names
+* /api/v1/search/label_values
 
-An endpoint specific to searching for metric names (\_\_name__ values) and obtaining an enriched record for each metric.
+Each endpoint allows for the specific searching, filtering, sorting of metric names, label names and label values respectively.
+
+Note that;
+
+* the existing Prometheus API labels/values parameter set is re-used in each endpoint, with additional parameters introduced to deliver the desired functionality
+* the response format allows for enriched data to be added to each metric name, label name or label value record - rather than just a collection of strings
+* the response is NDJSON (`application/x-ndjson`), allowing for a streamed chunked encoding response
+
+### `GET /api/v1/search/metric_names`
+
+An endpoint specific to searching for metric names (\_\_name__ values) and obtaining an enriched record for each metric name.
 
 #### Request
 
 **Method:** `GET` `POST`
 
-**Path:** `/api/v1/search/metrics`
+**Path:** `/api/v1/search/metric_names`
 
 **Query parameters:**
 
-| Name                  | Type                                    | Required | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-|-----------------------|-----------------------------------------|----------|---------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `search`              | string                                  | No       | N/A     | The search string to be used for matching against metric names. Metric names are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `fuzz_threshold`      | int                                     | No       | 100     | An integer value between 0 - 100 which is used to provide a fuzzy match threshold. The matching score of a fuzzy match must be >= this value. A value of 100 disables any fuzz matching.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `case_sensitive`      | bool                                    | No       | true    | A flag to toggle whether the metric name search is case sensitive or not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `sort_by`             | alpha / cardinality / frequency / score | No       | N/A     | A flag to define how matching metrics should be sorted in the response. **alpha** - metrics are sorted by alphabetical order. **cardinality** - metrics are sorted by their cardinality. **frequency** - metrics are sorted by their frequency of use. **score** - metrics are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases. Note that no sort_by is allowed and this allows the server to return / stream results back immediately without the need for any server-side buffering. |
-| `sort_dir`            | asc / dsc                               | No       | asc     | A flag to define the ordering of the sort. Only valid when `sort_by` is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `include_frequency`   | bool                                    | No       | false   | A flag to request the metric frequency be included in the response.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `include_cardinality` | bool                                    | No       | false   | A flag to request the metric cardinality be included in the response.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `include_metadata`    | bool                                    | No       | false   | A flag to request the metric metadata (units, type, description) be included in the response.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `start`               | rfc3339 / unix_timestamp                | No       |         | As per the current labels/values endpoint. The time range to be considered for series inspection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `end`                 | rfc3339 / unix_timestamp                | No       |         | As per the current labels/values endpoint. The time range to be considered for series inspection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `limit`               | int                                     | No       | 100     | An integer value >= 0. The maximum number of results to return. The overall result set will be limited to this number after any ordering has been applied.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `batch_size`          | int                                     | No       | 100     | An integer value >= 0. The desired size of each batch of results sent in each response chunk. A value of 0 indicates that the server can determine the batch size, which may be variable.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `cursor`              | string                                  | No       | N/A     | Request the next page of results. Note that this parameter can only be used with the `limit` parameter. It is not valid with any other parameter.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Name                  | Type                                    | Required | Default | Description                                                                  |
+|-----------------------|-----------------------------------------|----------|---------|------------------------------------------------------------------------------|
+| `search`              | string                                  | No       |         | The search string to be used for matching metric names.                      |
+| `fuzz_threshold`      | int [0..100]                            | No       | 100     | Set the fuzzy match threshold.                                               |
+| `case_sensitive`      | bool                                    | No       | true    | Toggle case sensitivity in string matching.                                  |
+| `sort_by`             | alpha / cardinality / frequency / score | No       |         | Request how matching metrics should be sorted in the response.               |
+| `sort_dir`            | asc / dsc                               | No       | asc     | Request the ordering of the sort. Only valid when `sort_by` is set.          |
+| `include_frequency`   | bool                                    | No       | false   | Request metric frequency.                                                    |
+| `include_cardinality` | bool                                    | No       | false   | Request metric cardinality.                                                  |
+| `include_metadata`    | bool                                    | No       | false   | Request metric metadata (units, type, description).                          |
+| `start`               | rfc3339 / unix_timestamp                | No       |         | As per the existing labels/values endpoint.                                  |
+| `end`                 | rfc3339 / unix_timestamp                | No       |         | As per the existing labels/values endpoint.                                  |
+| `limit`               | int >= 0                                | No       | 100     | The maximum number of results to return after any ordering has been applied. |
+| `batch_size`          | int >= 0                                | No       | 100     | The desired number of records per batch.                                     |
+| `cursor`              | string                                  | No       |         | Request the next page of results.                                            |
 
 **Notes:**
-- If `search` is omitted or empty, all metric names are matched.
-- The fuzzy search could be a Jaro-Winkler or Levenshtein match. A Jaro-Winkler returns a score between 0..1 which can be easily scaled to a 0..100 threshold. A Levenshtein match can be scaled to 0..100 with `similarity = (1 − (distance / max(len(s), len(t)))) * 100`
-- Support for `cursor` based pagination is desirable but not essential.
-- `start` and `end` could have default values set which align to a reasonable look-back period. ie last 24 hours
-- `include_*` should use `json:"omitempty"` to not serialize the enriched attributes if they have not been requested / initialised
 
-Example fuzzy matching;
+***search***
 
-* Jaro-Winkler, mimir vs mimer = 0.953
-* Levenshtein, mimir vs mimer = 1. Applying `similarity = 1 − (distance / max(len(s), len(t)))` = similarity = 1 − 1/5 = 0.8
+The given `search` value will be used to match metric names.
+
+A match is found if the metric name contains this search value or if a fuzzy match between the metric name and this search meets the given `fuzz_threshold`.
+
+If `search` is omitted or empty, all metric names are matched.
+
+***fuzz_threshold***
+
+The fuzz matching score must meet or exceed this threshold to be considered a match.
+
+A value of 100 disables any fuzz matching.
+
+The fuzzy search could be a Jaro-Winkler or Levenshtein match.
+
+A Jaro-Winkler returns a score between 0..1 which can be easily scaled to 0..100. mimir vs mimer = 0.953. A `fuzz_threshold` of 95 or below would allow this match.
+
+A Levenshtein match can be scaled to 0..100 with `similarity = (1 − (distance / max(len(s), len(t)))) * 100`. mimir vs mimer = 1. Applying `similarity = 1 − (distance / max(len(s), len(t)))` = similarity = 1 − 1/5 = 0.8. A `fuzz_threshold` of 80 or below would allow this match.
+
+***sort_by***
+
+* **alpha** - metric names are sorted by alphabetical order.
+* **cardinality** - metric names are sorted by their cardinality.
+* **frequency** - metric names are sorted by their frequency of use.
+* **score** - metric names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
+
+Note that `sort_by` is optional, and it is valid for there to be no sorting requested. This allows the server to return / stream results back immediately without the need for any server-side buffering.
+
+***batch_size***
+
+The desired size of each batch of results sent in each response chunk.
+
+A value of 0 indicates that the server can determine the batch size, which may be variable.
+
+***cursor***
+
+Note that cursor based pagination is desirable but not essential.
+
+Note that this parameter can only be used with the `limit` parameter. The request should fail if the `cursor` parameter is set with any other parameter.
+
+***start/end***
+
+It is proposed that these could have default values which align to a reasonable look-back period. ie last 24 hours
+
+***include_***
+
+The implementation of `include_*` should use `json:"omitempty"` to not serialize the enriched attributes if they have not been requested / initialised
 
 #### Response
 
@@ -227,7 +278,7 @@ As per existing endpoints.
 }
 ```
 
-### `GET /api/v1/search/labels`
+### `GET /api/v1/search/label_names`
 
 An endpoint specific to searching for label names.
 
@@ -235,28 +286,34 @@ An endpoint specific to searching for label names.
 
 **Method:** `GET` `POST`
 
-**Path:** `/api/v1/search/labels`
+**Path:** `/api/v1/search/label_names`
 
 **Query parameters:**
 
-| Name                  | Type                                    | Required | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-|-----------------------|-----------------------------------------|----------|---------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `match[]`             | string / selectors                      | No       | N/A     | Series selector - as per existing labels/values endpoints. Limit the labels search to these metrics/series.                                                                                                                                                                                                                                                                                                                                                        |
-| `search`              | string                                  | No       | N/A     | The search string to be used for matching against label names. Label names are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                                                                                           |
-| `fuzz_threshold`      | int                                     | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `case_sensitive`      | bool                                    | No       | true    | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `sort_by`             | alpha / cardinality / frequency / score | No       | N/A     | A flag to define how matching labels should be sorted in the response. **alpha** - labels are sorted by alphabetical order. **cardinality** - labels are sorted by their value cardinality. **frequency** - labels are sorted by their frequency of use. **score** - labels are sorted by a matching score. Note that no sort_by is allowed and this allows the server to return / stream results back immediately without the need for any server-side buffering. |
-| `sort_dir`            | asc / dsc                               | No       | asc     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `include_frequency`   | bool                                    | No       | false   | A flag to request the label frequency be included in the response.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `include_cardinality` | bool                                    | No       | false   | A flag to request the label cardinality be included in the response.                                                                                                                                                                                                                                                                                                                                                                                               |
-| `start`               | rfc3339 / unix_timestamp                | No       |         | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `end`                 | rfc3339 / unix_timestamp                | No       |         | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `limit`               | int                                     | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `batch_size`          | int                                     | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `cursor`              | string                                  | No       | N/A     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Name                  | Type                                    | Required | Default | Description                                                    |
+|-----------------------|-----------------------------------------|----------|---------|----------------------------------------------------------------|
+| `match[]`             | string / selectors                      | No       |         | Series selector - as per existing labels/values endpoints.     |
+| `search`              | string                                  | No       |         | The search string to be used for matching against label names. |
+| `fuzz_threshold`      | int [0..100]                            | No       | 100     | As per above endpoint.                                         |
+| `case_sensitive`      | bool                                    | No       | true    | As per above endpoint.                                         |
+| `sort_by`             | alpha / cardinality / frequency / score | No       |         | As per above endpoint.                                         |
+| `sort_dir`            | asc / dsc                               | No       | asc     | As per above endpoint.                                         |
+| `include_frequency`   | bool                                    | No       | false   | Request label frequency.                                       |
+| `include_cardinality` | bool                                    | No       | false   | Request label cardinality.                                     |
+| `start`               | rfc3339 / unix_timestamp                | No       |         | As per above endpoint.                                         |
+| `end`                 | rfc3339 / unix_timestamp                | No       |         | As per above endpoint.                                         |
+| `limit`               | int >= 0                                | No       | 100     | As per above endpoint.                                         |
+| `batch_size`          | int >= 0                                | No       | 100     | As per above endpoint.                                         |
+| `cursor`              | string                                  | No       |         | As per above endpoint.                                         |
 
 **Notes:**
-- If `search` is omitted or empty, all label names are matched.
+
+***sort_by***
+
+* **alpha** - label names are sorted by alphabetical order.
+* **cardinality** - label names are sorted by their cardinality.
+* **frequency** - label names are sorted by their frequency of use.
+* **score** - label names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
 
 #### Response
 
@@ -322,7 +379,7 @@ Use existing Prometheus API status codes.
 }
 ```
 
-### `GET /api/v1/search/values`
+### `GET /api/v1/search/label_values`
 
 An endpoint specific to searching for label values.
 
@@ -330,29 +387,28 @@ An endpoint specific to searching for label values.
 
 **Method:** `GET` `POST`
 
-**Path:** `/api/v1/search/values`
+**Path:** `/api/v1/search/label_values`
 
 **Query parameters:**
 
-| Name                | Type                      | Required | Default | Description                                                                                                                                                                                                                                                                                                                                                                                        |
-|---------------------|---------------------------|----------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `match[]`           | string / selectors        | No       | N/A     | Series selector - as per existing labels/values endpoints. Limit the search to these metrics/series.                                                                                                                                                                                                                                                                                               |
-| `label`             | string                    | Yes      | N/A     | The label the user is requesting values for.                                                                                                                                                                                                                                                                                                                                                       |
-| `search`            | string                    | No       | N/A     | The search string to be used for matching against label values. Label values are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                         |
-| `fuzz_threshold`    | int                       | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `case_sensitive`    | bool                      | No       | true    | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `sort_by`           | alpha / frequency / score | No       | N/A     | A flag to define how matching values should be sorted in the response. **alpha** - values are sorted by alphabetical order. **frequency** - values are sorted by their frequency of use. **score** - values are sorted by a matching score. Note that no sort_by is allowed and this allows the server to return / stream results back immediately without the need for any server-side buffering. |
-| `sort_dir`          | asc / dsc                 | No       | asc     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `include_frequency` | bool                      | No       | false   | A flag to request the value frequency be included in the response.                                                                                                                                                                                                                                                                                                                                 |
-| `start`             | rfc3339 / unix_timestamp  | No       |         | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `end`               | rfc3339 / unix_timestamp  | No       |         | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `limit`             | int                       | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `batch_size`        | int                       | No       | 100     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
-| `cursor`            | string                    | No       | N/A     | As per above endpoint                                                                                                                                                                                                                                                                                                                                                                              |
+| Name                | Type                      | Required | Default | Description                                                     |
+|---------------------|---------------------------|----------|---------|-----------------------------------------------------------------|
+| `match[]`           | string / selectors        | No       |         | Series selector - as per existing labels/values endpoints.      |
+| `label`             | string                    | Yes      |         | The label the user is requesting values for.                    |
+| `search`            | string                    | No       |         | The search string to be used for matching against label values. |
+| `fuzz_threshold`    | int [0..100]              | No       | 100     | As per above endpoint.                                          |
+| `case_sensitive`    | bool                      | No       | true    | As per above endpoint.                                          |
+| `sort_by`           | alpha / frequency / score | No       |         | As per above endpoint.                                          |
+| `sort_dir`          | asc / dsc                 | No       | asc     | As per above endpoint.                                          |
+| `include_frequency` | bool                      | No       | false   | Request value frequency.                                        |
+| `start`             | rfc3339 / unix_timestamp  | No       |         | As per above endpoint.                                          |
+| `end`               | rfc3339 / unix_timestamp  | No       |         | As per above endpoint.                                          |
+| `limit`             | int >= 0                  | No       | 100     | As per above endpoint.                                          |
+| `batch_size`        | int >= 0                  | No       | 100     | As per above endpoint.                                          |
+| `cursor`            | string                    | No       |         | As per above endpoint.                                          |
 
 **Notes:**
-- If `search` is omitted or empty, all label values are matched.
-- The `label` parameter has been deliberately added as a required query parameter to avoid issues with the existing [values](https://github.com/prometheus/prometheus/blob/main/docs/querying/api.md#querying-label-values) endpoint which requires the label to be included as a path parameter.
+- The `label` parameter has been deliberately added as a required `query` parameter to avoid issues with the existing [values](https://github.com/prometheus/prometheus/blob/main/docs/querying/api.md#querying-label-values) endpoint which requires the label to be included as a path parameter.
 
 #### Response
 
@@ -364,7 +420,7 @@ Use existing Prometheus API status codes.
 
 * Content-Type: application/x-ndjson; charset=utf-8
 
-### Example of NDJSON batched result set - no include_* flags set
+##### Example of NDJSON batched result set - no include_* flags set
 
 ```ndjson
 {
@@ -388,7 +444,7 @@ Use existing Prometheus API status codes.
 }
 ```
 
-### Example of NDJSON batched result set - with include_* flags set
+##### Example of NDJSON batched result set - with include_* flags set
 
 ```ndjson
 {
@@ -398,7 +454,7 @@ Use existing Prometheus API status codes.
           "frequency": 1003
         },
         { 
-          "name": "cluster1",
+          "name": "cluster2",
           "frequency": 4
         }
     ]
@@ -448,12 +504,13 @@ These are new endpoints and do not change or alter any existing functionality. N
 * confirm feasibility of supporting cursor based pagination for these new endpoints
 * confirm any performance / response time constraints for these new endpoints
 * specific choice of fuzzy search algorithm
+* specific implementation of the search result ordering for auto-complete scenarios
 
 ## Alternatives
 
 ### 1. Can we not just use the existing Prometheus endpoints?
 
-For large scale environments with client-side optimizations;
+For large scale environments even with client-side optimizations;
 
 * High-cardinality scenarios remain challenging (43MB responses, timeouts)
 * OpenTelemetry adoption increases frequency of these scenarios
@@ -466,7 +523,7 @@ The existing API design and response format is constrained.
 
 The existing response format returns collections of strings which does not support additional record enrichment.
 
-Although the existing endpoints could be adapted to (optionally) return streaming/batched results, apply filtering and sorting, support pagination etc - these would all be significant internal functional changes.
+Although the existing endpoints could be adapted to (optionally) return streaming/batched results, apply filtering and sorting, support pagination etc - these would all be significant internal functional changes to these endpoints.
 
 ### 3 Why do we need a 3rd endpoint specific to metric names - it's just a special case of \_*name*_?
 
