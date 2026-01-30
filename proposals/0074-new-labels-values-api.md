@@ -84,7 +84,9 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 | Name     | Type   | Required | Default | Description                                                     |
 |----------|--------|----------|---------|-----------------------------------------------------------------|
 | `search` | string | No       | N/A     | The search string to be used for matching against metric names. |
+|          |        |          |         |                                                                 |
 | <br/>    |        |          |         |                                                                 |
+|          |        |          |         |                                                                 |
 
 <br/>
 Metric names are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -92,7 +94,7 @@ Metric names are matched if they contain this search string or a fuzzy match mee
 <br/>
 
 <br/>
-The matching score of a fuzzy match must be >= this value.
+The matching score of a fuzzy match must be &gt;= this value.
 <br/>
 
 <br/>
@@ -131,8 +133,8 @@ unix_timestamp                    | No       |         | As per the current labe
 | `end`                 | rfc3339
 <br/>
 unix_timestamp                    | No       |         | As per the current labels/values endpoint. The time range to be considered for series inspection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `limit`               | int                                           | No       | 100     | An integer value >= 0. The maximum number of results to return. The overall result set will be limited to this number after any ordering has been applied.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `batch_size`          | int                                           | No       | 100     | An integer value >= 0. The desired size of each batch of results sent in each response chunk. 
+| `limit`               | int                                           | No       | 100     | An integer value &gt;= 0. The maximum number of results to return. The overall result set will be limited to this number after any ordering has been applied.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `batch_size`          | int                                           | No       | 100     | An integer value &gt;= 0. The desired size of each batch of results sent in each response chunk. 
 <br/>
 A value of 0 indicates that the server can determine the batch size, which may be variable.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `cursor`              | string                                        | No       | N/A     | Request the next page of results. Note that this parameter can only be used with the `limit` parameter. It is not valid with any other parameter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -284,7 +286,9 @@ An endpoint specific to searching for label names.
 |-----------|--------------------|----------|---------|-------------------------------------------------------------------------------------------------------------|
 | `match[]` | string / selectors | No       | N/A     | Series selector - as per existing labels/values endpoints. Limit the labels search to these metrics/series. |
 | `search`  | string             | No       | N/A     | The search string to be used for matching against label names.                                              |
+|           |                    |          |         |                                                                                                             |
 | <br/>     |                    |          |         |                                                                                                             |
+|           |                    |          |         |                                                                                                             |
 
 <br/>
 Label names are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                                                                                                                     |
@@ -411,7 +415,9 @@ An endpoint specific to searching for label values.
 | `match[]` | string / selectors | No       | N/A     | Series selector - as per existing labels/values endpoints. Limit the search to these metrics/series. |
 | `label`   | string             | Yes      | N/A     | The label the user is requesting values for.                                                         |
 | `search`  | string             | No       | N/A     | The search string to be used for matching against label values.                                      |
+|           |                    |          |         |                                                                                                      |
 | <br/>     |                    |          |         |                                                                                                      |
+|           |                    |          |         |                                                                                                      |
 
 <br/>
 Label values are matched if they contain this search string or a fuzzy match meets the required threshold.                                                                                                                                                                                                                                              |
