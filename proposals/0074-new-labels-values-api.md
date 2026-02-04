@@ -390,7 +390,9 @@ An endpoint specific to searching for label values.
 
 #### Request
 
-**Method:** `GET` `POST`
+**Method:** `GET` or `POST`
+
+`POST` is recommended when `match[]` selectors may exceed URL length limits.
 
 **Path:** `/api/v1/search/label_values`
 
