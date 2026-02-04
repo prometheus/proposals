@@ -87,7 +87,9 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 
 #### Request
 
-**Method:** `GET` `POST`
+**Method:** `GET` or `POST`
+
+`POST` is recommended when query parameters may exceed URL length limits.
 
 **Path:** `/api/v1/search/metric_names`
 
