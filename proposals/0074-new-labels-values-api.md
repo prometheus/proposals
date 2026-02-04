@@ -317,7 +317,7 @@ An endpoint specific to searching for label names.
 
 * **alpha** - label names are sorted by alphabetical order.
 * **cardinality** - label names are sorted by their cardinality.
-* **frequency** - label names are sorted by their frequency of use.
+* **frequency** - label names are sorted by their frequency of use (i.e., the number of active series containing this label within the queried time range).
 * **score** - label names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
 
 #### Response
