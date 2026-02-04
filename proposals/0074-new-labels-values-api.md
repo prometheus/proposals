@@ -544,5 +544,10 @@ A dedicated endpoint also allows for future enrichments to be added which are on
 
 The tasks to do in order to migrate to the new idea.
 
-* [ ] Task one `<GH issue>`
-* [ ] Task two `<GH issue>` ...
+* [ ] Finalize proposal based on community feedback
+* [ ] Create Prometheus implementation issue for `/api/v1/search/metric_names`
+* [ ] Create Prometheus implementation issue for `/api/v1/search/label_names`
+* [ ] Create Prometheus implementation issue for `/api/v1/search/label_values`
+* [ ] Implement endpoints in Prometheus
+* [ ] Integrate new endpoints into Prometheus UI
+* [ ] Update Prometheus documentation
