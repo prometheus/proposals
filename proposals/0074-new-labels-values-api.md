@@ -97,6 +97,7 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 
 | Name                  | Type                                    | Required | Default | Description                                                                  |
 |-----------------------|-----------------------------------------|----------|---------|------------------------------------------------------------------------------|
+| `match[]`             | string / selectors                      | No       |         | Series selector - as per existing labels/values endpoints.                   |
 | `search`              | string                                  | No       |         | The search string to be used for matching metric names.                      |
 | `fuzz_threshold`      | int [0..100]                            | No       | 100     | Set the fuzzy match threshold.                                               |
 | `case_sensitive`      | bool                                    | No       | true    | Toggle case sensitivity in string matching.                                  |
@@ -120,6 +121,12 @@ The given `search` value will be used to match metric names.
 A match is found if the metric name contains this search value or if a fuzzy match between the metric name and this search meets the given `fuzz_threshold`.
 
 If `search` is omitted or empty, all metric names are matched.
+
+The `match[]` param can be used as an alternative to using the `search` or it can be used in conjunction with the `search`.
+
+For example;
+* `match[]={cluster=prod}&search=` - find me all metric names which have a `cluster=prod` label
+* `match[]={cluster=prod}&search=cpu` - find me all metric names which contain `cpu` and which have a `cluster=prod` label
 
 ***fuzz_threshold***
 
