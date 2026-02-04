@@ -36,7 +36,18 @@ Grafana has attempted to mitigate these limitations through a range of client-si
 
 ### Pitfalls of the current solution
 
-Pitfalls of the current metadata endpoints:
+The current metadata APIs provide limited server-side filtering, ordering, and aggregation capabilities. As a result, client applications are often required to retrieve large, unfiltered datasets and then perform filtering, sorting, and relevance ranking locally.
+
+In addition, clients must frequently combine data from multiple API endpoints to assemble the information needed for a single user interaction or view.
+
+In practice, this leads to:
+* unnecessarily **large response payloads**
+* **increased backend load**
+* a degraded user experience, as **clients must wait** for full responses before rendering meaningful results
+
+For interactive discovery workflows, this significantly increases the time-to-first-result presented to the user and constrains the ability to build responsive, incremental interfaces.
+
+Some specific examples highlighted by Grafana web application developers include;
 
 * **Limited client-side filtering**: `match[]` only filters series on the server. For label-name autocomplete clients must download all label names and then filter locally, which is slow at scale.
 * **Limited matching capabilities**: `match[]` supports regex matching of label values, but does not support fuzzy or typo-tolerant matching that discovery UIs require (e.g., user types container.memory and expects container_memory).
