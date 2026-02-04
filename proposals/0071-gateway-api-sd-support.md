@@ -36,6 +36,7 @@ As Gateway API becomes the standard (and is already GA), updating Prometheus's s
 * Provide appropriate metadata labels for discovered targets.
 * Maintain backward compatibility with existing `kubernetes_sd_config` configurations.
 * Follow existing patterns established by the Ingress role for consistency, wherever applicable.
+* Gracefully degrade service discovery if the ServiceAccount lacks permissions to access supported CRDs, including Gateway API resources.
 
 ### Audience
 
@@ -158,6 +159,7 @@ rules:
 ```
 
 NOTE: `GatewayClass` is only slated for metadata tracking, not service discovery, as the controller information exposed by them may be be fetched using existing `service` or `pod` roles (same practice as with Ingress controllers).
+NOTE: An additional patch to the service discovery mechanism, as a part of this effort, will ensure that if the ServiceAccount lacks permissions to access Gateway API resources, the discovery gracefully degrades without causing errors (using [SelfSubjectAccessReview](https://kubernetes.io/docs/reference/kubernetes-api/authorization-resources/self-subject-access-review-v1/)).
 
 ### Migration Path
 
