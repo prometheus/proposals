@@ -157,6 +157,7 @@ A Levenshtein match can be scaled to 0..100 with `similarity = (1 − (distance 
 * **cardinality** - metric names are sorted by their cardinality.
 * **frequency** - metric names are sorted by their frequency of use (i.e., the number of active series containing this metric name within the queried time range).
 * ```
+  ```
 * **score** - metric names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
 
 Note that `sort_by` is optional, and it is valid for there to be no sorting requested. This allows the server to return / stream results back immediately without the need for any server-side buffering.
