@@ -121,7 +121,7 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 | `end`                 | rfc3339 / unix_timestamp                | No       |         | As per the existing labels/values endpoint.                                  |
 | `limit`               | int >= 0                                | No       | 100     | The maximum number of results to return after any ordering has been applied. |
 | `batch_size`          | int >= 0                                | No       | 100     | The desired number of records per batch.                                     |
-| `cursor`              | string                                  | No       |         | Request the next page of results.                                            |
+| `next_token`          | string                                  | No       |         | Request the next page of results.                                            |
 
 **Notes:**
 
@@ -168,11 +168,11 @@ The desired size of each batch of results sent in each response chunk.
 
 A value of 0 indicates that the server can determine the batch size, which may be variable.
 
-***cursor***
+***next_token***
 
-Note that cursor based pagination is desirable but not essential.
+Note that pagination is desirable but not essential to this proposal.
 
-Note that this parameter can only be used with the `limit` parameter. The request should fail if the `cursor` parameter is set with any other parameter.
+Note that this parameter can only be used with the `limit` parameter. The request should fail if the `next_token` parameter is set with any other parameter.
 
 ***start/end***
 
@@ -254,7 +254,7 @@ Use existing Prometheus API status codes.
 
 ##### Example of pagination token (if supported)
 
-If cursor based pagination is supported, the `has_more` attribute is not required. The presence of the `cursor` attribute in the response indicates that there is more results available.
+If pagination is supported, the `has_more` attribute is not required. The presence of the `next_token` attribute in the response indicates that there is more results available.
 
 ```ndjson
 {
@@ -271,7 +271,7 @@ If cursor based pagination is supported, the `has_more` attribute is not require
 
 {
     "status": "success",
-    "cursor": "<some_encoded_string>"
+    "next_token": "<some_encoded_string>"
 }
 ```
 
@@ -328,7 +328,7 @@ An endpoint specific to searching for label names.
 | `end`                 | rfc3339 / unix_timestamp                | No       |         | As per above endpoint.                                         |
 | `limit`               | int >= 0                                | No       | 100     | As per above endpoint.                                         |
 | `batch_size`          | int >= 0                                | No       | 100     | As per above endpoint.                                         |
-| `cursor`              | string                                  | No       |         | As per above endpoint.                                         |
+| `next_token`          | string                                  | No       |         | As per above endpoint.                                         |
 
 **Notes:**
 
@@ -431,7 +431,7 @@ An endpoint specific to searching for label values.
 | `end`               | rfc3339 / unix_timestamp  | No       |         | As per above endpoint.                                          |
 | `limit`             | int >= 0                  | No       | 100     | As per above endpoint.                                          |
 | `batch_size`        | int >= 0                  | No       | 100     | As per above endpoint.                                          |
-| `cursor`            | string                    | No       |         | As per above endpoint.                                          |
+| `next_token`        | string                    | No       |         | As per above endpoint.                                          |
 
 **Notes:**
 - The `label` parameter has been deliberately added as a required `query` parameter to avoid issues with the existing [values](https://github.com/prometheus/prometheus/blob/main/docs/querying/api.md#querying-label-values) endpoint which requires the label to be included as a path parameter.
