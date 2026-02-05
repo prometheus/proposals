@@ -546,6 +546,62 @@ With the combination of this min value and the `limit` it would allow the server
 
 For instance, this could be used for searches such as "find me 10 metrics whose name contains `cpu` with a cardinality > 100".
 
+### Extensibility for Mimir, Thanos, Cortex
+
+The introduction of returning collections of records rather than collections of strings allows for different implementations to provide additional record decorations.
+
+This would allow each implementation to provide a custom set of additional request parameters which results in additional data in the response.
+
+To avoid conflicts, the response record format could be extended to include an `extensions` map which returns the custom fields. The `extensions` would be omitted completely in the pure Prometheus implementation.
+
+```json
+{
+  "results": [
+    {
+      "name": "cluster1",
+      "frequency": 1003,
+      "extensions": {
+        "mimir": {
+          "active_series": 10,
+          "owned_series" : 5,
+          ...
+        }
+      }
+    },
+    {
+      "name": "cluster2",
+      "frequency": 4,
+      "extensions": {
+        ...
+      }
+    }
+  ]
+}
+```
+
+The request to enable the extension could be implicit in the requested params. For instance the params could be `mimir.include_active_series=true`.
+
+To be more standards compliant, the extension could be requested in via the `Accept` header. ie `Accept: application/x-ndjson; charset=utf-8; extensions=mimir`. This would also be reflected in the returned `Content-Type`.
+
+If required for client side applications, a simple endpoint which returns the supported extensions and their data model could be exposed.
+
+*GET /api/v1/search/extensions*
+
+```json
+{
+  "mimir": {
+    "active_series": {
+      "type": "int",
+      "help": "some string explaining the field"
+    },
+    ...
+  }
+}
+
+```
+
+If required, these extensions could also be versioned.
+
 ### Testing and verification
 
 It should be possible to validate these new endpoints via comparing to the existing endpoints.
@@ -583,7 +639,7 @@ The existing response format returns collections of strings which does not suppo
 
 Although the existing endpoints could be adapted to (optionally) return streaming/batched results, apply filtering and sorting, support pagination etc - these would all be significant internal functional changes to these endpoints.
 
-### 3 Why do we need a 3rd endpoint specific to metric names - it's just a special case of \_*name*_?
+### 3. Why do we need a 3rd endpoint specific to metric names - it's just a special case of \_*name*_?
 
 Separating this endpoint allows for the additional enrichment options to be included in both the parameters and response.
 
