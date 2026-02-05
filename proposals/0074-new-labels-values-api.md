@@ -27,7 +27,7 @@ These endpoints are heavily relied upon by the Grafana web application for core 
 * **Metrics Explorer / Builder** — a click-based interface for browsing metrics and label dimensions
 * **Metrics Drilldown** — dynamically generating metric panels by iterating over label values
 
-As environments have grown in active series count, label counts, cardinality, and exploratory user activity, and as the Grafana web application itself has grown in complexity, the existing Prometheus endpoints have increasingly become a limiting factor.
+As environments have grown in series count, label counts, cardinality, and exploratory user activity, and as the Grafana web application itself has grown in complexity, the existing Prometheus endpoints have increasingly become a limiting factor.
 
 This manifests as performance bottlenecks in the Grafana UI and constrains the implementation of user-requested discovery features, particularly those that require iterative or interactive exploration of large metadata sets.
 
@@ -125,6 +125,38 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 
 **Notes:**
 
+***frequency & cardinality***
+
+For the purposes of this document, the following definitions apply;
+
+* **frequency** — number of occurrences across a dataset within the queried time range.
+* **cardinality** — the number of distinct time series within the queried time range; equivalently, the number of unique label-value combinations for a given metric or label.
+
+For example consider these samples;
+
+```text
+http_requests_total{method="GET",    status="200", instance="a"}
+http_requests_total{method="GET",    status="200", instance="b"}
+http_requests_total{method="POST",   status="200", instance="a"}
+http_requests_total{method="POST",   status="500", instance="a"}
+http_requests_total{method="POST",   status="500", instance="b"}
+
+cpu_usage_seconds_total{core="0", instance="a"}
+cpu_usage_seconds_total{core="1", instance="a"}
+cpu_usage_seconds_total{core="0", instance="b"}
+cpu_usage_seconds_total{core="0", instance="b"}
+```
+
+| Name                              | Type        | Frequency | Cardinality |
+|-----------------------------------|-------------|-----------|-------------|
+| http_requests_total               | metric_name | 5         | 5           |
+| http_requests_total{method="GET"} | metric_name | 2         | 2           |
+| cpu_usage_seconds_total           | metric_name | 4         | 3           |
+| method                            | label_name  | 5         | 2           |
+| core                              | label_name  | 4         | 2           |
+| method="GET"                      | label_value | 2         | N/A         |
+| GET                               | label_value | 2         | N/A         |
+
 ***search***
 
 The given `search` value will be used to match metric names.
@@ -155,7 +187,7 @@ A Levenshtein match can be scaled to 0..100 with `similarity = (1 − (distance 
 
 * **alpha** - metric names are sorted by alphabetical order.
 * **cardinality** - metric names are sorted by their cardinality.
-* **frequency** - metric names are sorted by their frequency of use (i.e., the number of active series containing this metric name within the queried time range).
+* **frequency** - metric names are sorted by their frequency.
 * ```
   ```
 * **score** - metric names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
