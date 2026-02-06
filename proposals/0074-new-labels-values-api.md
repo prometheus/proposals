@@ -214,7 +214,9 @@ Note that this parameter can only be used with the `limit` parameter. The reques
 
 ***start/end***
 
-It is proposed that these could have default values which align to a reasonable look-back period. ie last 24 hours
+It is proposed that these could have default values which align to a reasonable look-back period. 
+
+Ideally this would fall within the WAL. A default look-back of 1 hour is proposed. 
 
 ***include_***
 
