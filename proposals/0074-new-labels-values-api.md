@@ -89,9 +89,10 @@ Each endpoint allows for the specific searching, filtering, sorting of metric na
 
 Note that;
 
-* the existing Prometheus API labels/values parameter set is re-used in each endpoint, with additional parameters introduced to deliver the desired functionality
-* the response format allows for enriched data to be added to each metric name, label name or label value record - rather than just a collection of strings
-* the response is NDJSON (`application/x-ndjson`), allowing for a streamed chunked encoding response
+* the existing Prometheus API labels/values parameter set is re-used in each endpoint, with additional parameters introduced to deliver the desired functionality.
+* the response format allows for enriched data to be added to each metric name, label name or label value record - rather than just a collection of strings.
+* the response is NDJSON (`application/x-ndjson`), allowing for a streamed chunked encoding response.
+* the existing Prometheus API response status, errors, warnings messages should be maintained. Note their placement in the response has been adapted for the streaming response format.
 
 ### `GET /api/v1/search/metric_names`
 
@@ -330,6 +331,72 @@ As per existing endpoints.
     "status": "error",
     "errorType": "bad_data",
     "error": "1:4: parse error: unexpected \"(\"",
+}
+```
+
+##### Example of has_more
+
+Note - The `has_more` flag could replace the need for the existing Prometheus `results truncated due to limit` warning;
+
+```ndjson
+{
+    "results": [
+        { 
+          "name": "activity_tracker_failed_total", 
+        },
+        { 
+          "name": "activity_tracker_free_slots",
+        }
+    ]
+}
+
+{
+    "results": [
+        ...
+    ]
+}
+
+{
+    "status": "success",
+    "has_more": true
+}
+```
+
+##### Example of warnings
+
+Warnings can be added to either to an individual batch or to the overall request.
+
+As per the existing labels/values endpoints the `warnings` attribute is omitted in the response if there are none.
+
+If informational messages are also required they could be added in a similar way to a batch or the end message.
+
+```ndjson
+{
+    "results": [
+        { 
+          "name": "activity_tracker_failed_total", 
+        },
+        { 
+          "name": "activity_tracker_free_slots",
+        }
+    ],
+    "warnings": [
+      "some_warning_relevant_to_this_batch"
+    ]
+}
+
+{
+    "results": [
+        ...
+    ]
+}
+
+{
+    "status": "success",
+    "has_more": true,
+    "warnings": [
+      "some_other_warning_relevant_to_the_overall_request"
+    ]
 }
 ```
 
