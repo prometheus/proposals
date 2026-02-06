@@ -87,12 +87,52 @@ A new set of `search` endpoints are proposed.
 
 Each endpoint allows for the specific searching, filtering, sorting of metric names, label names and label values respectively.
 
-Note that;
+### Implementation notes
 
 * the existing Prometheus API labels/values parameter set is re-used in each endpoint, with additional parameters introduced to deliver the desired functionality.
 * the response format allows for enriched data to be added to each metric name, label name or label value record - rather than just a collection of strings.
 * the response is NDJSON (`application/x-ndjson`), allowing for a streamed chunked encoding response.
 * the existing Prometheus API response status, errors, warnings messages should be maintained. Note their placement in the response has been adapted for the streaming response format.
+
+#### frequency & cardinality
+
+For the purposes of this document, the following definitions apply;
+
+* **frequency** — the number of occurrences of a label, or label value across time series within the queried time range. A single time series contributes at most one occurrence.
+* **cardinality** — the number of distinct time series within the queried time range; equivalently, the number of unique label-value combinations for a given metric or label.
+
+Cardinality answers "How many unique series exist?".
+
+Frequency answers "How commonly does this label / value appear across series?"
+
+For a metric name, cardinality and frequency are equivalent so only cardinality is considered.
+
+For a label name, cardinality and frequency are independent.
+
+For a label value, only frequency is relevant.
+
+For example consider these samples;
+
+```text
+http_requests_total{method="GET",    status="200", instance="a"}
+http_requests_total{method="GET",    status="200", instance="b"}
+http_requests_total{method="POST",   status="200", instance="a"}
+http_requests_total{method="POST",   status="500", instance="a"}
+http_requests_total{method="POST",   status="500", instance="b"}
+
+cpu_usage_seconds_total{core="0", instance="a"}
+cpu_usage_seconds_total{core="1", instance="a"}
+cpu_usage_seconds_total{core="0", instance="b"}
+```
+
+| Name                              | Type        | Frequency | Cardinality |
+|-----------------------------------|-------------|-----------|-------------|
+| http_requests_total               | metric_name | N/A       | 5           |
+| http_requests_total{method="GET"} | metric_name | N/A       | 2           |
+| method                            | label_name  | 5         | 2           |
+| core                              | label_name  | 4         | 2           |
+| method="GET"                      | label_value | 2         | N/A         |
+| GET                               | label_value | 2         | N/A         |
 
 ### `GET /api/v1/search/metric_names`
 
@@ -108,56 +148,23 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 
 **Query parameters:**
 
-| Name                  | Type                                    | Required | Default | Description                                                                  |
-|-----------------------|-----------------------------------------|----------|---------|------------------------------------------------------------------------------|
-| `match[]`             | string / selectors                      | No       |         | Series selector - as per existing labels/values endpoints.                   |
-| `search`              | string                                  | No       |         | The search string to be used for matching metric names.                      |
-| `fuzz_threshold`      | int [0..100]                            | No       | 100     | Set the fuzzy match threshold.                                               |
-| `case_sensitive`      | bool                                    | No       | true    | Toggle case sensitivity in string matching.                                  |
-| `sort_by`             | alpha / cardinality / frequency / score | No       |         | Request how matching metrics should be sorted in the response.               |
-| `sort_dir`            | asc / dsc                               | No       | asc     | Request the ordering of the sort. Only valid when `sort_by` is set.          |
-| `include_frequency`   | bool                                    | No       | false   | Request metric frequency.                                                    |
-| `include_cardinality` | bool                                    | No       | false   | Request metric cardinality.                                                  |
-| `include_metadata`    | bool                                    | No       | false   | Request metric metadata (units, type, description).                          |
-| `start`               | rfc3339 / unix_timestamp                | No       |         | As per the existing labels/values endpoint.                                  |
-| `end`                 | rfc3339 / unix_timestamp                | No       |         | As per the existing labels/values endpoint.                                  |
-| `limit`               | int >= 0                                | No       | 100     | The maximum number of results to return after any ordering has been applied. |
-| `batch_size`          | int >= 0                                | No       | 100     | The desired number of records per batch.                                     |
-| `next_token`          | string                                  | No       |         | Request the next page of results.                                            |
+| Name                  | Type                        | Required | Default | Description                                                                  |
+|-----------------------|-----------------------------|----------|---------|------------------------------------------------------------------------------|
+| `match[]`             | string / selectors          | No       |         | Series selector - as per existing labels/values endpoints.                   |
+| `search`              | string                      | No       |         | The search string to be used for matching metric names.                      |
+| `fuzz_threshold`      | int [0..100]                | No       | 100     | Set the fuzzy match threshold.                                               |
+| `case_sensitive`      | bool                        | No       | true    | Toggle case sensitivity in string matching.                                  |
+| `sort_by`             | alpha / cardinality / score | No       |         | Request how matching metrics should be sorted in the response.               |
+| `sort_dir`            | asc / dsc                   | No       | asc     | Request the ordering of the sort. Only valid when `sort_by` is set.          |
+| `include_cardinality` | bool                        | No       | false   | Request metric cardinality.                                                  |
+| `include_metadata`    | bool                        | No       | false   | Request metric metadata (units, type, description).                          |
+| `start`               | rfc3339 / unix_timestamp    | No       |         | As per the existing labels/values endpoint.                                  |
+| `end`                 | rfc3339 / unix_timestamp    | No       |         | As per the existing labels/values endpoint.                                  |
+| `limit`               | int >= 0                    | No       | 100     | The maximum number of results to return after any ordering has been applied. |
+| `batch_size`          | int >= 0                    | No       | 100     | The desired number of records per batch.                                     |
+| `next_token`          | string                      | No       |         | Request the next page of results.                                            |
 
 **Notes:**
-
-***frequency & cardinality***
-
-For the purposes of this document, the following definitions apply;
-
-* **frequency** — number of occurrences across a dataset within the queried time range.
-* **cardinality** — the number of distinct time series within the queried time range; equivalently, the number of unique label-value combinations for a given metric or label.
-
-For example consider these samples;
-
-```text
-http_requests_total{method="GET",    status="200", instance="a"}
-http_requests_total{method="GET",    status="200", instance="b"}
-http_requests_total{method="POST",   status="200", instance="a"}
-http_requests_total{method="POST",   status="500", instance="a"}
-http_requests_total{method="POST",   status="500", instance="b"}
-
-cpu_usage_seconds_total{core="0", instance="a"}
-cpu_usage_seconds_total{core="1", instance="a"}
-cpu_usage_seconds_total{core="0", instance="b"}
-cpu_usage_seconds_total{core="0", instance="b"}
-```
-
-| Name                              | Type        | Frequency | Cardinality |
-|-----------------------------------|-------------|-----------|-------------|
-| http_requests_total               | metric_name | 5         | 5           |
-| http_requests_total{method="GET"} | metric_name | 2         | 2           |
-| cpu_usage_seconds_total           | metric_name | 4         | 3           |
-| method                            | label_name  | 5         | 2           |
-| core                              | label_name  | 4         | 2           |
-| method="GET"                      | label_value | 2         | N/A         |
-| GET                               | label_value | 2         | N/A         |
 
 ***search***
 
@@ -189,9 +196,6 @@ A Levenshtein match can be scaled to 0..100 with `similarity = (1 − (distance 
 
 * **alpha** - metric names are sorted by alphabetical order.
 * **cardinality** - metric names are sorted by their cardinality.
-* **frequency** - metric names are sorted by their frequency.
-* ```
-  ```
 * **score** - metric names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
 
 Note that `sort_by` is optional, and it is valid for there to be no sorting requested. This allows the server to return / stream results back immediately without the need for any server-side buffering.
@@ -257,7 +261,6 @@ Use existing Prometheus API status codes.
     "results": [
         { 
           "name": "activity_tracker_failed_total", 
-          "frequency": 1003,
           "cardinality": 10,
           "type": "counter",
           "help": "How many times has activity tracker failed to insert new activity",
@@ -265,7 +268,6 @@ Use existing Prometheus API status codes.
         },
         { 
           "name": "activity_tracker_free_slots",
-          "frequency": 4,
           "cardinality": 50,
           "type": "gauge",
           "help": "Number of free slots in activity file.",
@@ -436,7 +438,7 @@ An endpoint specific to searching for label names.
 
 * **alpha** - label names are sorted by alphabetical order.
 * **cardinality** - label names are sorted by their cardinality.
-* **frequency** - label names are sorted by their frequency of use (i.e., the number of active series containing this label within the queried time range).
+* **frequency** - label names are sorted by their frequency.
 * **score** - label names are sorted by a matching score. Weighting is given to matches that start with the given search string. The ordering should be optimised for auto-complete use cases.
 
 #### Response
@@ -485,7 +487,7 @@ Use existing Prometheus API status codes.
         },
         { 
           "name": "container",
-          "frequency": 4,
+          "frequency": 60,
           "cardinality": 50
         }
     ]
@@ -608,7 +610,7 @@ From an operator perspective, they may not care for the exact value just that it
 
 On a similar thought process, a "minimum frequency" could be supported. For instance, the API request could set a `min-frequency=100`.
 
-The server would only return metric/label/value matches if their associated frequency was >= 100. This allows for the discovery of high frequency or high cardinality metrics without needing to do a full search and order by.
+The server would only return metric/label/value matches if their associated frequency/cardinality was >= 100. This allows for the discovery of high frequency or high cardinality metrics without needing to do a full search and order by.
 
 With the combination of this min value and the `limit` it would allow the server to return more quickly.
 
@@ -630,8 +632,8 @@ To avoid conflicts, the response record format could be extended to include an `
       "frequency": 1003,
       "extensions": {
         "mimir": {
-          "active_series": 10,
-          "owned_series" : 5,
+          "some_mimir_specific_attribute": 10,
+          "another_mimir_specific_attribute" : 5,
           ...
         }
       }
@@ -658,7 +660,7 @@ If required for client side applications, a simple endpoint which returns the su
 ```json
 {
   "mimir": {
-    "active_series": {
+    "some_mimir_specific_attribute": {
       "type": "int",
       "help": "some string explaining the field"
     },
@@ -683,7 +685,7 @@ These are new endpoints and do not change or alter any existing functionality. N
 ### Known unknowns
 
 * confirm feasibility of including frequency and cardinality in these API responses
-* confirm feasibility of supporting cursor based pagination for these new endpoints
+* confirm requirement of supporting cursor based pagination for these new endpoints
 * confirm any performance / response time constraints for these new endpoints
 * specific choice of fuzzy search algorithm
 * specific implementation of the search result ordering for auto-complete scenarios
@@ -719,6 +721,7 @@ A dedicated endpoint also allows for future enrichments to be added which are on
 
 The tasks to do in order to migrate to the new idea.
 
+* [ ] Confirm requirement for supporting pagination or not
 * [ ] Finalize proposal based on community feedback
 * [ ] Create Prometheus implementation issue for `/api/v1/search/metric_names`
 * [ ] Create Prometheus implementation issue for `/api/v1/search/label_names`
