@@ -53,9 +53,10 @@ Some specific examples highlighted by Grafana web application developers include
 * **Limited matching capabilities**: `match[]` supports regex matching of label values, but does not support fuzzy or typo-tolerant matching that discovery UIs require (e.g., user types container.memory and expects container_memory).
 * **Unordered `limit` results**: `limit` returns an arbitrary subset of values rather than returning the most relevant or most frequent values, which causes drilldown UIs to display incomplete or unrepresentative results.
 * **No metadata about further results**: responses do not indicate whether `limit` truncated the result set or how many total values exist, preventing the UI from making informed choices (show “more” affordance, refine query, etc.).
-* **No pagination/cursors**: there is no offset/cursor mechanism; UIs cannot page through thousands of label values without fetching very large responses that may time out or overload the server.
 * **Fragmented calls for full context**: clients must call multiple endpoints (labels, metric metadata, series queries) to assemble a page of enriched metric information, increasing latency and backend load.
 * **No streaming / incremental delivery**: the API returns the full result set only after query completion; clients cannot render partial results quickly for improved interactivity and low latency interactions.
+
+It is also noted that as part of this proposal there is also a **feature** request from the web application developers to support **pagination** (cursor/offset). *A request has been mde to the web application developers to confirm if this is needed assuming batched streaming of responses are supported.*
 
 ## Goals
 
