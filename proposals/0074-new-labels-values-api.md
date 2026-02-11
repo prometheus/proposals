@@ -267,6 +267,10 @@ Use existing Prometheus API status codes.
 
 ##### Example of NDJSON batched result set - with include_* flags set
 
+Note on the inclusion of metadata. Although the existing `/api/v1/metadata` endpoint accepts a `limit_per_metric` flag, the proposal here is to return a single metadata record.
+
+The record included in this response would be the same as the first record returned in the current `/api/v1/metadata` endpoint (for a given metric).
+
 ```ndjson
 {
     "results": [
