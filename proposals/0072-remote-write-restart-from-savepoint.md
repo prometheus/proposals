@@ -1,4 +1,4 @@
-## Remote Write: Restart from savepoint
+## Remote Write: Restart from segment-based savepoint
 
 * **Owners:**
   * [@kgeckhart](https://github.com/kgeckhart)
@@ -14,8 +14,6 @@ Since then there have been a lot of discussion / attempts but nothing has been m
 * https://github.com/prometheus/prometheus/pull/9862
 * https://github.com/ptodev/prometheus/pull/1
 
-I believe the issue for [tsdb/agent: Prevent unread segments from being truncated](https://github.com/prometheus/prometheus/issues/17616) would need to be completed but can stand on its own as it's purely for notifying when segments have been read.
-
 * **Other docs or links:**
 
 > This effort aims to have an agreed upon design with requirements for completing the work to allow remote write to restart data delivery from a savepoint and not from `time.Now()`
@@ -26,16 +24,12 @@ Remote write is backed by a write-ahead-log (WAL) where all data is persisted be
 If a config is reloaded or prometheus/agent is restarted before flushing pending samples we will skip those samples.
 Given we have a persistent WAL this behavior is unexpected by users and can cause a lot of confusion.
 
-### Pitfalls of the current solution
-
-As mentioned in the why, this behavior is often confusing to users who know a WAL is in use but still finds they have missing data on restart.
-
 ## Goals
 
-1. Support resuming from a savepoint for each configured `remote_write` destination.
+1. Support resuming from a savepoint for each configured `remote_write` destination via an opt-in feature flag.
 2. Taking a savepoint for a remote_write destination should not incur significant overhead.
-3. Changing the `queue_configuration` for a `remote_write` destination should not result in a new savepoint entry.
-   * The `queue_configuration` includes fields like min/max shards and other performance tuning parameter.s
+3. Changing the `queue_configuration` for a `remote_write` destination should not result in losing a savepoint entry.
+   * The `queue_configuration` includes fields like min/max shards and other performance tuning parameters.
    * These can be expected to change under normal circumstances and should not trigger a data loss scenario.
 4. Guards need to be in place to protect against infinite WAL growth.
 5. Stretch: Remote write supports at-least-once delivery of samples in the WAL.
@@ -47,51 +41,45 @@ As mentioned in the why, this behavior is often confusing to users who know a WA
 
 ## Non-Goals
 
-* Creating a watcher that is capable of tracking offsets.
+* Tracking position within a WAL segment (byte or record-level offsets). The savepoint tracks at segment granularity only.
 * Remote write supports exactly-once delivery
 
 ## How
 
-Enabling replay will require changes across `remote.WriteStorage`, `remote.QueueManager`, and `wlog.Watcher`. Implementing https://github.com/prometheus/prometheus/issues/17616 will help as it will provide a hook to signal when segments have been fully read from the watcher through `remote.WriteStorage`. Anytime the `wlog.Watcher` [changes the current segment](https://github.com/prometheus/prometheus/blob/18efd9d629c467877ebe674bbc1edbba8abe54be/tsdb/wlog/watcher.go#L314) the following would happen,
+A basic replay to accomplish all non-stretch goals would be as follows.
 
-```mermaid
-sequenceDiagram
-  wlog.Watcher->>wlog.Watcher: Run()
-  loop Until closed
-    wlog.Watcher->>wlog.Watcher: currentSegmentMetric.Set
-    wlog.Watcher->>remote.QueueManager: OnSegmentChange()
-    remote.QueueManager->>remote.WriteStorage: OnSegmentChange()
-    remote.WriteStorage->>remote.WriteStorage: Update currentSegment for Queue
-    remote.WriteStorage->>remote.WriteStorage: Are all queues at or ahead of currentSegment?
-    alt yes
-      remote.WriteStorage->>Subscriber: SegmentChange()
-    end
-  end
-```
+### Implementation flow
 
-`remote.WriteStorage` would be tracking the currentSegment for each queue supporting. Since this isn't completed it's open to discussion but it seems like a reasonable chunk to start with that has values on its own.
+**On startup:**
 
-A basic replay to accomplishing all non-stretch goals would be as follows
+1. Read the savepoint file and load the last saved segment number for each queue.
+2. Pass the saved segment to the watcher for each queue so replay begins from that segment rather than the current WAL head.
 
-### Code flow
+**At runtime:**
 
-1. Adding another configurable timer to [`remote.WriteStorage.run()`](https://github.com/prometheus/prometheus/blob/f50ff0a40ad4ef24d9bb8e81a6546c8c994a924a/storage/remote/write.go#L114-L125) periodically persisting the current segments for each queue.
-2. Ensure `remote.WriteStorage.Close()` will also attempt to write current segments
-3. Read persisted queue segment positions in `remote.NewWriteStorage()`
-4. Update `remote.WriteStorage.ApplyConfig` to provide the persisted current segment to `remote.NewQueueManager`
-5. Update `remote.NewQueueManager` to provide a starting segment to `wlog.NewWatcher`
-6. Update `wlog.NewWatcher.Run()` to start sending samples if a starting segment is configured
-7. Walk through the `remote.QueueManager` send code to ensure duplicate data errors will not cause slow downs in data delivery (we have a high probability of sending duplicate data).
+3. On a configurable schedule, write the current segment for each queue to the savepoint file on disk.
+4. On clean shutdown, also write the savepoint before exiting.
 
-This flow should be enough to to accomplish Goal 1: Support resuming from a savepoint for each configured `remote_write` destination.
+**Duplicate handling:**
 
-The act of taking a savepoint will require a lock to be held but given we do it on a schedule this will be infrequent enough that the implementation should safely accomplish Goal 2: Taking a savepoint for a remote_write destination should not incur significant overhead (see testing for further info).
+5. Since replay starts at a segment boundary rather than an exact position within the segment, some already-delivered samples may be re-sent. The remote write destination must handle duplicate or out-of-order sample errors gracefully so these do not slow down delivery. The probability of duplicates on startup after replay is high due to redoing whole segments.
+
+This flow should be enough to accomplish Goals 1 and 2. The savepoint write requires a lock but given it happens on a schedule it will be infrequent enough to avoid significant overhead (see testing for further info). Ideally, the implementation could help solve [tsdb/agent: Prevent unread segments from being truncated](https://github.com/prometheus/prometheus/issues/17616) which would require the agent to be made aware when remote write has progressed passed a specific segment. 
 
 ### Savepoint file format/location
 
 The savepoint would be stored in the `remote.WriteStorage.dir` which would be next to the `/wal` directory.
 
 We only care about the queue hash and the current segment so a json encoded file seems reasonable for this. A key value format should make it easier to evolve over time vs a more basic delimited file.
+
+Example savepoint file (keys are queue hashes, values are savepoint entries):
+
+```json
+{
+  "abc123def456": { "segment": 42 },
+  "789xyz012abc": { "segment": 39 }
+}
+```
 
 Solving for, Goal 3: Changing the `queue_configuration` for a `remote_write` destination should not result in a new savepoint entry.
 
@@ -105,54 +93,27 @@ Goal 4: Guards need to be in place to protect against infinite WAL growth is cap
 
 I believe prombench is sufficient to prove Goal 2: Taking a savepoint for a remote_write destination should not incur significant overhead. Open to further benchmarking ideas but given the components + time necessary for a proper test ensuring prombench is capable of covering this would be the most ideal.
 
-### Further reducing duplicated data sent
-
-Replaying a whole segment can still result in a fair amount of duplicated data on startup. If we added tracking the lowest timestamp delivered via remote write to in the savepoint it could reduce this number (lowest timestamp is required because the WAL supports out of order writes). At startup the tracked lowest timestamp would be used as marker for where to start writing data, reducing the amount of duplicated data replayed. At worst it would start from the beginning of the segment.
-
 ### Goal 5: Stretch: Remote write supports at-least-once delivery of samples in the WAL.
 
-The amount of complexity in this goal is large, it is my opinion that our current state where all samples are lost is worse than implementing a replay which does not give us at-least-once delivery. I believe the proposed replay implementation would provide a good basis for an at-least-once solution.
+The amount of complexity in this goal is large, it is my opinion that our current state where all samples are lost is worse than implementing a replay which does not give us at-least-once delivery. The basic segment replay has a gap: the savepoint advances when the watcher moves to a new segment, but the queue may not have finished sending all samples from the previous segment — a restart between the savepoint being written and the queue flushing that segment still loses those samples. I believe the proposed replay provides a good basis for closing this gap.
 
-A solution would need to involve internals of `remote.QueueManager` as part of an `OnSegmentChange` pipeline. One option could be to implement the same pattern where `remote.WriteStorage` tracks the segment for each `remote.QueueManager`, in this case `remote.QueueManager` would track the segment of each shard and take responsibility for propagating the notification when all shards are at or beyond the segment.
+An intermediate step would be to track the lowest timestamp successfully delivered in the savepoint. At startup, this timestamp would be used as a marker to skip already-delivered samples within the replayed segment, reducing duplicates. The lowest timestamp is required rather than the latest because the WAL supports out-of-order writes. At worst, replay still starts from the beginning of the segment. This doesn't help solve our at-least-once goal it helps reduce the amount of duplicated data sent on startup. 
 
-```mermaid
-sequenceDiagram
-  wlog.Watcher->>wlog.Watcher: Run()
-  loop Until closed
-    wlog.Watcher->>wlog.Watcher: currentSegmentMetric.Set
-    wlog.Watcher->>remote.QueueManager: OnSegmentChange()
-    remote.QueueManager->>remote.QueueManager.shards: OnSegmentChange()
-    remote.QueueManager.shards->>remote.QueueManager.shards: Store new segment and current batchQueue depth + 1 <br> (number of batches to send to clear the segment)
-    remote.QueueManager.shards->>remote.QueueManager.shards: Decrement depths on send <br> (we could have more than 1 segment enqueued)
-    remote.QueueManager.shards->>remote.QueueManager.shards: Depth is zero for a segment? 
-    alt yes
-      remote.QueueManager.shards->>remote.QueueManager: Update currentSegment for shard id
-    end
-    remote.QueueManager->>remote.QueueManager: All segments at or ahead of currentSegment?
-    alt yes
-      remote.QueueManager->>remote.WriteStorage: OnSegmentChange()
-    end
-    remote.WriteStorage->>remote.WriteStorage: Update currentSegment for Queue
-    remote.WriteStorage->>remote.WriteStorage: Are all queues at or ahead of currentSegment?
-    alt yes
-      remote.WriteStorage->>Subscriber: SegmentChange()
-    end
-  end
-```
-
-I believe this bypasses resharding complexity, as a reshard triggers a purging of all queues clearing which would also clear any pending segment changes. The complexity will come from ensuring the overhead from added locking is low enough to keep remote write delivery rates relatively unchanged.
+A true at-least-once solution would require tracking the segments through the queue. Since each queue uses multiple parallel shards to send data to the remote destination we would need every shard to confirm it has finished delivering all samples from a segment before the savepoint advances for that segment. The potential for more blocking here is large and before attempting to solve this problem it would be best to tackle reported remote write contention (see https://github.com/prometheus/prometheus/issues/17277).
 
 ## Alternatives
 
-1. `remote.QueueManager` should own syncing its own savepoint (most early implementations took this approach).
-   * `remote.QueueManager` already has a lot of responsibilities and will take on more for at-least-once.
-   * `remote.WriteStorage` has reasonable hook points to run this logic without adding a lot more  complexity.
-2. The savepoint should be synchronously updated when segments change.
-   * Introducing a bit of time between knowing that a segment changed to persisting it gives us more time to fully deliver the batch before we persist the change.
-   * Synchronously committing it makes the potential gap larger.
-   * If we assume a 15 second queue delay then syncing the savepoint every 30 seconds gives a lot of room for the segment to be fully processed before being committed.
-   * The trade-off being more unnecessary data being replayed on startup.
-   * After implementing a solution for at-least-once we can reassess how often we commit/if we should make it synchronous.
+1. **The queue owns syncing its own savepoint** (most early implementations took this approach).
+   * Pros: Savepoint logic lives close to the data being tracked.
+   * Cons: The queue already has significant responsibilities and will take on more for the at-least-once stretch goal. Centralizing savepoint persistence in the write storage layer keeps the queue focused.
+
+2. **The savepoint is synchronously updated when segments change during WAL watching.**
+   * Pros: Simpler implementation — no separate timer needed. Given the queue has limited depth, watcher segment tracking may be a sufficient persistence point.
+   * Cons: Synchronously committing on every segment change means the savepoint may advance before the queue has had time to deliver the batch, increasing the amount of data replayed on restart. A periodic delayed approach (e.g., persist every 30s with a ~15s queue delay) gives the queue more time to process a segment before committing. After implementing at-least-once this decision can be revisited.
+
+3. **A `SegmentTracker` component injected into the watcher owns savepoint persistence** (rather than write storage orchestrating it).
+   * Pros: Simpler for the basic replay — persistence stays close to where segment changes are observed, and reuses the work from https://github.com/prometheus/prometheus/issues/17616.
+   * Cons: This approach breaks down as requirements grow. Adding the lowest timestamp to the savepoint requires the savepoint to move up to the queue. Adding at-least-once requires segment tracking to consider when data was fully sent, which also moves up to the queue. The write storage approach is chosen to avoid migrating ownership multiple times.
 
 ## Action Plan
 
