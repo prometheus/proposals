@@ -629,13 +629,13 @@ The user is requesting to match on any records which when applied to the fuzzy a
 
 It is proposed that this search should also inherently also apply the simple search filter of ‘contains’. The search returns records which contain the given search string `or` meet the fuzz threshold score.
 
-The reason for this is that in a fuzzy implementation such as Jaro and Jaro-Winkler, results which contain the given search string are easily excluded depending on their position in the record. 
+The reason for this is that in a fuzzy implementation such as Jaro and Jaro-Winkler, results which contain the given search string are easily excluded depending on their position in the record.
 
 See the table below with example scores for searching for `cpu`.
 
-__It is proposed for this search, the fuzz algorithm should be Jaro only. No prefix boost. The prefix boosting is more relevant to the use of ordering.__
+**It is proposed for this search, the fuzz algorithm should be Jaro only. No prefix boost. The prefix boosting is more relevant to the use of ordering.**
 
-| Metric name                                                          | Jaro (no prefix boost) | Jaro-Winkler (p=0.1, max prefix=4) | 
+| Metric name                                                          | Jaro (no prefix boost) | Jaro-Winkler (p=0.1, max prefix=4) |
 |----------------------------------------------------------------------|------------------------|------------------------------------|
 | admission_admitted_elastic_cpu                                       | 0.0                    | 0.0                                |
 | admission_admitted_elastic_cpu_bulk_normal_pri                       | 0.0                    | 0.0                                |
@@ -653,7 +653,7 @@ This scenario requires the search strings to be set and the fuzz search is eithe
 
 In either case, we have a list of records which need to be ordered in a manner which is logical for auto-completion.
 
-__It is proposed to use Jaro-Winkler scores to provide the sort order.__ This will inherently give a higher score to those matches with a prefix match on the given search string. Note - experimentation may be needed on the Jaro-Winkler max-prefix input option.
+**It is proposed to use Jaro-Winkler scores to provide the sort order.** This will inherently give a higher score to those matches with a prefix match on the given search string. Note - experimentation may be needed on the Jaro-Winkler max-prefix input option.
 
 Ideally, if the search filtering has already calculated the Jaro score for a record this can be re-used and only the prefix-boost needs to be calculated and added to the score.
 
@@ -663,7 +663,7 @@ For searches which did not use any fuzzy filtering, the records would be passed 
 
 The following discusses a proposal for storage querier interface changes to support this API implementation.
 
-The existing Labels/Values API leverages the [storage.LabelQuerier](https://github.com/prometheus/prometheus/blob/main/storage/interface.go#L175-L189) interface. 
+The existing Labels/Values API leverages the [storage.LabelQuerier](https://github.com/prometheus/prometheus/blob/main/storage/interface.go#L175-L189) interface.
 
 Additional parameters are passed to the search functions using the [storage.LabelHints](https://github.com/prometheus/prometheus/blob/main/storage/interface.go#L254-L257) structure.
 
@@ -673,8 +673,8 @@ Additional parameters are passed to the search functions using the [storage.Labe
 // FilteredResult is an intermediate result which is created when applying a Filter when searching for label/values.
 // A fuzzy match score (if any) is returned so that it can be used by any subsequent comparators.
 type FilteredResult struct {
-	Value string   // The metric name, label name or label value.
-    Score float64  // Relevance score in [0.0, 1.0]. 1.0 is returned if no fuzzy filter was applied in the filtering.
+	Value string  // The metric name, label name or label value.
+	Score float64 // Relevance score in [0.0, 1.0]. 1.0 is returned if no fuzzy filter was applied in the filtering.
 }
 
 // Filter is used to reduce the set of labels/values.
@@ -710,23 +710,23 @@ type SearchHints struct {
 
 // SearcherValueSet is an iterator returned from the Searcher label/value search functions.
 type SearcherValueSet interface {
-    Next() bool
-    At() string
-    Warnings() annotations.Annotations
-    Err() error
-    // close this iterator and releases its resources. This does not close the Searcher. The iterator should be closed before the Searcher is closed.
-    Close()
+	Next() bool
+	At() string
+	Warnings() annotations.Annotations
+	Err() error
+	// close this iterator and releases its resources. This does not close the Searcher. The iterator should be closed before the Searcher is closed.
+	Close()
 }
 
 // Searcher allows for the searching, filtering and ordering of label names and values. The result set is accessible via an SearcherValueSet iterator.
 type Searcher interface {
-    // SearchLabelNames returns label names matching the search criteria.
+	// SearchLabelNames returns label names matching the search criteria.
 	// The SearcherValueSet iterator is ordered by any given Comparator.
 	SearchLabelNames(ctx context.Context, hints *SearchHints, matchers ...*labels.Matcher) (SearcherValueSet, error)
-  
-    // SearchLabelValues returns label values for the given label name.
-    // The SearcherValueSet iterator is ordered by any given Comparator.
-    SearchLabelValues(ctx context.Context, name string, hints *SearchHints, matchers ...*labels.Matcher) (SearcherValueSet, error)
+
+	// SearchLabelValues returns label values for the given label name.
+	// The SearcherValueSet iterator is ordered by any given Comparator.
+	SearchLabelValues(ctx context.Context, name string, hints *SearchHints, matchers ...*labels.Matcher) (SearcherValueSet, error)
 }
 
 ```
@@ -836,7 +836,7 @@ A dedicated endpoint also allows for future enrichments to be added which are on
 
 The tasks to do in order to migrate to the new idea.
 
-* [x] Confirm requirement for supporting pagination or not - not required
+* [X] Confirm requirement for supporting pagination or not - not required
 * [ ] Finalize proposal based on community feedback
 * [ ] Create Prometheus implementation issue for `/api/v1/search/metric_names`
 * [ ] Create Prometheus implementation issue for `/api/v1/search/label_names`
