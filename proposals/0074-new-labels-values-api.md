@@ -158,6 +158,7 @@ An endpoint specific to searching for metric names (\_\_name__ values) and obtai
 | `sort_dir`            | asc / dsc                   | No       | asc     | Request the ordering of the sort. Only valid when `sort_by` is set.          |
 | `include_cardinality` | bool                        | No       | false   | Request metric cardinality.                                                  |
 | `include_metadata`    | bool                        | No       | false   | Request metric metadata (units, type, description).                          |
+| `include_score`       | bool                        | No       | false   | Request the fuzz search score to be returned for reach result.               |
 | `start`               | rfc3339 / unix_timestamp    | No       |         | As per the existing labels/values endpoint.                                  |
 | `end`                 | rfc3339 / unix_timestamp    | No       |         | As per the existing labels/values endpoint.                                  |
 | `limit`               | int >= 0                    | No       | 100     | The maximum number of results to return after any ordering has been applied. |
@@ -275,6 +276,7 @@ The record included in this response would be the same as the first record retur
     "results": [
         { 
           "name": "activity_tracker_failed_total", 
+          "score": 0.76,
           "cardinality": 10,
           "type": "counter",
           "help": "How many times has activity tracker failed to insert new activity",
@@ -282,6 +284,7 @@ The record included in this response would be the same as the first record retur
         },
         { 
           "name": "activity_tracker_free_slots",
+           "score": 0.50,
           "cardinality": 50,
           "type": "gauge",
           "help": "Number of free slots in activity file.",
@@ -418,6 +421,7 @@ An endpoint specific to searching for label names.
 | `sort_dir`            | asc / dsc                               | No       | asc     | As per above endpoint.                                          |
 | `include_frequency`   | bool                                    | No       | false   | Request label frequency.                                        |
 | `include_cardinality` | bool                                    | No       | false   | Request label cardinality.                                      |
+| `include_score`       | bool                                    | No       | false   | Request the fuzz search score to be returned for reach result.  |
 | `start`               | rfc3339 / unix_timestamp                | No       |         | As per above endpoint.                                          |
 | `end`                 | rfc3339 / unix_timestamp                | No       |         | As per above endpoint.                                          |
 | `limit`               | int >= 0                                | No       | 100     | As per above endpoint.                                          |
@@ -521,6 +525,7 @@ An endpoint specific to searching for label values.
 | `sort_by`           | alpha / frequency / score | No       |         | As per above endpoint.                                           |
 | `sort_dir`          | asc / dsc                 | No       | asc     | As per above endpoint.                                           |
 | `include_frequency` | bool                      | No       | false   | Request value frequency.                                         |
+| `include_score`     | bool                      | No       | false   | Request the fuzz search score to be returned for reach result.   |
 | `start`             | rfc3339 / unix_timestamp  | No       |         | As per above endpoint.                                           |
 | `end`               | rfc3339 / unix_timestamp  | No       |         | As per above endpoint.                                           |
 | `limit`             | int >= 0                  | No       | 100     | As per above endpoint.                                           |
