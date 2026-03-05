@@ -129,7 +129,7 @@ cpu_usage_seconds_total{core="0", instance="b"}
 | http_requests_total               | metric_name | N/A       | 5           |
 | http_requests_total{method="GET"} | metric_name | N/A       | 2           |
 | method                            | label_name  | 5         | 2           |
-| core                              | label_name  | 4         | 2           |
+| core                              | label_name  | 3         | 2           |
 | method="GET"                      | label_value | 2         | N/A         |
 | GET                               | label_value | 2         | N/A         |
 
