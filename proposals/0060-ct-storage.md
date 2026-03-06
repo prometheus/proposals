@@ -15,6 +15,8 @@
   * Initial implementation
     * [Appender](https://github.com/prometheus/prometheus/pull/17104)
     * [chunkenc.Iterator](https://github.com/prometheus/prometheus/pull/17176)
+  * [float chunk ST format](https://github.com/prometheus/prometheus/pull/17909)
+  * [RW2 sending ST support](https://github.com/prometheus/prometheus/pull/18122)
 
 * **Other docs or links:**
   * [PROM-29 (Created Timestamp)](https://github.com/prometheus/proposals/blob/main/proposals/0029-created-timestamp.md)
@@ -25,7 +27,7 @@
 
 ## Why
 
-The main goal of this proposal is to make sure [PROM-29's created timestamp (CT)](0029-created-timestamp.md) information is reliably and efficiently stored in Prometheus TSDB, under a start timestamp (ST) name. This means ST can be:
+The main goal of this proposal is to make sure [PROM-29's created timestamp (CT)](0029-created-timestamp.md) information is reliably and efficiently stored in Prometheus TSDB, under the new chosen start timestamp (ST) name. This means ST can be:
 
 * Written via TSDB Appender interfaces.
 * Query-able via TSDB Querier interfaces.
@@ -46,10 +48,10 @@ Furthermore, it would unblock future Prometheus features for wider range of moni
 
 On top of that this work also allow to improve some existing features, notably various edge cases for native histogram resets hints (e.g. [TSDB chunk merges](https://github.com/prometheus/prometheus/issues/15346)). Arguably, ST can replace resent hint field in native histogram eventually.
 
-### Background: CT/ST feature
+### Background: ST feature
 
-[PROM-29](0029-created-timestamp.md) introduced the "created timestamp" (CT) concept for Prometheus cumulative metrics. Since then [the community decided to rename this feature](https://github.com/prometheus/prometheus/issues/17416) to start timestamp (ST). 
- 
+[PROM-29](0029-created-timestamp.md) introduced the created timestamp (CT) concept for Prometheus cumulative metrics. Since then [the community adopted the Start Timestamp name](https://github.com/prometheus/prometheus/issues/17416).
+
 Semantically, ST represents the time when "counting" (from 0) started. In other words, ST is the time when the counter started counting from zero.
 
 Conceptually, ST extends the Prometheus data model for cumulative monotonic counters as follows:
@@ -81,7 +83,7 @@ In other words, instant query for `increase(<cumulative counter>[5m])` produces 
 
 This proves that it's worth considering delta when designing a ST feature support.
 
-### Background: ST characteristics for cumulative vs delta 
+### Background: ST characteristics for cumulative vs delta
 
 [Previous section](#background-delta-temporality) argues that conceptually the ST logic can be used to implement both cumulatives and deltas. This is why typically they are stored in the same "field" in other system APIs and storages (e.g. [start time](https://github.com/open-telemetry/opentelemetry-proto/blob/d53c5c6fca40cba8d5d5cc4db0d719a07be927f8/opentelemetry/proto/metrics/v1/metrics.proto#L399) in OpenTelemetry).
 
@@ -106,7 +108,7 @@ ST[2], T[2]
 ```
 
 * OM) Descriptive SHOULD rules only: In OpenMetrics 1.0 ST does not have specific technical rules other than it should ["help consumers discern between new metrics and long-running ones" and that it must be set to "reset time"](https://prometheus.io/docs/specs/om/open_metrics_spec/#:~:text=A%20MetricPoint%20in%20a%20Metric%20with%20the%20type%20Counter%20SHOULD,MUST%20also%20be%20set%20to%20the%20timestamp%20of%20the%20reset.).
-* RW2) Descriptive SHOULD rules only: Similarly in [Remote Write 2.0 spec, only descriptive CTs rules](https://prometheus.io/docs/specs/prw/remote_write_spec_2_0/#ioprometheuswritev2request:~:text=created_timestamp%20SHOULD%20be%20provided%20for%20metrics%20that%20follow%20counter%20semantics%20(e.g.%20counters%20and%20histograms).%20Receivers%20MAY%20reject%20those%20series%20without%20created_timestamp%20being%20set.)
+* RW2) Descriptive SHOULD rules only: Similarly in [Remote Write 2.0 spec, only descriptive STs rules](https://prometheus.io/docs/specs/prw/remote_write_spec_2_0/#ioprometheuswritev2request:~:text=created_timestamp%20SHOULD%20be%20provided%20for%20metrics%20that%20follow%20counter%20semantics%20(e.g.%20counters%20and%20histograms).%20Receivers%20MAY%20reject%20those%20series%20without%20created_timestamp%20being%20set.)
   * start_timestamp SHOULD be provided for metrics that follow counter semantics (e.g. counters and histograms).
   * Receivers MAY reject those series without start_timestamp being set.
 
@@ -154,7 +156,7 @@ ST[2], T[2]
     * It limits effectiveness of using ST for PromQL operations like `rate`, `resets` etc.
     * It makes "rolloup" (write time recording rules that pre-calculate rates) difficult to implement.
   * Given immutability invariant (e.g. Prometheus), you can't effectively inject ST at a later time (out of order writes are sometimes possible, but expensive, especially for a single sample to be written in the past per series).
-  * It's prone to OOO false positives (we ignore this error for CTs now in Prometheus).
+  * It's prone to OOO false positives (we ignore this error for STs now in Prometheus).
   * It's producing an artificial sample, which looks like it was scraped.
 * We can't implement delta temporarily effectively.
 
@@ -164,7 +166,7 @@ ST[2], T[2]
 * [SHOULD] Prometheus can reliably store, query, ingest and export delta start time information. This unblocks [PROM-48 delta proposal](https://github.com/prometheus/proposals/pull/48). Notably adding delta feature later on should ideally not require another complex storage design or implementation.
 * [SHOULD] Overhead of the solution should be minimal--initial overhead target set to maximum of 10% CPU, 10% of memory and 15% of disk space.
 * [SHOULD] Improve complexity/tech-debt of TSDB on the way if possible.
-* [SHOULD] Complexity of consuming CTs should be minimal (e.g. low amount of knowledge needed to use it).
+* [SHOULD] Complexity of consuming STs should be minimal (e.g. low amount of knowledge needed to use it).
 
 ## Non-goals
 
@@ -185,19 +187,19 @@ General decisions and principles affecting smaller technical parts:
 * This unlocks the most amount of benefits (e.g. also delta) for the same amount of work, it makes code simpler.
 * We don't know if we need special cumulative best case optimization (yet); also it would be also for some "best" cases. Once we know we can always add those optimizations.
 
-2. Similarly, we propose to not have special ST storage cases per metric types. TSDB storage is not metric type aware, plus some systems allow optional CTs on gauges (e.g. OpenTelemetry). We propose keeping that storage flexibility.
+2. Similarly, we propose to not have special ST storage cases per metric types. TSDB storage is not metric type aware, plus some systems allow optional STs on gauges (e.g. OpenTelemetry). We propose keeping that storage flexibility.
 
 3. We propose to treat ST as an *optional* data everywhere, simply because it's new and because certain metric type do not need it (gauges). For efficiency and consistency with scrape and Remote Write protocols we treat default value `int64(0)` as a "not provided" sentinel. This has a consequence of inability to provide the ST of an exact 0 value (unlikely needed and if needed clients needs to use 1m after or before.
 
 4. Let's go through all the areas that would need to change:
 
-### Feature flag `start-timestamp-storage`
+### Feature flag `st-storage`
 
-To develop and give experimental state to users, we propose to add a new feature flag `start-timestamp-storage`. Similar to [exemplar-storage]https://prometheus.io/docs/prometheus/latest/feature_flags/#exemplars-storage) it will tell Prometheus to ingest ST and use new (potentially breaking compatibility) storage formats.
+To develop and give experimental state to users, we propose to add a new feature flag `st-storage`. Similar to [exemplar-storage]https://prometheus.io/docs/prometheus/latest/feature_flags/#exemplars-storage) it will tell Prometheus to ingest ST and use new (potentially breaking compatibility) storage formats.
 
 We propose to have a single flag for both WAL, Block storage, etc., to avoid tricky configuration.
 
-Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their CTs through all already persistent pieces e.g. WAL).
+Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their STs through all already persistent pieces e.g. WAL).
 
 This feature could be considered to be switched to opt-out, only after it's finished (this proposal is fully implemented) stable, provably adopted and when the previous LTS Prometheus version is compatible with this feature.
 
@@ -207,12 +209,12 @@ See the [official ST semantics in the ecosystem](#background-official-st-semanti
 
 ST notion was popularized by OpenMetrics and OpenTelemetry. Early experience exposed a big challenge: ST data is extremely unclean given early adoption, mixed instrumentation support and multiple (all imperfect) ways of ["auto-generation"](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/metricstarttimeprocessor) (`subtract_initial_point` might the most universally "correct", but it added only recently). This means that handling (or reducing ) ST errors is an important detail for consumers of this data.
 
-TODO: Just a draft, to be discussed.
-TODO: There are questions around:
-* Should we do inclusive vs exclusive intervals?
-* Given optionality of this feature, can we even reject sample on TSDB Append if ST is invalid? (MUST or SHOULD on interface?)
-* Does it even make sense to enforce (MUST?) on Appender? Wouldn't this give user assumption to user that the data is safe? There will be tons of data produced by external writers for TSDB blocks which could ingest errors, also old data will have errors for sure. Still maybe worth to filter?
-* Would it be expensive (possible) to validate? (OOO check is simple)?
+We propose to not validate ST values on Prometheus write (Appender level). ST is treated as opaque and optional element of the sample. Prometheus will stores whatever int64 value it receives, with `0` meaning **not provided**. This is a deliberate design choice, given:
+* ST data in Prometheus ecosystem is a new concept. ST is expected to be missing in many cases (e.g. old SDKs, old exporters, exporters where ST is non-trivial to detect).
+* ST in wider ecosystem is often unclean (mixed instrumentation, imperfect auto-generation).
+* The exact consumption semantics is still experimental thus we want to stay flexible and don't block future use cases (e.g. exact semantics of ST > T).
+
+Consumers of ST data (PromQL operations, remote write receivers) are expected to handle missing or inconsistent ST values gracefully. Future proposals and Prometheus versions might offer stricter validation modes later on.
 
 ### TSDB programmatic interfaces
 
@@ -231,37 +233,34 @@ Light modifications (e.g. optional method/interface) could be possible, but ther
 
 As a result we propose moving to a new improved `AppenderV2` interface, gradually (first scrape, then PRW ingest, then OTLP ingest, then TSDB implementation with https://github.com/prometheus/prometheus/pull/17104.).
 
-The initial work on the new appender interface started, see [`PR#17104`](https://github.com/prometheus/prometheus/pull/17104). The current directions seems to a be significantly simpler `AppenderV2` interface. See PR for technical details, but from high level it should look similar to:
+// TODO(bwplotka): Add more context on why certain decisions were made
+The initial work on the new appender interface started, see [`PR#17104`](https://github.com/prometheus/prometheus/pull/17104). The unified `AppenderV2` interface consolidates float, histogram, and float-histogram appends into a single method:
 
-```
-// AppenderV2 provides batched appends against a storage.
+```go
+// AppenderV2 provides batched appends against a storage for all sample types.
 // It must be completed with a call to Commit or Rollback and must not be reused afterwards.
-//
-// ...
 type AppenderV2 interface {
-	AppendSample(ref SeriesRef, ls labels.Labels, meta Metadata, st, t int64, v float64, es []exemplar.Exemplar) (SeriesRef, error)
-	AppendHistogram(ref SeriesRef, ls labels.Labels, meta Metadata, st, t int64, h *histogram.Histogram, fh *histogram.FloatHistogram, es []exemplar.Exemplar) (SeriesRef, error)  
+	AppenderTransaction // Commit() error; Rollback() error
 
-	Commit() error
-	Rollback() error
+	// Append appends a sample with optional start timestamp (st) and auxiliary data (opts).
+	// st=0 means unknown. Callers provide exactly one of v, h, or fh.
+	Append(ref SeriesRef, ls labels.Labels, st, t int64, v float64,
+		h *histogram.Histogram, fh *histogram.FloatHistogram,
+		opts AppendV2Options) (SeriesRef, error)
 }
- 
-// Appendable allows creating appenders.
-type Appendable interface {
-	Appender(ctx context.Context) Appender
-	AppenderV2(ctx context.Context, opts *AppenderV2Options) AppenderV2 
+
+// AppendableV2 allows creating AppenderV2.
+type AppendableV2 interface {
+	AppenderV2(ctx context.Context) AppenderV2
 }
-  
-type AppenderV2Options struct {
-	DiscardOutOfOrderSamples bool
-	PrependSTAsZero bool
-} 
+
+type AppendV2Options struct { /* metadata, exemplars, etc. */
+}
 ```
 
 #### Read
 
-> NOTE: This can be done later on (M2/M3) for ST, but it's required for delta PromQL support M1.
-> draft PR: https://github.com/prometheus/prometheus/pull/17176
+> NOTE: The `AtST()` addition to `chunkenc.Iterator` has been implemented. See [PR#17176](https://github.com/prometheus/prometheus/pull/17176).
 
 Majority of reads happens through the [Queryable](https://github.com/prometheus/prometheus/blob/d7e9a2ffb0f0ee0b6835cda6952d12ceee1371d0/storage/interface.go#L97) interface which offers selecting samples from the storage and iterating on them.
 
@@ -285,13 +284,13 @@ type Iterator interface {
 	// AtT returns the current timestamp.
 	// Before the iterator has advanced, the behaviour is unspecified.
 	AtT() int64
-+	// AtST returns the current, optional, start timestamp.
-+   // The start timestamp (st) is optional. The value int64(0) means no timestamp.
++	// AtST returns the current start timestamp.
++	// Returns 0 if the start timestamp is not implemented or not set.
 +	// Before the iterator has advanced, the behaviour is unspecified.
 +	AtST() int64
 
-    // ...  
-} 
+    // ...
+}
 ```
 
 ### Persistent storage interfaces (file formats)
@@ -299,7 +298,7 @@ type Iterator interface {
 Prometheus TSDB persists data on disk. Changing those formats are required to
 ensure persistent ST storage, but also enable export capabilities (within Prometheus itself, Remote Write handler watches WAL records (tail WAL) to export samples).
 
-Extending storage formats would also allow external ecosystem to use CTs (e.g. Cortex, Mimir, Thanos) in their LTS storages.
+Extending storage formats would also allow external ecosystem to use STs (e.g. Cortex, Mimir, Thanos) in their LTS storages.
 
 > IMPORTANT: Those formats have to be extended in a backward/forward compatible which touches versioning policy we discussed in [PROM-40](https://github.com/prometheus/proposals/pull/40). While no formal agreement was made we propose generally agree-able consensus to make sure previous LTS version can read new data before making new data a new default.
 
@@ -316,23 +315,21 @@ See [Ganesh's TSDB blog post series](https://ganeshvernekar.com/blog/prometheus-
 In principle, following our [per sample assumption](#how), we need to extend representation of a sample in WAL in a following way:
 
 ```go
-// RefSample represents Prometheus sample associated with a reference to a series.
+// RefSample is a timestamp/st/value struct associated with a reference to a series.
 // TODO(beorn7): Perhaps make this "polymorphic", including histogram and float-histogram pointers? Then get rid of RefHistogramSample.
 type RefSample struct {
 	Ref chunks.HeadSeriesRef
 -	T   int64
-+	ST, T int64	
++	ST, T int64
 	V   float64
 }
 ```
 
-> NOTE: In practice we may need to create a new `type RefSampleWithCT struct`. This is up to the implementation.
+> NOTE: We are still evaluating performance to determine if we need to implement a separate `type RefSampleWithST struct` or if a single struct is sufficient for both usecases.
 
-With that we need to introduce [a new sample record format](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/docs/format/wal.md#sample-records) for samples e.g. `sampleWithCT` and implement (by hand) [decoding](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/record/record.go#L305) and [encoding](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/record/record.go#L668). For compatibility, we propose using the new `sampleWithCT` record type behind a feature flag (e.g. `ct-storage`) until the next Prometheus LTS version. After that, we could consider making it default.
+With that we need to introduce [a new sample record format](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/docs/format/wal.md#sample-records) for samples e.g. `SamplesV2` and implement [decoding](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/record/record.go#L305) and [encoding](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/record/record.go#L668). For compatibility, we propose using the new `SamplesV2` record type behind a feature flag (e.g. `st-storage`) until the next Prometheus LTS version. After that, we could consider making it default-enabled.
 
-TODO: Add alternative that explains why not per series?
-
-There are various choices on how the record format should look like (e.g. should gauges use `sample` or unified `sampleWithCT`?, should delta use different recorde than cumulative?). To answer this it's important to reflect on the access patterns of TSDB.
+There are various choices on how the record format should look like (e.g. should gauges use `sample` or unified `SamplesV2`?, should delta use a different record than cumulative?). To answer this it's important to reflect on the access patterns of TSDB.
 
 Notably, Prometheus TSDB "head" appender "logs" a single WAL record for each record type on every [`Appender.Commit`](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/head_append.go#L1494). This means, that:
 * All float samples to commit are encoded as a single [Sample record](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/docs/format/wal.md#sample-records).
@@ -340,48 +337,50 @@ Notably, Prometheus TSDB "head" appender "logs" a single WAL record for each rec
 * All float histograms to commit are encoded as single [FloatHistogram record](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md#histogram-records).
 * All exemplars to commit are encoded as a single [Exemplar record](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md#exemplar-records).
 
-For scrape purposes, a single appender "commit" in Prometheus contains all samples from a single scrape, which means **single "sample" (with likely the same timestamp) for multiple series**. With CTs this also means "likely" the same values per commit (less likely compared to timestamp). For STs (delta) this is not relevant for scrape. Despite the timestamp likelhood to not change inside each commit, [sample record](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/docs/format/wal.md#sample-records) is capable of capturing the differences. This tells us that ST should likely follow the same pattern.
+For scrape purposes, a single appender "commit" in Prometheus contains all samples from a single scrape, which means **single "sample" (with likely the same timestamp) for multiple series**. With STs this also means "likely" the same values per commit (less likely compared to timestamp). For STs (delta) this is not relevant for scrape. Despite the timestamp likelhood to not change inside each commit, [sample record](https://github.com/prometheus/prometheus/blob/594f9d63a5f9635d48d6e26b68b708e21630f9ee/tsdb/docs/format/wal.md#sample-records) is capable of capturing the differences. This tells us that ST should likely follow the same pattern.
 
 Additionally, appender, historically, didn't have access to type of the metric so the same record is used for gauge, counter, classic histogram etc. We propose to keep this logic as diverging and different records for set of different metric types would be complex to maintain for (likely) little gain.
 
 For other ingestion purposes (OTLP/PRW) appender is still used, but here we can't have any assumptions about the characteristic of samples appended within a single commit.
 
-As a result we propose to create a new `sampleWithST` record that will be used **for all metric types with float sample type**. This means following format:
+As a result we propose to create a new V2 records that will be used **for all metric types with float sample type**. This means following format:
 
 ```
- 
-SampleWithST records encode samples as a list of triples (series_id, start timestamp, timestamp, value). Series reference and timestamps are encoded as deltas w.r.t the first sample. The first row stores the starting id and the starting timestamp (TODO: One for both timestamps?). The first sample record begins at the second row.
+SamplesV2 records encode float counter samples as a list of (series_ref, start_timestamp,
+timestamp, value) tuples. The first sample stores absolute values. Subsequent
+samples use delta encoding with ST marker bytes.
 
-┌──────────────────────────────────────────────────────────────────┐
-│ type = 2 <1b>                                                    │
-├──────────────────────────────────────────────────────────────────┤
-│ ┌────────────────────┬───────────────────────────┐               │
-│ │ id <8b>            │ timestamp <8b>            │               │
-│ └────────────────────┴───────────────────────────┘               │
-│ ┌────────────────────┬───────────────────────────┬───────────────────────────────────┬─────────────┐ │
-│ │ id_delta <uvarint> │ timestamp_delta <uvarint> │ start_timestamp_delta <uvarint> │ value <8b>  │ │
-│ └────────────────────┴───────────────────────────┴───────────────────────────────────┴─────────────┘ │
-│                              . . .                               │
-└──────────────────────────────────────────────────────────────────┘ 
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│ type = 11 <1b>                                                                      │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ ┌─────────────────┬──────────────┬─────────────┬─────────────┐                      │
+│ │ ref <varint>    │ T <varint>   │ ST <varint> │ value <8b>  │  (first sample)      │
+│ └─────────────────┴──────────────┴─────────────┴─────────────┘                      │
+│ ┌──────────────────────────────┬───────────────────────────────┬────────────────┐   │
+│ │ ref_delta (vs prev) <varint> │ T_delta (vs first T) <varint> │ st_marker <1b> │   │
+│ ├──────────────────────────────┴───────────────────────────────┴────────────────┤   │
+│ │ [ST_delta (vs first ST) <varint>]  (only if st_marker = explicitST)           │   │
+│ ├───────────────────────────────────────────────────────────────────────────────┤   │
+│ │ value <8b>                                                                    │   │
+│ └───────────────────────────────────────────────────────────────────────────────┘   │
+│                                      . . .                                          │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+ST marker values:
+  0 (noST)       -- sample has no start timestamp (ST=0)
+  1 (sameST)     -- same ST as previous sample
+  2 (explicitST) -- explicit ST, followed by ST_delta (vs first ST)
 ```
 
-TODO: Explain the decision to use the same timestamp as a start time for both T and ST deltas.
-
-TODO: Any optimizations needed? What's the overhead? Benchmarks!
-
-TODO: explain other choices.
+Similar V2 records will be created for Histogram types.
 
 #### TSDB blocks
 
-> NOTE: This can be done later on (M2/M3).
-
-TODO: 120 sample chunks would need to be benchmarked -- if adding ST per sample would be ok OR should we design more complex chunk encoding (ST per set of samples) OR even chunk per ST (what native histograms are doing for reset hints, and it's not idea (see [worst case](#background-ct-cumulative-vs-st-delta)))
-
-TODO: Include learnings from native histogram folks on issues around TSDB chunk per ST/reset hint e.g. https://github.com/prometheus/prometheus/issues/15346
+ST will be persisted in TSDB blocks using a new chunk encoding currently under development.
 
 #### Memory Snapshots and Head Chunks
 
-There will be likely some code to add to ensure CTs are used properly, but the new proposed chunk format from [TSDB Block](#tsdb-blocks) section, should immidately work with the [Memory Snapshot](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/memory_snapshot.md) and [Head Chnks](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/head_chunks.md) formats.
+There will be likely some code to add to ensure STs are used properly, but the new proposed chunk format from [TSDB Block](#tsdb-blocks) section, should immidately work with the [Memory Snapshot](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/memory_snapshot.md) and [Head Chnks](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/head_chunks.md) formats.
 
 ### Remote storage
 
@@ -396,14 +395,10 @@ The [Remote Write 2.0](https://prometheus.io/docs/specs/prw/remote_write_spec_2_
 
 * Separate solution for delta and cumulative.
 
-Given [the delta vs cumulative characteristics](#background-st-characteristics-for-cumulative-vs-delta-) one could argue separate WAL records, send/receive protocol messages and TSDB chunk formats should be created. 
+Given the delta vs cumulative characteristics one could argue separate WAL records, send/receive protocol messages and TSDB chunk formats should be created.
 
-TBD: Explain why it's complex and not giving much efficiency gains.
+The unified approach is simpler to implement and maintain because both temporalities share the same storage path through AppenderV2, WAL encoding, and chunk format. Separate formats would double the testing surface and complicate the WAL replay and compaction code paths for marginal space savings, since the ST marker byte scheme already handles the "same ST" cumulative case efficiently (1 byte overhead when ST does not change between samples).
 
 ## Action Plan
 
-The tasks to do in order to migrate to the new idea.
-
-* [ ] Task one
-
-* [ ] Task two
+See the [ST storage project board](https://github.com/orgs/prometheus/projects/17/views/2) for current task tracking.
