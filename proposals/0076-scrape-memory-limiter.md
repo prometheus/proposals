@@ -20,7 +20,7 @@
 
 ## Why
 
-Dynamic service discovery can lead to growth in the number of targets (e.g., when new workloads are spun up in Kubernetes). These new targets, which may have high cardinality or expose large amounts of metrics, can cause memory growth in Prometheus, leading to OOM kills and total monitoring unavailability.
+Dynamic service discovery can lead to growth in the number of targets (e.g., when new workloads are spun up in Kubernetes). Existing targets can also occasionally have sharp increases in the cardinality of metrics they expose, or have slow "leaks" of new series over time. This additional load causes increased memory usage in Prometheus, which can lead to OOM kills and total monitoring unavailability.
 
 When Prometheus runs out of memory, it crashes. This not only stops data collection for the newly added workloads but also stops data collection for all other workloads being monitored by that Prometheus instance.
 
