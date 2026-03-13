@@ -1,22 +1,22 @@
 # Update Created Timestamps syntax for OpenMetrics
 
 * **Owners:**
-    * Manik Rana [@Maniktherana](https://github.com/Maniktherana)
+  * Manik Rana [@Maniktherana](https://github.com/Maniktherana)
 
 **Contributors:**
-    * Arthur Silva Sens [@ArthurSens](https://github.com/ArthurSens)
-    * Bartłomiej Płotka [@bwplotka](https://github.com/bwplotka)
+* Arthur Silva Sens [@ArthurSens](https://github.com/ArthurSens)
+* Bartłomiej Płotka [@bwplotka](https://github.com/bwplotka)
 
 * **Implementation Status:** implemented
 
 * **Related Issues and PRs:**
-    * [github.com/prometheus/prometheus/issues/14217](https://github.com/prometheus/prometheus/issues/14217) 
-    * [github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823) 
+  * [github.com/prometheus/prometheus/issues/14217](https://github.com/prometheus/prometheus/issues/14217)
+  * [github.com/prometheus/prometheus/issues/14823](https://github.com/prometheus/prometheus/issues/14823)
 
 * **Other docs or links:**
-    * [github.com/prometheus/proposals/blob/main/proposals/2023-06-13_created-timestamp.md](https://github.com/prometheus/proposals/blob/main/proposals/2023-06-13_created-timestamp.md) 
+  * [github.com/prometheus/proposals/blob/main/proposals/2023-06-13_created-timestamp.md](https://github.com/prometheus/proposals/blob/main/proposals/2023-06-13_created-timestamp.md)
 
->  TL;DR: We propose an updated syntax for handling created timestamps in the OpenMetrics exposition format. This syntax allows for more efficient parsing of created lines and eliminates confusion on naming metrics that support `_created` lines by placing the created timestamp inline with the metric it is attached to.
+> TL;DR: We propose an updated syntax for handling created timestamps in the OpenMetrics exposition format. This syntax allows for more efficient parsing of created lines and eliminates confusion on naming metrics that support `_created` lines by placing the created timestamp inline with the metric it is attached to.
 
 ## Why
 
@@ -146,7 +146,7 @@ rpc_durations_seconds_count{service="exponential"} 22
 
 In addition to the `TYPE`, `UNIT`, and `HELP` fields, we can introduce a `# CREATED` line for metrics that have an associated creation timestamp (CT). This approach allows us to quickly determine whether a CT exists for a given metric, eliminating the need for a more time-consuming search process. By parsing the `# CREATED` line, we can associate it with a specific hash corresponding to the metric's label set, thereby mapping each CT to the correct metric.
 
-However, this method still involves the overhead of storing potentially multiple CTs in memory until we encounter the relevant metric line. Furthermore the `CREATED` line itself might look somewhat convoluted compared to `TYPE` , `UNIT` , and `HELP`  which are very human readable. 
+However, this method still involves the overhead of storing potentially multiple CTs in memory until we encounter the relevant metric line. Furthermore the `CREATED` line itself might look somewhat convoluted compared to `TYPE` , `UNIT` , and `HELP` which are very human readable.
 
 An example of how this might look:
 
@@ -167,4 +167,3 @@ When the same MetricFamily has multiple label sets with their own CTs we'd have 
 * [ ] Update tooling and libraries that expose OpenMetrics text.
 * [ ] Update Prometheus text parser and benchmark against current implementation.
 * [ ] If performance significantly improves, update the OpenMetrics specification to include the new syntax for Created Timestamps.
-
