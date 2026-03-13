@@ -7,7 +7,7 @@
     * Arthur Silva Sens [@ArthurSens](https://github.com/ArthurSens)
     * Bartłomiej Płotka [@bwplotka](https://github.com/bwplotka)
 
-* **Implementation Status:** Not implemented
+* **Implementation Status:** implemented
 
 * **Related Issues and PRs:**
     * [github.com/prometheus/prometheus/issues/14217](https://github.com/prometheus/prometheus/issues/14217) 
