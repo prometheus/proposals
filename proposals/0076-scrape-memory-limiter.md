@@ -48,7 +48,7 @@ Prometheus operators running in memory-constrained environments (like Kubernetes
 
 ## How
 
-The Scrape Memory Limiter acts as a proactive circuit breaker for the Prometheus server. Periodically, a background routine checks the current memory usage of the Prometheus process against a configured global limit.
+The Scrape Memory Limiter acts as a proactive circuit breaker for the Prometheus server. Periodically (e.g. every second), a background routine checks the current memory usage of the Prometheus process against a configured global limit.
 
 Right before initiating an HTTP request to scrape a target, the scrape loop will check the memory limiter status. If the memory usage is currently above the configured limit, the scrape transaction is aborted early. This ensures transactionality—-the scrape is skipped in its entirety, preventing the allocation of memory for a potentially large influx of metrics that the system cannot currently handle.
 
@@ -97,7 +97,7 @@ Future support for soft memory limits (e.g., a `spike_limit_mib` parameter) will
 ### Fairness Mechanisms
 
 The initial implementation of the memory limiter proposed above might inadvertently starve small, critical targets when a noisy neighbor introduces memory pressure. Future iterations could introduce scheduling algorithms to ensure fairness. Advanced approaches like [Deficit Round Robin (DRR)](https://en.wikipedia.org/wiki/Deficit_round_robin) can mathematically guarantee fairness across targets during memory pressure, isolating the disruption to high-cardinality targets.
-To implement fairness, the mechanism will need to predict the cost of a scrape. This prediction should be based on the **total number of samples** from the target's previous scrape, *not* the number of *new series* added. New series are highly volatile (a target rotating a label will add many new series in one scrape, but zero in the next), making them a poor heuristic for proactive load shedding. Total samples accurately correlate with the short-lived parsing overhead the scrape loop will incur.
+To implement fairness, the mechanism will need to predict the relative cost of a scrape so that it can throttle targets proportionally to the expected short-term memory usage they will incurr. This prediction should be based on the **total number of samples** from the target's previous scrape, *not* the number of *new series* added. New series are highly volatile (a target rotating a label will add many new series in one scrape, but zero in the next), making them a poor heuristic for proactive load shedding. Total samples accurately correlate with the short-lived parsing overhead the scrape loop will incur.
 
 ### Per-Job Controls
 
