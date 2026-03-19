@@ -1,4 +1,3 @@
-
 ## Use start timestamps in `rate`-like functions for delta timeseries support
 
 * **Owners:**
@@ -16,7 +15,7 @@
 
 ## Why
 
-The primary motivation for this proposal is the ["OTEL delta temporality support" project](https://github.com/prometheus/proposals/pull/48). This proposal aims to describe and detail the implementation of ["mini-cumulative" approach](https://github.com/prometheus/proposals/pull/48/changes#diff-a136211c73194731ce3a0cc5faadef9656ba10fa2f710aa2af25d246d2a09821R434-R453) for querying delta counters using `rate`-like functions. 
+The primary motivation for this proposal is the ["OTEL delta temporality support" project](https://github.com/prometheus/proposals/pull/48). This proposal aims to describe and detail the implementation of ["mini-cumulative" approach](https://github.com/prometheus/proposals/pull/48/changes#diff-a136211c73194731ce3a0cc5faadef9656ba10fa2f710aa2af25d246d2a09821R434-R453) for querying delta counters using `rate`-like functions.
 
 The implementation builds on Start Timestamps (ST), which is an evolution of Created Timestamps concept for cumulative counters (see ["Created Timestamp" proposal](0029-created-timestamp.md)). This proposal will also glance into whether some of the problems of the "Created Timestamp" proposal could be addressed (or at least not made worse), even if this is not the primary motivator for this proposal.
 
@@ -36,7 +35,7 @@ Currently, Prometheus doesn't have a first-class support for delta counters. It 
 
 ## Non-Goals
 
-* Improve rate extrapolation logic. 
+* Improve rate extrapolation logic.
 * Try to fix the cases of invalid or conflicting start timestamps in query.
 
 ## How
@@ -57,7 +56,7 @@ There is also a special case of unknown start timestamp in cumulative sequence. 
 
 Earlier paragraphs have described start timestamps of unbroken sequences. However, things become more complex when a sequence is restarted, which would likely lead to gaps in the timeseries not covered by any datapoints. In real life, misconfigurations might cause multiple sequences being written into a single timeseries. This could introduce partial overlaps between start time intervals, completely throwing off rate calculations.
 
-### Short introduction to start timestamps in Google Cloud 
+### Short introduction to start timestamps in Google Cloud Monitoring
 
 Google Cloud Monitoring has strict guidelines for timeseries datapoint start timestamp and datapoint timestamps. The intervals between these two points are closed [ST, T]. The rules for acceptable values depend on the metric type:
 
@@ -69,8 +68,8 @@ Google Cloud Monitoring has strict guidelines for timeseries datapoint start tim
 
 As described, OTel and GCP start time intervals have some fundamental differences:
 * Half-open intervals in OTel, closed intervals in GCP
-* For unbroken streams in OTel, start timestamps match start or datapoint timestamp of some other datapoint. In GCP, only for unbroken cumulative streams matching values of start timestamp are allowed.   
-* Unknown start timestamp case for cumulative streams in OTel, where ST=T. In GCP, ST=T intervals are only allowed for gauges (for which start timestamp is optional). 
+* For unbroken streams in OTel, start timestamps match start or datapoint timestamp of some other datapoint. In GCP, only for unbroken cumulative streams matching values of start timestamp are allowed.
+* Unknown start timestamp case for cumulative streams in OTel, where ST=T. In GCP, ST=T intervals are only allowed for gauges (for which start timestamp is optional).
 
 The differences are significant and not cross-compatible from write perspective – OTel datapoint stream might require start timestamp adjustment before it can be ingested into Google Cloud Monitoring. However, from read and query perspective, the start timestamp intervals express the same notion with slight variantions in underlying priciples. Thus it should be possible to interpret start timestamps in `rate`-like functions in a way, which would work with both OTel and GCP compatible datapoint streams.
 
@@ -118,7 +117,7 @@ One might argue that looking at more datapoints might provide more insight about
 
 Nevertheless, more than two datapoints could be analyzed for producing info and warning messages about ST values (e.g. if they are invalid, or if there is a collision between two datapoint streams).
 
-The code snippet below shows the general logic needed to detect the counter resets. 
+The code snippet below shows the general logic needed to detect the counter resets.
 
 NB: the code adopts the idea of transforming OTel unknown timestamp datapoints ST=T into ST=0, T. This idea was proposed in [PROM-60 proposal](https://github.com/prometheus/proposals/pull/60), and it works well with the Prometheus interpretation of ST=0, which means that the timestamp is unknown.
 
@@ -182,7 +181,6 @@ The situation where start timestamp points to the previous datapoint (T<sub>0</s
 < TODO: PromQL engine will have to propagate ST values to `rate`-like functions, which will consume extra memory. It would be best that the memory usage would be minimized for timeseries which doesn't have start timestamps, or if start timestamp feature flag is not enabled at all. >
 
 > TODO: Explain the full overview of the proposed solution. Some guidelines:
-> 
 > * Make it concise and **simple**; put diagrams; be concrete, avoid using “really”, “amazing” and “great” (:
 > * How you will test and verify?
 > * How you will migrate users, without downtime. How we solve incompatibilities?
