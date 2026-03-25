@@ -533,7 +533,7 @@ type SearchResult struct {
 }
 
 // SearcherValueSet is an iterator returned from the Searcher label/value search functions.
-type SearcherValueSet interface {
+type SearchResultSet interface {
 	Next() bool
 	At() SearchResult
 	Warnings() annotations.Annotations
