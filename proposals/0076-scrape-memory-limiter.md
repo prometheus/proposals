@@ -61,13 +61,17 @@ The configuration is a subset of the configuration of the OpenTelemetry Collecto
 ```yaml
 # A new top-level block for the Scrape Memory Limiter.
 scrape_memory_limiter:
-  # Target a maximum of 80% of total system memory.
+  # Target a maximum of 90% of total system memory.
   # If total memory usage exceeds this percentage, scrapes are dropped.
-  limit_percentage: 80 
+  limit_percentage: 90 
   
   # Alternatively, an absolute limit in MiB can be used:
   # limit_mib: 1000
 ```
+
+#### Interaction with GOMEMLIMIT
+
+Prometheus automatically configures GOMEMLIMIT to 90% of its memory limit. When scrape memory limiting is enabled, the configured GOMEMLIMIT ratio will be applied to the scrape memory limiter's limit. This ensures that GOMEMLIMIT is always lower than the scrape memory limiter's limit, ensuring scrapes are only failed when memory usage could not be reduced by garbage collection. For example, if the scrape memory limiter is configured to 90% of total memory, GOMEMLIMIT will be set to 81% of total memory by default.
 
 ### Feature Flag
 
@@ -109,6 +113,7 @@ To implement this, Prometheus could leverage Quality of Service (QoS) or critica
 1. **Do nothing**
 2. **Rejecting only new series ([#16917](https://github.com/prometheus/prometheus/issues/16917), [PR #11124](https://github.com/prometheus/prometheus/pull/11124))**: Instead of dropping the entire scrape, Prometheus would accept updates for time series it already knows about but reject the allocation of *new* series. This violates scrape transactionality, as scrapes should be ingested in full or not at all. Partial ingestion leads to unpredictable query skew (e.g., a success rate query where the success metric is ingested but the newly created error metric is dropped) and breaks fundamental system behavior assumptions. This creates confusing, inconsistent data for the application owner that goes against the principle of least surprise.
 3. **Slowing down scrapes**: Dynamically backing off the scrape interval (e.g., from 15s to 60s) for targets under memory pressure. While this might temporarily reduce memory intake, skipping scrapes entirely sends a clearer signal to users (`up = 0`) that something is wrong. Skipping a single scrape is usually acceptable because the query window generally covers at least twice the scrape interval. Conversely, dynamically slowing down scrapes might silently break assumptions users have built into their alerts and recording rules.
+4. **Independent GOMEMLIMIT configuration**: Instead of applying the GOMEMLIMIT ratio to the scrape memory limiter's limit, we could keep the two configuration knobs entirely separate. This would allow someone to set a higher GOMEMLIMIT compared to their scrape limit, which isn't really something users would want to do. It would also make the configuration more confusing to reason about.
 
 ### Complementary Ideas
 
