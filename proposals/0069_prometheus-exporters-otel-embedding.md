@@ -6,11 +6,13 @@
 * **Implementation Status:** Not implemented
 
 * **Related Issues and PRs:**
-  * https://github.com/prometheus/exporter-toolkit/pull/357
-  * https://github.com/prometheus/node_exporter/pull/3459
+  * https://github.com/prometheus/exporter-toolkit/pull/357 (proof of concept)
+  * https://github.com/prometheus/node_exporter/pull/3459 (proof of concept)
   * https://github.com/ArthurSens/prometheus-opentelemetry-collector (proof of concept)
 
 * **Other docs or links:**
+  * https://github.com/prometheus/opentelemetry-collector-bridge
+  * https://github.com/prometheus/prometheus-opentelemetry-collector
 
 > TL;DR: This proposal introduces a mechanism to embed Prometheus exporters as native OpenTelemetry Collector receivers, reducing duplication of effort between the two ecosystems and enabling the "single binary" promise for telemetry collection without forcing reimplementation of hundreds of existing Prometheus exporters.
 
@@ -64,7 +66,7 @@ Prometheus exporters function similarly to OpenTelemetry Collector receivers: th
 
 This proposal introduces a bridge between these two paradigms by:
 
-1. **Creating a new Go library** (`prometheus-collector-bridge`) that defines interfaces Prometheus exporters can implement
+1. **Using a dedicated Go library** (`opentelemetry-collector-bridge`) that defines interfaces Prometheus exporters can implement
 2. **Providing adapter code** that converts Prometheus Registry metrics to OpenTelemetry's pmetric format
 3. **Implementing OpenTelemetry Collector receiver interfaces** that wrap the adapter and Prometheus exporter
 
@@ -89,7 +91,7 @@ This proposal introduces a bridge between these two paradigms by:
 │  │                      │                             │     │
 │  │                      ▼                             │     │
 │  │  ┌───────────────────────────────────────────────┐ │     │
-│  │  │Prometheus-Collector-Bridge(Registry → pmetric)│ │     │
+│  │  │      OTel Collector Bridge                    │ │     │
 │  │  │  (Periodic collection + conversion)           │ │     │
 │  │  └───────────────────────────────────────────────┘ │     │
 │  │                      │                             │     │
@@ -112,9 +114,9 @@ This proposal introduces a bridge between these two paradigms by:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### New Interfaces in prometheus-collector-bridge
+### New Interfaces in opentelemetry-collector-bridge
 
-The new `prometheus-collector-bridge` library will be created in a dedicated repository under the Prometheus organization. This library will define interfaces that Prometheus exporters must implement to be embeddable in OpenTelemetry Collectors:
+The new `opentelemetry-collector-bridge` library would live in a dedicated repository under the Prometheus organization. Based on the integration model explored so far, it should define exporter lifecycle and configuration hooks along these lines:
 
 #### ExporterLifecycleManager Interface
 
@@ -165,23 +167,25 @@ type ReceiverConfig struct {
 
 ### Prometheus Registry to pmetric Conversion
 
-The `prometheus-collector-bridge` library will include a scraper component that:
+The `opentelemetry-collector-bridge` library would include a scraper component that:
 
 1. Calls `registry.Gather()` to collect metrics from the Prometheus Registry
 2. Converts Prometheus metric families to OpenTelemetry's pmetric format
 
-This conversion logic can leverage or adapt existing conversion code from the OpenTelemetry Prometheus receiver.
+This conversion logic can leverage or adapt existing conversion code from different projects from the OpenTelemetry community. An non-exhaustive list is presented below:
+* https://github.com/open-telemetry/opentelemetry-collector/tree/main/scraper/scraperhelper
+* https://pkg.go.dev/go.opentelemetry.io/contrib/bridges/prometheus
 
 ### OpenTelemetry Collector Receiver Implementation
 
-The `prometheus-collector-bridge` library will provide a complete implementation of OpenTelemetry's receiver interfaces:
+The `opentelemetry-collector-bridge` library would provide a complete implementation of OpenTelemetry's receiver interfaces:
 
 1. **component.Factory** - for component type and default configuration
 2. **component.Component** - for lifecycle management
 3. **receiver.Factory** - for creating receiver instances
 4. **receiver.Metrics** - for producing pmetric data
 
-This implementation will:
+This implementation would:
 - Start the Prometheus exporter and obtain its Registry
 - Run a periodic scrape loop based on the configured interval
 - Convert scraped metrics to pmetric format
@@ -197,7 +201,9 @@ receivers:
   - gomod: github.com/prometheus/node_exporter v1.x.x
 ```
 
-The OCB will recognize the exporter as a valid receiver and include it in the built collector binary.
+The OCB would recognize the exporter as a valid receiver and include it in the built collector binary.
+
+To keep dependency compatibility visible, a dedicated `prometheus-opentelemetry-collector` distribution would be created to continuously test dependency conflicts and compilation failures when embeddable exporters are added to a generated collector build.
 
 ### Example Configuration
 
@@ -227,11 +233,11 @@ service:
 
 ### Implementation Steps
 
-1. **Create the prometheus-collector-bridge repository** under the Prometheus organization
-2. **Define the interfaces** in the new library (ExporterLifecycleManager, ConfigUnmarshaler, Config)
+1. **Create the `opentelemetry-collector-bridge` repository** under the Prometheus organization
+2. **Define the interfaces** in the bridge library based on the explored integration model
 3. **Implement the Prometheus to pmetric converter** (potentially adapting existing code)
-4. **Update one reference exporter** (e.g., node_exporter) to implement the new interfaces as a proof of concept
-5. **Validate** with OpenTelemetry Collector Builder
+4. **Validate with reference exporters** such as `stackdriver_exporter` and `yet-another-cloudwatch-exporter`
+5. **Create a dedicated `prometheus-opentelemetry-collector` distribution** to continuously test dependency conflicts and generated collector compilation
 6. **Document** the integration pattern for other exporters
 7. **Gradually adopt** across other Prometheus exporters based on community interest
 
@@ -243,7 +249,7 @@ service:
 
 ### Known Problems
 
-1. **Dependency conflicts**: Prometheus exporters and OpenTelemetry collector-contrib use different dependency versions. Building a distribution with both may require dependency alignment or replace directives in the OCB yaml file.
+1. **Dependency conflicts**: Prometheus exporters and OpenTelemetry collector-contrib use different dependency versions. Building a distribution with both may require dependency alignment or replace directives in the OCB yaml file. A dedicated `prometheus-opentelemetry-collector` distribution should be used to catch these issues continuously as new embeddable exporters are added.
 
 2. **Scope of adoption**: It's unclear how many Prometheus exporters will adopt these interfaces. The proposal targets exporters in the `prometheus` and `prometheus-community` GitHub organizations initially.
 
@@ -289,4 +295,10 @@ Wait until all infrastructure components natively export OTLP metrics.
 
 The tasks to implement this proposal:
 
-* [ ] 
+* [x] Create the `opentelemetry-collector-bridge` repository under the Prometheus organization
+* [x] Define initial interfaces in the bridge library based on the explored integration model
+* [x] Build an initial Prometheus to pmetric converter
+* [x] Validate the approach with reference exporters such as `stackdriver_exporter` and `yet-another-cloudwatch-exporter`
+* [x] Create a dedicated `prometheus-opentelemetry-collector` distribution to continuously test dependency conflicts and generated collector compilation
+* [ ] Document the integration pattern for other exporters
+* [ ] Reach out to exporter maintainers and gradually adopt across other Prometheus exporters based on community interest
