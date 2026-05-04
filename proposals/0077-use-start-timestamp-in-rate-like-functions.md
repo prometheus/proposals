@@ -35,7 +35,6 @@ Currently, Prometheus doesn't have a first-class support for delta counters. It 
 
 ## Non-Goals
 
-* Improve rate extrapolation logic.
 * Try to fix the cases of invalid or conflicting start timestamps in query.
 
 ## How
@@ -43,8 +42,6 @@ Currently, Prometheus doesn't have a first-class support for delta counters. It 
 For rate calculations, `rate`-like functions consider:
 * Whether a counter reset has happened between each pair of subsequent datapoints. This is needed to calculate the total increase between the first and the last datapoint in the rate window.
 * The gaps from rate window start to the first datapoint in the window, and from the last datapoint in the window to the window end. This is needed for rate extrapolation, and estimates the size of increase which should have happened at the ends of the rate window.
-
-Since changes to rate extrapolation logic is beyond the scope of this proposal, we will be discussing only the reset detection changes between subsequent datapoints. However, it is important to note that `anchored` and `smoothed` modifiers move some datapoints to the start and end of rate window, thus creating extra pairs of subsequent datapoints. This has to be taken into account, so that no false resets would be detected.
 
 ### Short introduction to start timestamps in OTel
 
@@ -171,6 +168,36 @@ If the start timestamp points into the gap between previous and current datapoin
 
 The situation where start timestamp points to the previous datapoint (T<sub>0</sub> = ST<sub>1</sub>) is slightly more complicated. This case is indicative of OTel datapoint sequence, since that is invalid in GCP. This might be a continuation of a delta sequence, or it might be the second datapoint in a cumulative sequence with unknown start time. For deltas, we should assume a counter reset, while there should be no counter reset in the cumulative sequence case. To discern between these two cases, previous datapoint has to be checked whether it has an unknown start time (ST<sub>0</sub> = 0).
 
+
+### Rate extrapolation
+
+Rate extrapolation is special logic in `rate()` and `increase()` functions. It tries to estimate how much a counter has increased before the first datapoint in the rate window, and after the last datapoint in the rate window. A detailed description how it works can be found in this [blog post by Julius Volz](https://promlabs.com/blog/2021/01/29/how-exactly-does-promql-calculate-rates/).
+
+Start Timestamps could be used to also substitute rate extrapolation at the start of the rate window. If the ST of the first datapoint in the rate window also falls inside the rate window, we may treat as if there is a datapoint with a value of zero and the ST. See an example in the picture below.
+
+![rate_extrapolation_inside_rate_window.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_inside_rate_window.png)
+
+It is important that the first datapoint ST would fall inside the rate window. If it doesn't, we cannot use it instead of rate extrapolation, because `rate()` / `increase()` function wouldn't have a complete view of the time span between ST and T of the first datapoint in the range. There might be datapoints that fall inside this ST–T span but outside the rate window (see the picture below), and thus it would be incorrect to project a 0 datapoint at ST. In an extreme case, the rate window might be far away from cumulative series start and thus also far away from the time where ST of the first datapoint in the rate window points to. In such case it would make little sense to use ST info to influence current rate window results, since it would in essence represent the averaged rate since the start of the counter.
+
+![rate_extrapolation_outside_rate_window.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_outside_rate_window.png)
+
+Rate extrapolation also has special logic to limit the extrapolation distance (1.1 extrapolation range) and to avoid extrapolation below zero. Start Timestamp makes these irrelevant, because we know that the count was zero at ST, and extrapolating beyond that would lead to values below zero (or at best the extrapolated value would be zero if counter had no increases). See the picture below for illustration of these cases. Note that we do have to follow extrapolation distance and extrapolation below zero logic if first ST falls outside the rate window.
+
+![rate_extrapolation_range.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_range.png)
+
+First ST as zero would also help getting more accurate results for low-rate counters that begin with a non-zero value (see the picture below). Currently, the `rate()` function returns 0 rate in such cases, and it is quite difficult to compose a query that would manage to capture such increase. This is a big problem for a particular class of use-cases (e.g. measuring HTTP error status codes which happen rarely and where it is wasteful to initialize in advance a counter for each possible values). 
+
+![rate_extrapolation_uninitialized_counter.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_uninitialized_counter.png)
+
+In addition, first ST as zero would allow calculating rate with just a single datapoint inside the rate window (see the picture below). This would be very helpful for querying the rate of a timeseries which consists of sole delta datapoints which are emitted from time to time without a stable cadence. Currently `rate()`-like functions require that the datapoints would be emitted at a predictable and reasonably frequent cadence, otherwise it is difficult to choose rate window size that would cover at least 2 (or better more) datapoints. With STs one would need to choose rate window size that would exceed the ST–T span sizes of all the (or majority of) datapoints.
+
+![rate_extrapolation_single_datapoint.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_single_datapoint.png)
+
+However, when calculating rate from a single datapoint, it is impossible to find average distance between datapoints. So extrapolation to the right cannot be done, because we don't know how far we should extrapolate. 
+
+Note that while first ST could be treated as a zero value datapoint, it should not be treated as a real datapoint. For example, it should not be included in the calculation of average duration between successive datapoints. Including it would throw off the results, because depending on how a timeseries is ingested, ST is unlikely to be a whole step size before the initial datapoint in the timeseries. 
+
+It is also important to note that the first datapoint of a cumulative counter timeseries is equivalent to a datapoint of delta timeseries. So ST treatment for rate extrapolation will be exactly the same for cumulative and delta series.
 
 ### `anchored` and `smoothed` modifiers
 
