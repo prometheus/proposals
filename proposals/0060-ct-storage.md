@@ -66,10 +66,10 @@ Conceptually, ST extends the Prometheus data model for cumulative monotonic coun
 
 Since the ST concept introduction in Prometheus we:
 
-* Extended Prometheus protobuf scrape format to include ST per each cumulative sample (TODO link).
-* Proposed (for OM 2) text format changes for ST scraping (improvement over existing OM1 `_created` lines) (TODO link).
+* Extended Prometheus protobuf scrape format to include [ST per each cumulative sample](https://github.com/prometheus/prometheus/blob/main/prompb/io/prometheus/write/v2/types.proto#L134).
+* Proposed (for OM 2) [https://github.com/prometheus/docs/blob/main/docs/specs/om/open_metrics_spec_2_0.md?plain=1#L798](text format changes for ST scraping) (improvement over existing OM1 `_created` lines).
 * Expanded Scrape parser interface to return `CreatedTimestamp` / `StartTimestamp` per sample (aka per line).
-* Optimized Protobuf and OpenMetrics parsers for ST use (TODO links).
+* Optimized Protobuf and OpenMetrics parsers for ST use.
 * Implemented an opt-in, experimental [`created-timestamps-zero-injection`](https://prometheus.io/docs/prometheus/latest/feature_flags/#created-timestamps-zero-injection) feature flag that injects fake sample (V: 0, T: ST).
 * Included ST in [Remote Write 2 specification](https://prometheus.io/docs/specs/prw/remote_write_spec_2_0/#ioprometheuswritev2request).
 
