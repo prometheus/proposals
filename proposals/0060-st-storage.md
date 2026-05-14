@@ -195,11 +195,11 @@ General decisions and principles affecting smaller technical parts:
 
 ### Feature flag `st-storage`
 
-To develop and give experimental state to users, we propose to add a new feature flag `st-storage`. Similar to [exemplar-storage]https://prometheus.io/docs/prometheus/latest/feature_flags/#exemplars-storage) it will tell Prometheus to ingest ST and use new (potentially breaking compatibility) storage formats.
+To develop and give experimental state to users, we propose to add a new feature flag `st-storage`. Similar to [exemplar-storage](https://prometheus.io/docs/prometheus/latest/feature_flags/#exemplars-storage) it will tell Prometheus to ingest ST and use new (potentially breaking compatibility) storage formats.
 
 We propose to have a single flag for both WAL, Block storage, etc., to avoid tricky configuration.
 
-Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their STs through all already persistent pieces e.g. WAL).
+Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their STs through all already persistent pieces (e.g. WAL).
 
 This feature could be considered to be switched to opt-out, only after it's finished (this proposal is fully implemented) stable, provably adopted and when the previous LTS Prometheus version is compatible with this feature.
 
