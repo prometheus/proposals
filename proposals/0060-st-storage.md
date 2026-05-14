@@ -213,6 +213,7 @@ We propose to not validate ST values on Prometheus write (Appender level). ST is
 * ST data in Prometheus ecosystem is a new concept. ST is expected to be missing in many cases (e.g. old SDKs, old exporters, exporters where ST is non-trivial to detect).
 * ST in wider ecosystem is often unclean (mixed instrumentation, imperfect auto-generation).
 * The exact consumption semantics is still experimental thus we want to stay flexible and don't block future use cases (e.g. exact semantics of ST > T).
+* We can always add validation features opt-in.
 
 For unknown start-time reset points (e.g. OpenTelemetry cumulative points where `ST == T`), ingestion layers (such as OTLP receivers or Remote Write endpoints) are expected to map these to `0` (unknown ST) when appending to storage. This optimizes storage (0 takes exactly 1 bit in chunk/WAL formats) and simplifies detection without requiring timestamp matching.
 
