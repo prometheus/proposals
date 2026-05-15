@@ -33,7 +33,7 @@ The main goal of this proposal is to make sure [PROM-29's created timestamp (CT)
 * Query-able via TSDB Querier interfaces.
 * Persistent in WAL.
 * Watch-able (WAL) by Remote Writer.
-* (eventually) Persistent in TSDB block storage.
+* Persistent in TSDB block storage.
 
 To do it reliably, we propose to extend TSDB storage to "natively" support ST as something you can attach to a sample and use later on.
 Native ST support in Prometheus TSDB would unblock the practical use of ST information for:
@@ -56,7 +56,7 @@ Semantically, ST represents the time when "counting" (from 0) started. In other 
 
 Conceptually, ST extends the Prometheus data model for cumulative monotonic counters as follows:
 
-* (new) int64 Timestamp (ST): When counting started.
+* (new) int64 Start Timestamp (ST): When counting started.
 * float64 or [Histogram](https://github.com/prometheus/prometheus/blob/d7e9a2ffb0f0ee0b6835cda6952d12ceee1371d0/model/histogram/histogram.go#L50) Value (V): The current value of the count, since the ST time.
 * int64 Timestamp (T): When this value was observed.
 * Labels: Unique identity of a series.
