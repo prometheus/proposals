@@ -7,6 +7,11 @@ on:
     tags:
   pull_request:
 
+# actions/cache@v3 saves the Go module cache on miss.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   lint:
     runs-on: ubuntu-latest
