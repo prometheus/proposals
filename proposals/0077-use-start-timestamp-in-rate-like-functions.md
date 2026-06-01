@@ -45,11 +45,11 @@ For rate calculations, `rate`-like functions consider:
 
 ### Short introduction to start timestamps in OTel
 
-According to [OTel documentation](https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality), start timestamps are recommended for Sum, Histogram and ExponentialHistogram datapoints. It describes the start of an interval since which the value is accumulated. For cumulative temporality timeseries start at time t<sub>0</sub>, you get intervals (t<sub>0</sub>, t<sub>1</sub>], (t<sub>0</sub>, t<sub>2</sub>], (t<sub>0</sub>, t<sub>3</sub>] and so on. For delta temporality, the accumulation are reset after every datapoint, so the intervals are (t<sub>0</sub>, t<sub>1</sub>], (t<sub>1</sub>, t<sub>2</sub>], (t<sub>2</sub>, t<sub>3</sub>], etc. In an unbroken sequence, start timestamps always match either the datapoint timestamp or start timestamp of another datapoint in the sequence. See the picture below for an illustration of this.
+According to [OTel documentation](https://opentelemetry.io/docs/specs/otel/metrics/data-model/#temporality), start timestamps are recommended for Sum, Histogram and ExponentialHistogram datapoints. It describes the start of an interval since which the value is accumulated. For cumulative temporality timeseries start at time `t[0]`, you get intervals `(t[0], t[1]]`, `(t[0], t[2]]`, `(t[0], t[3]]` and so on. For delta temporality, the accumulation are reset after every datapoint, so the intervals are `(t[0], t[1]]`, `(t[1], t[2]]`, `(t[2], t[3]]`, etc. In an unbroken sequence, start timestamps always match either the datapoint timestamp or start timestamp of another datapoint in the sequence. See the picture below for an illustration of this.
 
 ![start_timestamps.png](../assets/0077-use-start-timestamp-in-rate-like-functions/start_timestamps.png)
 
-There is also a special case of unknown start timestamp in cumulative sequence. It is expressed by setting the start timestamps of the first datapoint in the sequence equal to its datapoint timestamps (ST<sub>0</sub> = T<sub>0</sub>). Following datapoints in the same sequence have the start time set equal to the start timestamp of the first datapoint, as in regular cumulative sequence. Care has to be taken to accurately calculate rate contribution with such sequences.
+There is also a special case of unknown start timestamp in cumulative sequence. It is expressed by setting the start timestamps of the first datapoint in the sequence equal to its datapoint timestamps `(ST[0] = T[0])`. Following datapoints in the same sequence have the start time set equal to the start timestamp of the first datapoint, as in regular cumulative sequence. Care has to be taken to accurately calculate rate contribution with such sequences.
 
 Earlier paragraphs have described start timestamps of unbroken sequences. However, things become more complex when a sequence is restarted, which would likely lead to gaps in the timeseries not covered by any datapoints. In real life, misconfigurations might cause multiple sequences being written into a single timeseries. This could introduce partial overlaps between start time intervals, completely throwing off rate calculations.
 
@@ -58,8 +58,8 @@ Earlier paragraphs have described start timestamps of unbroken sequences. Howeve
 Google Cloud Monitoring has strict guidelines for timeseries datapoint start timestamp and datapoint timestamps. The intervals between these two points are closed [ST, T]. The rules for acceptable values depend on the metric type:
 
 * For gauges, start timestamp is optional, or if set, has to be equal to datapoint timestamp (i.e. ST=T, zero size interval).
-* For delta metrics, start and datapoint timestamps must specify non-zero interval, and a sequence of datapoints should specify contiguous and non-overlapping interval, i.e. ST<sub>0</sub> < T<sub>0</sub> < ST<sub>1</sub> < T<sub>1</sub> < ….
-* For cumulative metrics, start and datapoints timestamps must specify non-zero intervals (ST < T). Subsequent datapoints specify the same start timestamp, but increasing datapoint timestamps, i.e. ST<sub>0</sub> = ST<sub>1</sub> = ST<sub>2</sub> = … < T<sub>0</sub> < T<sub>1</sub> < ST<sub>2</sub> < …. If there is a reset, the new start timestamp must be at least a millisecond after the previous interval end time, i.e. T<sub>n</sub> < ST<sub>n+1</sub>.
+* For delta metrics, start and datapoint timestamps must specify non-zero interval, and a sequence of datapoints should specify contiguous and non-overlapping interval, i.e. `ST[0] < T[0] < ST[1] < T[1] < …`.
+* For cumulative metrics, start and datapoints timestamps must specify non-zero intervals (`ST < T`). Subsequent datapoints specify the same start timestamp, but increasing datapoint timestamps, i.e. `ST[0] = ST[1] = ST[2] = … < T[0] < T[1] < T[2]< …`. If there is a reset, the new start timestamp must be at least a millisecond after the previous interval end time, i.e. `T[n] < ST[n+1]`.
 
 ### OTel vs GCP start time intervals
 
@@ -110,7 +110,8 @@ GCP cumulative:
 
 This proposal suggests to look at no more than two subsequent datapoints at a time for reset detection, and thus process the datapoints inside the `rate`-like function window pair by pair. To tell whether there was a reset between two datapoints, it is enough to look at the start and datapoint timestamps of those two datapoints.
 
-One might argue that looking at more datapoints might provide more insight about the behavior of the timeseries that is being processed, However, it might also increase likelihood of inconsistent results between query steps. For example, at some query step `rate()` function might make a decision by judging in tandem datapoints at T<sub>1</sub>, T<sub>2</sub> and T<sub>3</sub>. However, the same `rate()` function will only see datapoints T<sub>1</sub> and T<sub>2</sub> at an earlier step, and only datapoints T<sub>2</sub> and T<sub>3</sub> at a later step. If this leads to drastically different decision, the `rate()` function could produce ununiform results across the steps. 
+One might argue that looking at more datapoints might provide more insight about the behavior of the timeseries that is being processed, However, it might also increase likelihood of inconsistent results between query steps. For example, at some query step `rate()` function might make a decision by judging in tandem datapoints at `T[1]`, `T[2]` and `T[3]`
+. However, the same `rate()` function will only see datapoints `T[1]` and `T[2]` at an earlier step, and only datapoints `T[2]` and `T[3]` at a later step. If this leads to drastically different decision, the `rate()` function could produce ununiform results across the steps.
 
 Nevertheless, more than two datapoints could be analyzed for producing info and warning messages about ST values (e.g. if they are invalid, or if there is a collision between two datapoint streams).
 
@@ -162,12 +163,11 @@ If the current datapoint has unknown start time (ST = 0), then there's not much 
 
 #### Current datapoint has a known ST
 
-For the cases where current datapoint has a known start timestamp, it has to be considered in relation to the previous datapoint in the stream. If start timestamp points further away to the past than the previous datapoint (T<sub>0</sub> > ST<sub>1</sub>), then we assume that no reset has happened in-between current and previous datapoints. This is normal situation for cumulative counter streams. 
+For the cases where current datapoint has a known start timestamp, it has to be considered in relation to the previous datapoint in the stream. If start timestamp points further away to the past than the previous datapoint (`T[0] < ST[1]`), then we assume that no reset has happened in-between current and previous datapoints. This is normal situation for cumulative counter streams.
 
-If the start timestamp points into the gap between previous and current datapoints (T<sub>0</sub> < ST<sub>1</sub> < T<sub>1</sub>), then we assume that there was a counter reset. This might happen if old OTel or GCP, cumulative or delta counter stream has finished and a new has started after some delay. This is also a normal case for GCP delta sequence.
+If the start timestamp points into the gap between previous and current datapoints (`T[0] < ST[1] < T[1]`), then we assume that there was a counter reset. This might happen if old OTel or GCP, cumulative or delta counter stream has finished and a new has started after some delay. This is also a normal case for GCP delta sequence.
 
-The situation where start timestamp points to the previous datapoint (T<sub>0</sub> = ST<sub>1</sub>) is slightly more complicated. This case is indicative of OTel datapoint sequence, since that is invalid in GCP. This might be a continuation of a delta sequence, or it might be the second datapoint in a cumulative sequence with unknown start time. For deltas, we should assume a counter reset, while there should be no counter reset in the cumulative sequence case. To discern between these two cases, previous datapoint has to be checked whether it has an unknown start time (ST<sub>0</sub> = 0).
-
+The situation where start timestamp points to the previous datapoint (`T[0] = ST[1]`) is slightly more complicated. This case is indicative of OTel datapoint sequence, since that is invalid in GCP. This might be a continuation of a delta sequence, or it might be the second datapoint in a cumulative sequence with unknown start time. For deltas, we should assume a counter reset, while there should be no counter reset in the cumulative sequence case. To discern between these two cases, previous datapoint has to be checked whether it has an unknown start time (`ST[0]= 0`).
 
 ### Rate extrapolation
 
@@ -185,7 +185,7 @@ Rate extrapolation also has special logic to limit the extrapolation distance (1
 
 ![rate_extrapolation_range.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_range.png)
 
-First ST as zero would also help getting more accurate results for low-rate counters that begin with a non-zero value (see the picture below). Currently, the `rate()` function returns 0 rate in such cases, and it is quite difficult to compose a query that would manage to capture such increase. This is a big problem for a particular class of use-cases (e.g. measuring HTTP error status codes which happen rarely and where it is wasteful to initialize in advance a counter for each possible values). 
+First ST as zero would also help getting more accurate results for low-rate counters that begin with a non-zero value (see the picture below). Currently, the `rate()` function returns 0 rate in such cases, and it is quite difficult to compose a query that would manage to capture such increase. This is a big problem for a particular class of use-cases (e.g. measuring HTTP error status codes which happen rarely and where it is wasteful to initialize in advance a counter for each possible values).
 
 ![rate_extrapolation_uninitialized_counter.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_uninitialized_counter.png)
 
@@ -193,9 +193,9 @@ In addition, first ST as zero would allow calculating rate with just a single da
 
 ![rate_extrapolation_single_datapoint.png](../assets/0077-use-start-timestamp-in-rate-like-functions/rate_extrapolation_single_datapoint.png)
 
-However, when calculating rate from a single datapoint, it is impossible to find average distance between datapoints. So extrapolation to the right cannot be done, because we don't know how far we should extrapolate. 
+However, when calculating rate from a single datapoint, it is impossible to find average distance between datapoints. So extrapolation to the right cannot be done, because we don't know how far we should extrapolate.
 
-Note that while first ST could be treated as a zero value datapoint, it should not be treated as a real datapoint. For example, it should not be included in the calculation of average duration between successive datapoints. Including it would throw off the results, because depending on how a timeseries is ingested, ST is unlikely to be a whole step size before the initial datapoint in the timeseries. 
+Note that while first ST could be treated as a zero value datapoint, it should not be treated as a real datapoint. For example, it should not be included in the calculation of average duration between successive datapoints. Including it would throw off the results, because depending on how a timeseries is ingested, ST is unlikely to be a whole step size before the initial datapoint in the timeseries.
 
 It is also important to note that the first datapoint of a cumulative counter timeseries is equivalent to a datapoint of delta timeseries. So ST treatment for rate extrapolation will be exactly the same for cumulative and delta series.
 
