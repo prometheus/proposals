@@ -6,7 +6,9 @@
 * **Implementation Status:** `Not implemented / Partially implemented / Implemented`
 
 * **Related Issues and PRs:**
-  * `<GH Issues/PRs>`
+  * PR: [PromQL: use start timestamps for rate()-like calculations](https://github.com/prometheus/prometheus/pull/18344)
+  * PR: [PromQL: resets() function considers start timestamp resets](https://github.com/prometheus/prometheus/pull/18627)
+  * PR: [PromQL: use start timestamps for rate extrapolation](https://github.com/prometheus/prometheus/pull/18619)
 
 * **Other docs or links:**
   * `<Links…>`
@@ -130,25 +132,25 @@ func detectResetFromStartTimestamp(prev, curr datapoint) bool {
         // Unknown or invalid start time.
         return false
     }
-	
+    
     if curr.ST > prev.T {
-		// OTel – new cumulative/delta sequence.
-		// GCP - next delta datapoint in sequence, 
-		// or new cumulative/delta sequence.
+        // OTel – new cumulative/delta sequence.
+        // GCP - next delta datapoint in sequence, 
+        // or new cumulative/delta sequence.
         return true
     }
     if curr.ST < prev.T {
-		// OTel and GCP – continuation of cumulative sequence.
+        // OTel and GCP – continuation of cumulative sequence.
         return false
     }
 
     // If this place is reached, current ST is pointing to 
-	// a previous datapoint. Thus this is OTel cumulative or 
-	// delta sequence.
+    // a previous datapoint. Thus this is OTel cumulative or 
+    // delta sequence.
 
     if prev.ST == 0 {
         // Continuation of OTel cumulative stream with 
-		// unknown start time.
+        // unknown start time.
         return false
     }
     return true
@@ -199,9 +201,33 @@ Note that while first ST could be treated as a zero value datapoint, it should n
 
 It is also important to note that the first datapoint of a cumulative counter timeseries is equivalent to a datapoint of delta timeseries. So ST treatment for rate extrapolation will be exactly the same for cumulative and delta series.
 
-### `anchored` and `smoothed` modifiers
+### Extended range selectors: `anchored` and `smoothed` modifiers
 
-< TODO: `anchored` and `smoothed` modifiers adjust the placement of some datapoints. We have to make sure that this does not impact the counter reset detection using ST values. >
+Start timestamp support will also have to be implemented for extended range selectors. Unlike original `rate()` function, extended range selectors take a wider view of the rate window, which allows substituting extrapolation to the edges of the range window for interpolation at the edges of the window. So the handling of the start timestamps have to differ for the successive datapoints that cross the range window's edges. On the other hand, the handling is exactly the same for successive datapoints that fall fully inside the range window.
+
+This section looks into different configurations of datapoints, their start timestamps and range window edges in relation to each other. It also describes how datapoints should be projected or interpolated in such cases.
+
+The first case to consider is when there are two datapoints surrounding the range window's edge, but there are no ST reset between them (see the picture below). This might be because ST is unset (equals to 0), or it might go beyond the previous datapoint (as depicted in the picture below). In this case, we do not use ST for interpolation/projection and fallback to the reset detection from counter values.  
+
+![extended_selectors_st_before_prev_datapoint.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selectors_st_before_prev_datapoint.png)
+
+However, a different treatment is needed when there is a ST reset between the datapoints surrounding the edge of the range window (see the picture below). If ST crosses the edge of the window, we then use if for interpolating the datapoints at the edge. For the `anchored` case, we simply project a 0 datapoint at the timestamp of the rate window's edge (yellow circle in the picture below). For the `smoothed` case, we interpolate a point alongside the line between the points `(ST, 0)` and `(T, <datapoint_value>)` (the blue circle in the picture below). It is important to note that for the right edge of rate window, the interpolated point might be above or below the previous datapoint. However, in both of these cases we should apply reset logic, since according to ST there was a reset between the last datapoint in the rate window and the right edge of the window.
+
+![extended_selector_st_crosses_windows_edge.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_crosses_windows_edge.png)
+
+There's a special case for OTel timeseries, where ST points to the timestamp of the previous datapoints (see the picture below). We then have to check whether it's an unknown start time. If it's unknown, there is no ST reset, and we fallback to the reset detection from counter values as described earlier. However, if the start time is known, we use ST–T line to interpolate as described in the previous paragraph (as depicted in the picture below).
+
+![extended_selector_st_at_prev_datapoint.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_at_prev_datapoint.png)
+
+One more case to consider is where the datapoints that surround the range window's edge has a ST reset between them, but the ST doesn't cross the window's edge (see the picture below). In this case, we would not use ST–T line for interpolation. However, we do have to take into account that there's a reset when interpolating the datapoints at the edge of the window, and also we have to consider this reset when taking into account counter resets inside the rate window. For example, in the picture below, for `anchored` case with yellow circle, we have to detect a ST counter reset after it, which cannot be detected just by looking at datapoint values. This means that we have to check whether ST points before or after the interpolated point.
+
+![extended_selector_st_doesnt_cross_windows_edge.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_doesnt_cross_windows_edge.png)
+
+There also are special cases related to sparse datapoints. When there are datapoints inside the range window, but there are no datapoints to the left of the window, we still have to check the ST location. If it falls inside the window (see the picture below, diagram on the left), we have to make sure that we set the value of the interpolated/projected datapoints to 0 (instead of using the value of the first datapoint in the window, which would happen if ST was not set).  
+
+![extended_selector_st_other_cases.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_other_cases.png)
+
+Another interesting case is when there are no datapoints inside or to the left of the window, but there's a datapoint to the right of the window that has a ST (see the picture above, diagram on the right). Even in this case we could calculate a rate if ST–T line crosses one or both of the window edges (as long as the ST doesn't go too far to the left, beyond the lookback of the extended range).
 
 ### Performance impact
 
