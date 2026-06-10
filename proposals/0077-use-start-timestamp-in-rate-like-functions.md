@@ -207,7 +207,7 @@ Start timestamp support will also have to be implemented for extended range sele
 
 This section looks into different configurations of datapoints, their start timestamps and range window edges in relation to each other. It also describes how datapoints should be projected or interpolated in such cases.
 
-The first case to consider is when there are two datapoints surrounding the range window's edge, but there are no ST reset between them (see the picture below). This might be because ST is unset (equals to 0), or it might go beyond the previous datapoint (as depicted in the picture below). In this case, we do not use ST for interpolation/projection and fallback to the reset detection from counter values.  
+The first case to consider is when there are two datapoints surrounding the range window's edge, but there are no ST reset between them (see the picture below). This might be because ST is unset (equals to 0), or it might go beyond the previous datapoint (as depicted in the picture below). In this case, we do not use ST for interpolation/projection and fallback to the reset detection from counter values.
 
 ![extended_selectors_st_before_prev_datapoint.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selectors_st_before_prev_datapoint.png)
 
@@ -223,7 +223,7 @@ One more case to consider is where the datapoints that surround the range window
 
 ![extended_selector_st_doesnt_cross_windows_edge.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_doesnt_cross_windows_edge.png)
 
-There also are special cases related to sparse datapoints. When there are datapoints inside the range window, but there are no datapoints to the left of the window, we still have to check the ST location. If it falls inside the window (see the picture below, diagram on the left), we have to make sure that we set the value of the interpolated/projected datapoints to 0 (instead of using the value of the first datapoint in the window, which would happen if ST was not set).  
+There also are special cases related to sparse datapoints. When there are datapoints inside the range window, but there are no datapoints to the left of the window, we still have to check the ST location. If it falls inside the window (see the picture below, diagram on the left), we have to make sure that we set the value of the interpolated/projected datapoints to 0 (instead of using the value of the first datapoint in the window, which would happen if ST was not set).
 
 ![extended_selector_st_other_cases.png](../assets/0077-use-start-timestamp-in-rate-like-functions/extended_selector_st_other_cases.png)
 
