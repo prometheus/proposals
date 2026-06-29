@@ -23,7 +23,7 @@
   * [PROM-48 (Delta type)](https://github.com/prometheus/proposals/pull/48), [Delta WG](https://docs.google.com/document/d/1G0d_cLHkgrnWhXYG9oXEmjy2qp6GLSX2kxYiurLYUSQ/edit)
 
 > TL;DR: We propose to extend Prometheus TSDB storage sample definition to include an extra int64 that will represent the start timestamp (ST) (previously called created timestamp (CT)) for the cumulative types as well for the future delta temporality ([PROM-48](https://github.com/prometheus/proposals/pull/48)).
-> We propose introducing persisting ST logic behind a single flag `st-storage`. Once implemented, we could propose eventual removal of the `created-timestamps-zero-injection` experimental feature.
+> We propose introducing persisting ST logic behind a single flag `st-storage`.
 
 ## Why
 
@@ -164,6 +164,7 @@ ST[2], T[2]
 
 * [MUST] Prometheus can reliably store, query, ingest and export cumulative start timestamp (ST) information (long term plan for [PROM-29](https://github.com/prometheus/proposals/blob/main/proposals/0029-created-timestamp.md#:~:text=For%20those%20reasons%2C%20created%20timestamps%20will%20also%20be%20stored%20as%20metadata%20per%20series%2C%20following%20the%20similar%20logic%20used%20for%20the%20zero%2Dinjection.))
 * [MUST] Prometheus can reliably store, query, ingest and export delta start time information. This unblocks [PROM-48 delta proposal](https://github.com/prometheus/proposals/pull/48). Notably adding delta feature later on should ideally not require another complex storage design or implementation.
+* [MUST] Co-exist peacefully with pre-existing `created-timestamps-zero-injection` feature.
 * [SHOULD] Overhead of the solution should be minimal--initial overhead target set to maximum of 10% CPU, 10% of memory and 15% of disk space.
 * [SHOULD] Improve complexity/tech-debt of TSDB on the way if possible.
 * [SHOULD] Complexity of consuming STs should be minimal (e.g. low amount of knowledge needed to use it).
@@ -202,6 +203,14 @@ We propose to have a single flag for both WAL, Block storage, etc., to avoid tri
 Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their STs through all already persistent pieces (e.g. WAL).
 
 This feature could be considered to be switched to opt-out, only after it's finished (this proposal is fully implemented) stable, provably adopted and when the previous LTS Prometheus version is compatible with this feature.
+
+#### Interaction with `created-timestamps-zero-injection`
+
+The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be in addition to or an alternative to zero-injection. In order to better differentiate zero-injection from st-per-sample, we propose to rename `created-timestamps-zero-injection` to `start-time-injection-at-scrape`.
+
+We also propose that the st setting be be tri-state on a per-series basis. Start Time per Sample support can be either `off`, `scrape`, or `per-sample`. Large installations may have a mix of implementations and there is no compatibility concern with having series have differing settings.
+
+In the case where a series has both scrape-injected zeroes and st-per-sample, the scrape-injected zeros take precedence.
 
 ### Proposed ST semantics and validation
 
