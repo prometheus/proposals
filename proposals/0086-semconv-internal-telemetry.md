@@ -121,7 +121,7 @@ A metric with labels fixed at construction time (`const_labels`) accepts those a
 func NewPrometheusSDDiscoveredTargets(name NameAttr) PrometheusSDDiscoveredTargets { ... }
 ```
 
-A callback-based gauge (`prometheus.GaugeFunc`) is the one case where generated code cannot own the whole metric. Its value comes from a closure that reads live server state at scrape time, and that closure can only be written by hand in the package — it references runtime objects the generator knows nothing about. For these metrics the registry sets `only_opts: true`:
+A callback-based gauge (`prometheus.GaugeFunc`) is special: its value is pulled from a closure at scrape time rather than `Set()` by the program, so the no-argument constructor that the other instruments get does not fit. For these metrics the registry sets `only_opts: true`:
 
 ```yaml
   - id: metric.prometheus_tsdb_head_series
