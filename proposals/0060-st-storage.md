@@ -212,6 +212,8 @@ We also propose that the st setting be be tri-state on a per-series basis. Start
 
 In the case where a series has both scrape-injected zeroes and st-per-sample, the scrape-injected zeros take precedence.
 
+We also intend to graduate zero-injection from an experimental feature, which could involve replacing the existing flag with, for example, a `stZeroInjection` term to the scrape config. The exact implementation is out of scope of this proposal.
+
 ### Proposed ST semantics and validation
 
 See the [official ST semantics in the ecosystem](#background-official-st-semantics). In this section we propose what semantics we recommend (or enforce).
