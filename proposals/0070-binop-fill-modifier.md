@@ -3,10 +3,13 @@
 * **Owners:**
   * [@juliusv](https://github.com/juliusv)
 
-* **Implementation Status:** `Not implemented`
+* **Implementation Status:** `Implemented` (experimental)
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/prometheus/issues/13625
+  * https://github.com/prometheus/prometheus/pull/17644
+  * https://github.com/prometheus/prometheus/pull/18850
+  * https://github.com/prometheus/prometheus/pull/18851
 
 > TL;DR: This proposal suggests adding `fill` / `fill_left` / `fill_right` modifiers to vector-to-vector binary operations. These modifiers would allow users to fill in missing series on either side of the operation and provide default values for them.
 
