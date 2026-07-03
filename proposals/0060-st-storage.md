@@ -416,6 +416,8 @@ to optimize XOR chunk around joint DoD encoding for both timestamps and value ch
 
 [XOR2 encoding details](https://github.com/prometheus/prometheus/blob/e793b26713cc7052c7558ae6ceffaa66c2a5b39f/tsdb/docs/format/chunks.md#xor2-chunk-data)
 
+[histograms_st_encoding details](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/chunks.md#histogram-st-chunk-data)
+
 #### Memory Snapshots and Head Chunks
 
 There will be likely some code to add to ensure STs are used properly, but the new proposed chunk format from [TSDB Block](#tsdb-blocks) section, should immediately work with the [Memory Snapshot](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/memory_snapshot.md) and [Head Chunks](https://github.com/prometheus/prometheus/blob/747c5ee2b19a9e6a51acfafae9fa2c77e224803d/tsdb/docs/format/head_chunks.md) formats.
@@ -434,8 +436,6 @@ The [Remote Write 2.0](https://prometheus.io/docs/specs/prw/remote_write_spec_2_
 * Separate solution for delta and cumulative.
 
 Given the delta vs cumulative characteristics one could argue separate WAL records, send/receive protocol messages and TSDB chunk formats should be created.
-
-The unified approach is simpler to implement and maintain because both temporalities share the same storage path through AppenderV2, WAL encoding, and chunk format. Separate formats would double the testing surface and complicate the WAL replay and compaction code paths for marginal space savings, since the ST marker byte scheme already handles the "same ST" cumulative case efficiently (1 byte overhead when ST does not change between samples).
 
 ## Action Plan
 
