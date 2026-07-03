@@ -97,7 +97,7 @@ The notable difference for cumulative vs delta samples is the dynamicity **chara
 
 ### Background: Official ST semantics
 
-There are certain semantic constraints on ST values to make them useful for consumers of the known metric types and semantics. Different systems generally have similar semantics, but details and how strong (or practically enforced) those rules are may differ. Let's go through state-of-the-art, just to have an idea what we could propose for Prometheus ST enforcement (if anything):
+There are certain semantic constraints on ST values to make them useful for consumers of the known metric types and semantics. Different systems generally have similar semantics, but details and how strong (or practically enforced) those rules are may differ. Let's go through state-of-the-art, just to have an idea what we could propose for Prometheus ST enforcement:
 
 For the purpose of the example, let's define 3 consecutive samples for the same series (value is skipped for brevity):
 
@@ -125,7 +125,7 @@ ST[2], T[2]
       ST[0], T[2]
       ```
 
-  * For delta, ST SHOULD (`=` because it looks the start time is exclusive):
+  * For delta, ST SHOULD (`=` because time intervals are half open):
     * `T[i-1] <= ST[i]`
 
 * OTLP) Descriptive SHOULD rules only (one MUST?): The metric protocol says ST is [optional and recommended](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/metrics/v1/metrics.proto), however there's a [mention of MUST ST indicating a reset for cumulatives](https://github.com/open-telemetry/opentelemetry-proto/blob/d1315d7f2c1504c36577a82cd42a73e3977fdd88/opentelemetry/proto/metrics/v1/metrics.proto#L318).
@@ -190,7 +190,7 @@ General decisions and principles affecting smaller technical parts:
 
 2. Similarly, we propose to not have new special ST storage cases per metric types beyond the existing difference between native histograms and float metrics. Some systems allow optional STs on gauges (e.g. OpenTelemetry). We propose keeping that storage flexibility.
 
-3. We propose to treat ST as an *optional* data everywhere, simply because it's new and because certain metric type do not need it (gauges). For efficiency and consistency with scrape and Remote Write protocols we treat default value `int64(0)` as a "not provided" sentinel. This has a consequence of inability to provide the ST of an exact 0 value (unlikely needed and if needed clients needs to use 1m after or before.
+3. We propose to treat ST as an *optional* data everywhere, simply because it's new and because certain metric type do not need it (gauges). For efficiency and consistency with scrape and Remote Write protocols we treat default value `int64(0)` as a "not provided" sentinel. This has a consequence of inability to provide the ST of an exact 0 value (unlikely needed and if needed clients needs to use 1ms after or before.
 
 4. Let's go through all the areas that would need to change:
 
@@ -200,13 +200,13 @@ To develop and give experimental state to users, we propose to add a new feature
 
 We propose to have a single flag for both WAL, Block storage, etc., to avoid tricky configuration.
 
-Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users will might be able to access their STs through all already persistent pieces (e.g. WAL).
+Notably, given persistence of this feature, similar to example storage, if users enabled and then disabled this feature, users might be able to access their STs through all already persistent pieces (e.g. WAL).
 
 This feature could be considered to be switched to opt-out, only after it's finished (this proposal is fully implemented) stable, provably adopted and when the previous LTS Prometheus version is compatible with this feature.
 
 #### Interaction with `created-timestamps-zero-injection`
 
-The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be in addition to or an alternative to zero-injection. In order to better differentiate zero-injection from st-per-sample, we propose to rename `created-timestamps-zero-injection` to `start-time-injection-at-scrape`.
+The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature.
 
 We also propose that the st setting be be tri-state on a per-series basis. Start Time per Sample support can be either `off`, `scrape`, or `per-sample`. Large installations may have a mix of implementations and there is no compatibility concern with having series have differing settings.
 
@@ -226,7 +226,13 @@ We propose to not validate ST values on Prometheus write (Appender level). ST is
 * The exact consumption semantics is still experimental thus we want to stay flexible and don't block future use cases (e.g. exact semantics of ST > T).
 * We can always add validation features opt-in.
 
-For unknown start-time reset points (e.g. OpenTelemetry cumulative points where `ST == T`), ingestion layers (such as OTLP receivers or Remote Write endpoints) are expected to map these to `0` (unknown ST) when appending to storage. This optimizes storage (0 takes exactly 1 bit in chunk/WAL formats) and simplifies detection without requiring timestamp matching.
+The stored ST is to be evaluated in the PromQL engine when the feature is enabled. We propose to utilize the ST for the purposes of counter reset detection and extrapolation at the beginning of time ranges.
+
+The current reset detection takes into account only the value of two consecutive samples (`V[i-1]`, `V[i]`). We propose to take into account the start time of both samples as well. If the start time of the seconds sample is valid (`ST[i]!=0` and `ST[i]<T[i]`) and either its start time is after the previous sample (`T[i-1]<ST[i]`) or it is the same (`T[i-1]==ST[i]`), but the previous sample has a valid timestamp (`ST[i-1]!=0` and `ST[i-1]<T[i]`) then we detect a reset.
+
+Note that this reset algorithm distinguishes between the case when a cumulative series starts with unknown timestamp (`ST[i-1]==T[i-1]`) or this is a delta series starting.
+
+Extrapolation uses a known, in-range `ST[0]` to precisely detect the zero point of a series, instead of extrapolating.
 
 Consumers of ST data (PromQL operations, remote write receivers) are expected to handle missing or inconsistent ST values gracefully. Future proposals and Prometheus versions might offer stricter validation modes later on.
 
