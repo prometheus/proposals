@@ -206,27 +206,34 @@ This feature could be considered to be switched to opt-out, only after it's fini
 
 #### Interaction with `created-timestamps-zero-injection`
 
-The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature.
+The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature. 
 
-In the case where a series has both scrape-injected zeroes and st-per-sample, the scrape-injected zeros take precedence. This separation is needed, because zero injected sample would need to have ST equal to T which is equivalent to unknown reset timestamp (see [Proposed ST semantics and validation](#proposed-st-semantics-and-validation)).
+For now, we propose setting both scrape-injected zeroes and st-per-sample yield configuration error.
 
-### Configuration
+In theory having both options is possible, given our [query logic](https://github.com/prometheus/prometheus/blob/06acd07312d4ae77ce0688624ef9c3044cad193f/promql/functions.go#L786), either by adding zero value with `ST==T` or `ST==0`. However, to limit edge cases, we propose to not allow such case. This could be added later on.
 
-Eventually, we propose `st-storage` and `created-timestamps-zero-injection` to be an optional features configured per scrape job and globally.
+### After Feature Flag Configuration
 
-For these purposes we propose:
+Eventually, we propose `st-storage` and `created-timestamps-zero-injection` feature flags to be removed. We propose the functionality to be an optional features configured per scrape job and globally. This means that we envision `st-storage` to be true by default, allowing storing STs in chunks. However, we expect
+portion of default users to not need overhead of ST, thus we propose to maintain logic for the efficient option of ST == 0, by default.
+
+For these purposes we propose the following configuration:
 
 ```
 global:
   # How start timestamp (ST) should be treated on scrape. Possible
-  # values: "" (to ignore, so write ST as unknown), "zero-injection" (to add fake zero sample at the ST time and change ST to unknown), "store" (to store start timestamps).
-  # Currently "store" option requires 'st_storage' feature flag.  
+  # values: 
+  # * "" - known ST values are ignored, set to 0, so no yielding any storage overhead.
+  # * "zero-injection" - known ST values inject a fake zero sample at the ST time, then ST values are ignored
+  # * "store" - known ST values are written to the storage and stored per sample.
   [ start_timestamps: <string> | default = "" ]
 scrape_configs:
 - job_name: ..
   # How start timestamp (ST) should be treated on scrape. Possible
-  # values: "" (to ignore, so write ST as unknown), "zero-injection" (to add fake zero sample at the ST time and change ST to unknown), "store" (to store start timestamps).
-  # Currently "store" option requires 'st_storage' feature flag.  
+  # values: 
+  # * "" - known ST values are ignored, set to 0, so no yielding any storage overhead.
+  # * "zero-injection" - known ST values inject a fake zero sample at the ST time, then ST values are ignored
+  # * "store" - known ST values are written to the storage and stored per sample.
   [ start_timestamps: <string> | default = "" ]
 ```
 
