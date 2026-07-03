@@ -208,11 +208,27 @@ This feature could be considered to be switched to opt-out, only after it's fini
 
 The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature.
 
-We also propose that the st setting be be tri-state on a per-series basis. Start Time per Sample support can be either `off`, `scrape`, or `per-sample`. Large installations may have a mix of implementations and there is no compatibility concern with having series have differing settings.
+In the case where a series has both scrape-injected zeroes and st-per-sample, the scrape-injected zeros take precedence. This separation is needed, because zero injected sample would need to have ST equal to T which is equivalent to unknown reset timestamp (see [Proposed ST semantics and validation](#proposed-st-semantics-and-validation)).
 
-In the case where a series has both scrape-injected zeroes and st-per-sample, the scrape-injected zeros take precedence.
+### Configuration
 
-We also intend to graduate zero-injection from an experimental feature, which could involve replacing the existing flag with, for example, a `stZeroInjection` term to the scrape config. The exact implementation is out of scope of this proposal.
+Eventually, we propose `st-storage` and `created-timestamps-zero-injection` to be an optional features configured per scrape job and globally.
+
+For these purposes we propose:
+
+```
+global:
+  # How start timestamp (ST) should be treated on scrape. Possible
+  # values: "" (to ignore, so write ST as unknown), "zero-injection" (to add fake zero sample at the ST time and change ST to unknown), "store" (to store start timestamps).
+  # Currently "store" option requires 'st_storage' feature flag.  
+  [ start_timestamps: <string> | default = "" ]
+scrape_configs:
+- job_name: ..
+  # How start timestamp (ST) should be treated on scrape. Possible
+  # values: "" (to ignore, so write ST as unknown), "zero-injection" (to add fake zero sample at the ST time and change ST to unknown), "store" (to store start timestamps).
+  # Currently "store" option requires 'st_storage' feature flag.  
+  [ start_timestamps: <string> | default = "" ]
+```
 
 ### Proposed ST semantics and validation
 
