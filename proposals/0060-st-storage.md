@@ -206,7 +206,7 @@ This feature could be considered to be switched to opt-out, only after it's fini
 
 #### Interaction with `created-timestamps-zero-injection`
 
-The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature. 
+The existing zero-injection feature is useful and has been around long enough that some large users are relying on it. The new ST support will be an additional feature situated in the ingestion pipeline *after* the zero-injection feature.
 
 For now, we propose setting both scrape-injected zeroes and st-per-sample yield configuration error.
 
