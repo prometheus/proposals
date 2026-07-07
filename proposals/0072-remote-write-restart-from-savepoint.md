@@ -32,7 +32,8 @@ Given we have a persistent WAL this behavior is unexpected by users and can caus
    * The `queue_configuration` includes fields like min/max shards and other performance tuning parameters.
    * These can be expected to change under normal circumstances and should not trigger a data loss scenario.
 4. Guards need to be in place to protect against infinite WAL growth.
-5. Stretch: Remote write supports at-least-once delivery of samples in the WAL.
+5. The current behavior of starting from now (best effort delivery) will remain an option.
+6. Stretch: Remote write supports at-least-once delivery of samples in the WAL.
    * Note: This has appeared to be the largest challenge with any existing implementation as it can cause significant overhead.
 
 ### Audience
