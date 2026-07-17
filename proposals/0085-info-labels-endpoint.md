@@ -1,4 +1,4 @@
-## Info-metric label discovery API for `info()` autocomplete
+## Info-metric label discovery APIs for `info()` autocomplete
 
 * **Owners:**
   * Arve Knudsen [@aknuds1](https://github.com/aknuds1) arve.knudsen@gmail.com
@@ -7,300 +7,233 @@
 * **Implementation Status:** Not implemented upstream ([WIP implementation PR](https://github.com/prometheus/prometheus/pull/17930))
 
 * **Related Issues and PRs:**
-  * [PROM-74 — V2 API for labels and values discovery](https://github.com/prometheus/proposals/pull/74). This proposal builds on PROM-74's NDJSON contract, feature gate, and shared parameter set.
-  * [PROM-37 — Simplify joins with info metrics in PromQL](./0037-native-support-for-info-metrics-metadata.md). Introduces the `info()` PromQL function; the proposed endpoint supports its autocomplete.
-  * [Grafana Prometheus datasource PR #244](https://github.com/grafana/grafana-prometheus-datasource/pull/244). Independent client PoC for `info()` data-label autocomplete using this endpoint.
+  * [PROM-74 — V2 API for labels and values discovery](https://github.com/prometheus/proposals/pull/74). This proposal builds on PROM-74's NDJSON model, feature gate, search behavior, and storage interfaces. The request bounds below follow the current search implementation and are authoritative where PROM-74's original text differs.
+  * [PROM-37 — Simplify joins with info metrics in PromQL](./0037-native-support-for-info-metrics-metadata.md). Introduces the `info()` PromQL function supported by this autocomplete API.
+  * [Grafana Prometheus datasource PR #244](https://github.com/grafana/grafana-prometheus-datasource/pull/244). Independent client PoC and source of the client-integration feedback incorporated here.
 
-* **Other docs or links:**
-  * PromQL `info()` function documentation in `docs/querying/functions.md`.
-
-> TL;DR: Add `GET|POST /api/v1/info_labels` as the info-metric companion to the experimental `/api/v1/search/*` family. The endpoint streams the non-identifying data labels of info metrics (e.g. `target_info`) as NDJSON. Queries can be scoped either by an explicit info-metric specifier (`metric_match`), or by evaluating a PromQL expression (`expr`) and harvesting its identifying labels. The endpoint reuses PROM-74's NDJSON contract, fuzzy/sort/score/limit/batch parameters, and `--enable-feature=search-api` gate. It additionally requires `--enable-feature=promql-experimental-functions`, since its only purpose is to support autocomplete for the experimental `info()` function.
+> TL;DR: Add `GET|POST /api/v1/info_labels` and `GET|POST /api/v1/info_label_values` as info-metric companions to PROM-74's experimental search API. Both endpoints apply the same `expr`, repeated `metric_match[]`, and repeated `data_match[]` scope. The first searches data-label names; the second searches values for one exact data-label name. They reuse the current search API's NDJSON, search, sort, score, limit, batch, and storage behavior and require both `search-api` and `promql-experimental-functions`.
 
 ## Why
 
-The PromQL `info()` function (added under `--enable-feature=promql-experimental-functions`) enriches base metrics with the data labels carried on info metrics like `target_info`. A PromQL editor offering autocomplete inside `info(<base>, {…})` needs to know **which data labels are available for the in-scope info metrics**, where the in-scope set is determined by the user's in-progress expression.
+The PromQL `info()` function enriches base series with data labels from info metrics such as `target_info`. An editor completing `info(<expr>, {…})` must first discover which data-label names exist for the in-scope info series, then discover values only for the name the user selected.
 
-This is a new gap created by the introduction of `info()` itself — it is not specific to any one editor or vendor. Anyone building a PromQL editor that supports `info()` will hit the same problem.
+This is not editor-specific. The Prometheus UI and the Grafana Prometheus datasource use different editor implementations, but both require the same server-side operations.
 
-The Prometheus UI PoC integrates the endpoint through `web/ui/module/lezer-promql/src/client/`. Grafana has a separate Monaco-based client PoC, demonstrating that the endpoint contract is usable without sharing Prometheus' editor implementation.
+Existing APIs cannot express those operations efficiently and consistently:
 
-### Pitfalls of the current solution
-
-Constructing an equivalently scoped interaction with the endpoints that exist today requires either fetching far more than needed or combining endpoints that cannot express arbitrary-PromQL info-metric scoping consistently.
-
-* **`/api/v1/labels` + per-name `/api/v1/label/{name}/values`** returns *all* labels matching a selector, including labels carried by the base metric, not just data labels on info metrics. Filtering client-side requires downloading the full universe of labels and then making one `/label/{name}/values` call per label of interest (N+1).
-* **`/api/v1/series` + client aggregation** returns one row per series, then the client must dedupe labels and prune identifying labels. The wire size is O(series), and there is no server-side scoring for relevance ranking.
-* **`/api/v1/search/label_names` + `/api/v1/search/label_values`** (from PROM-74) is closer, but neither endpoint understands the info-metric scoping pattern (find label names on info metrics whose identifying labels intersect with a PromQL expression's result set). A client can defer the value lookup until the user selects a name, avoiding eager 1 + N calls, but it still has to reproduce the missing info-metric scoping across two endpoint families.
-* **`/api/v1/search/*` with `match[]` alone** cannot scope autocomplete to be context-aware against arbitrary PromQL like `rate(http_requests_total[5m])`, which is what users actually type. The endpoint needs to evaluate an expression and harvest its identifying labels, not merely accept a series selector.
-
-For interactive autocomplete this manifests as visible latency on every keystroke and unnecessary load on the server.
+* `/api/v1/labels` and `/api/v1/label/{name}/values` include labels from base metrics as well as info metrics and cannot derive the info scope from arbitrary PromQL.
+* `/api/v1/series` transfers one row per series and requires the client to deduplicate labels and remove identifying labels.
+* PROM-74's general label search endpoints support filtering and ranking, but do not evaluate an arbitrary expression to derive the identifying-label values that scope the relevant info series.
+* `match[]` can express selectors, not expressions such as `rate(http_requests_total[5m])` that users actually type.
 
 ## Goals
 
-* One bounded round-trip for each autocomplete interaction: discover label names, then fetch values only for the label the user selects.
-* Server-side scoping by either an explicit info-metric specifier (`metric_match`) or by evaluating a PromQL expression (`expr`) and using its identifying labels.
-* Reuse PROM-74's NDJSON contract, search/fuzzy/sort/score/limit/batch parameters, and `--enable-feature=search-api` gate so operators see one coherent experimental autocomplete API surface.
-* Couple the endpoint to the function it serves: also require `--enable-feature=promql-experimental-functions`, so an operator cannot reach a state where the endpoint is up but `info()` queries fail to parse.
-* Give callers independent caps for label names and values, and provide predictable degradation under pathological input (e.g. `target_info` with very high `version`/`env`/`region` cardinality, or a `metric_match` that matches far more than expected).
+* One bounded request for each autocomplete phase: names first, values for one selected name second.
+* Identical server-side scoping for both phases, using full PromQL name and data-label matchers and optionally the identifying labels harvested from a PromQL expression.
+* Exact label-name semantics for value lookup. Fuzzy name search must not be used to emulate selecting one label.
+* Reuse the current search API's request, streaming, storage, and feature-gate behavior, with the explicit bounds below.
+* Keep the response units simple and independently bounded: one name per name record, one value per value record.
 
 ## Non-Goals
 
-* Replace or modify `/api/v1/labels` or `/api/v1/label/{name}/values`.
-* Add or modify the `/api/v1/search/*` family. This proposal *builds on* PROM-74; it does not extend it.
-* Server-side evaluation of `info()`. This is a metadata endpoint; `info()` queries continue to use `/api/v1/query`.
-* Cursor-based pagination. Same stance as PROM-74; `has_more` is informational only.
-* Special handling of `__type__` / `__unit__` labels. They are not in `infohelper.DefaultIdentifyingLabels` (which is `{"instance", "job"}`), so they pass through the extractor as ordinary data labels and may appear in the response if set on info metrics.
+* Replace or modify the existing label or series endpoints.
+* Add server-side evaluation of `info()`; query evaluation remains on `/api/v1/query`.
+* Add cursor-based pagination. As in PROM-74, `has_more` reports truncation but is not a cursor.
+* Make identifying labels configurable per request. The initial set is `job` and `instance`.
 
 ## How
 
-A new endpoint, gated behind two feature flags, that streams NDJSON using the same wire framing (batches + trailer) as `/api/v1/search/*`. The per-record shape is `/info_labels`-specific (`{name, values, score?}`).
+Add two dual-gated endpoints with a shared scope and distinct result types:
 
-### Implementation notes
+| Endpoint                    | Search target                         | Result record                           |
+|-----------------------------|---------------------------------------|-----------------------------------------|
+| `/api/v1/info_labels`       | Non-identifying label names           | `{ "name": string, "score"?: number }`  |
+| `/api/v1/info_label_values` | Values of the exact `label` parameter | `{ "value": string, "score"?: number }` |
 
-* The parameter set extends PROM-74's shared parameters (`search[]`, `fuzz_*`, `sort_*`, `include_score`, `start`, `end`, `limit`, `batch_size`) with three /info_labels-specific parameters: `expr`, `metric_match`, and `values_limit`.
-* `match[]` is not accepted. Scoping happens via `metric_match` (which info metrics to consider) and `expr` (which identifying-label values to restrict to). Accepting `match[]` as well would create two equivalent matcher mechanisms with unclear precedence.
-* The response unit is one record per data label name, carrying that label's values inline. Clients should use different limits for the two autocomplete phases instead of eagerly retrieving all values for every candidate name.
-* The response is NDJSON (`application/x-ndjson`) with the same batch + trailer contract as PROM-74.
-* The endpoint is dual-gated: `--enable-feature=search-api` covers the NDJSON + parsing infrastructure it reuses; `--enable-feature=promql-experimental-functions` covers the only consumer (`info()`). Either missing flag returns the standard Prometheus JSON error with `errorType: unavailable` and a flag-specific message.
+These are top-level `info_*` endpoints rather than `/api/v1/search/*` resources because `expr`, the info-specific matcher split, and the dual `info()` feature gate are function-specific semantics. Reusing PROM-74's `Searcher`, request parameters, and NDJSON contract does not make the operations general label search.
 
-### Client integration feedback
+The separation follows the two editor interactions and PROM-74's label-name and label-value split. It avoids a combined `{name, values[]}` response whose two independent cardinality dimensions require `values_limit`, encourages eager value retrieval, and cannot give the selected label first-class exact semantics.
 
-The independent Grafana PoC validates the request and response shape while exposing several requirements that apply to PromQL editors generally:
+Requests that reach streaming return `200 OK` with `application/x-ndjson` using PROM-74's zero-or-more batch lines followed by exactly one terminal success or error record. Validation and setup failures, plus first-iteration failures that produce no batch results, return the usual non-2xx Prometheus JSON error. Both endpoints use the `storage.Searcher` interface: `SearchLabelNames` for names and `SearchLabelValues` for values.
 
-* `expr` must be valid PromQL. Clients with editor-specific variables or macros must resolve them with the same semantics as normal query execution before sending the request.
-* Each request must use the current query time range. A client cache should be bounded and freshness-limited, keyed by the effective resolved request, retain only complete successful responses, and allow retries after failures.
-* A label-name completion request should send the current `start`/`end`, resolved `expr`, optional `metric_match`, and typed `search[]`. Omitting `limit` uses the server's at-most-100-name default, reduced further when the operator configures a lower maximum; `values_limit=1` prevents the name-completion response from carrying every value for every name.
-* A label-value completion request can use the existing search contract with `search[]=<unquoted-label-name>`, `fuzz_alg=subsequence`, `fuzz_threshold=100`, `case_sensitive=true`, `sort_by=alpha`, `sort_dir=asc`, `limit=1`, and an explicit client-selected `values_limit`. Subsequence prefix matches can tie with the exact name, so the client must still verify that the returned record name equals the requested name before using its values.
+### Shared request parameters
 
-The last request profile is a bounded workaround, not an exact-name API primitive. A first-class name-only mode and exact-name filter remain open design questions.
+| Name             | Type                          | Required | Default                  | Description                                                                                                                                                                                      |
+|------------------|-------------------------------|----------|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `expr`           | string (PromQL)               | No       |                          | Instant-vector expression evaluated to derive `job` and `instance` values that restrict the info-series scope.                                                                                   |
+| `metric_match[]` | []string                      | No       | `__name__="target_info"` | Repeated full PromQL matchers on `__name__`. Multiple matchers have AND semantics.                                                                                                               |
+| `data_match[]`   | []string                      | No       |                          | Repeated full PromQL matchers on labels other than `__name__`. Multiple matchers have AND semantics.                                                                                             |
+| `time`           | rfc3339 / unix timestamp      | No       | `end`                    | Instant evaluation time for `expr`.                                                                                                                                                              |
+| `lookback_delta` | duration / float seconds      | No       | server default           | Lookback used both to evaluate `expr` and to select matching info series.                                                                                                                        |
+| `start`, `end`   | rfc3339 / unix timestamp      | No       | last 1h                  | Storage search window when `expr` is absent. With `expr`, `start` must parse but is ignored for range selection and ordering validation; `end` supplies the default `time`.                      |
+| `search[]`       | []string                      | No       |                          | At most 32 search terms, matched against names or values according to the endpoint. Multiple terms have OR semantics.                                                                            |
+| `fuzz_threshold` | int [0..100]                  | No       | 0                        | Fuzzy threshold, as in PROM-74.                                                                                                                                                                  |
+| `fuzz_alg`       | `jarowinkler` / `subsequence` | No       | `jarowinkler`            | Fuzzy algorithm, as in PROM-74.                                                                                                                                                                  |
+| `case_sensitive` | bool                          | No       | true                     | Case sensitivity, as in PROM-74.                                                                                                                                                                 |
+| `sort_by`        | `alpha` / `score`             | No       |                          | Ordering, as in PROM-74. `sort_by=score` requires `search[]`.                                                                                                                                    |
+| `sort_dir`       | `asc` / `dsc`                 | No       | `asc`                    | Direction for alphabetical ordering. Not accepted with `sort_by=score`.                                                                                                                          |
+| `include_score`  | bool                          | No       | false                    | Include the deterministic relevance score in each record.                                                                                                                                        |
+| `limit`          | positive int                  | No       | 100                      | Maximum records returned after filtering and ordering. A positive `--web.search.max-limit` caps explicit values and may reduce the default; 0 disables that operator cap, not the request limit. |
+| `batch_size`     | positive int, at most 10000   | No       | 100                      | Requested records per NDJSON batch line. Its effective value is no greater than `limit`.                                                                                                         |
+
+`limit` bounds the endpoint's retained result state and response size. It is passed to the storage search as a hint, but the API does not promise that an implementation can avoid scanning or enumerating additional index data to determine the requested ordered results or `has_more`. Unlike PROM-74's original request table, `limit=0` and `batch_size=0` are rejected.
+
+At most 32 `metric_match[]` and `data_match[]` values may be supplied in total. Each value must parse as exactly one full PromQL matcher. `metric_match[]` accepts only `__name__`; `data_match[]` rejects `__name__`. This separation lets clients preserve matcher source text directly without inventing an operator-prefix encoding.
+
+`match[]` is rejected on both endpoints. It would introduce a second series-scoping mechanism with unclear precedence relative to the info matchers and `expr`.
+
+The legacy singular `metric_match` and `data_match` parameters and the removed combined-response parameter `values_limit` are also rejected. Value cardinality is now controlled by `limit` on `/api/v1/info_label_values`.
+
+### Scope semantics
+
+`metric_match[]` specifies which info metric families to search:
+
+* No name matcher means `__name__="target_info"`.
+* `metric_match[]=__name__=~".+_info"` selects matching info metric names.
+* Repeated name matchers are ANDed, for example `__name__=~".+_info"` and `__name__!="custom_info"`.
+* A negative-only request is implicitly restricted by `__name__=~".+_info"`, so `__name__!="target_info"` cannot broaden the search to every non-target metric.
+
+`data_match[]` filters the selected info series before either endpoint discovers names or values. Repeated data matchers are ANDed with one another, the effective name matchers, and the expression-derived scope.
+
+When `expr` is present, Prometheus evaluates it as an instant query at `time`, which defaults to `end`. The expression must have instant-vector type; matrix, scalar, and string expressions are rejected before execution. Series already matching the effective info-metric name scope are ignored, consistent with `info()` not enriching info series. An expression that produces no remaining series with a non-empty identifying label returns a successful empty stream rather than falling back to an unscoped search.
+
+The subsequent info-series search uses the same temporal selection hints as an instant `info(expr, ...)` evaluation: it applies the effective lookback delta and honors selector `offset` and `@` modifiers. The general search `start` parameter does not broaden or narrow this expression-derived range.
+
+The handler groups expression results by identifying-label presence: `job` only, `instance` only, and both. A missing identifying label becomes an exact empty matcher instead of a wildcard. Within a presence group, observed values become escaped regular-expression alternatives. This avoids false negatives and keeps the number of storage selections bounded by the number of presence patterns rather than the number of expression series. A group containing both labels may conservatively inspect cross-pairs of independently observed `job` and `instance` values. That can make autocomplete suggestions broader, but it cannot change query results: `info()` performs the exact identifying-label join when the completed query executes.
+
+Matcher construction is also bounded before the info-series `Searcher` is opened. At most 10,000 unique `(presence group, identifying label, value)` entries and 1,048,576 total escaped regular-expression bytes, including alternation separators, are accepted. Duplicate values do not consume the value budget. Exceeding either bound returns a pre-stream `bad_data` error asking the caller to narrow `expr`; values are never truncated because truncation could silently omit valid completions.
+
+The name matchers, data matchers, and `expr` apply jointly. Expression warnings are merged with storage warnings and exposed on the stream.
+
+Clients must resolve editor-specific variables and macros before sending `expr`, using the same semantics as normal query execution. Otherwise autocomplete and query execution can observe different expressions.
 
 ### `GET|POST /api/v1/info_labels`
 
-#### Request
+This endpoint searches non-identifying label names on the scoped info series. `__name__`, `job`, and `instance` are filtered before the result limit is applied, so they cannot consume autocomplete slots.
 
-**Method:** `GET` or `POST`
+The `label` parameter is rejected; callers seeking values must use `/api/v1/info_label_values`.
 
-`POST` is recommended when the `expr` parameter exceeds URL length limits.
-
-**Path:** `/api/v1/info_labels`
-
-**Query parameters:**
-
-| Name             | Type                     | Required | Default                                 | Description                                                                                                                                                                                                               |
-|------------------|--------------------------|----------|-----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `expr`           | string (PromQL)          | No       |                                         | Optional PromQL expression evaluated server-side. Identifying labels (`job`, `instance`) extracted from the result restrict the info-metric query so autocomplete sees only the labels relevant to the user's expression. |
-| `metric_match`   | string                   | No       | `target_info` (exact)                   | Info-metric specifier. Bare value (no prefix) is exact match; `=~` / `!=` / `!~` prefixes give the corresponding matcher type (e.g. `target_info`, `=~.*_info`, `!=target_info`, `!~build_info`).                         |
-| `search[]`       | []string                 | No       |                                         | One or more search terms matched against data label NAMES (OR semantics). As per PROM-74.                                                                                                                                 |
-| `fuzz_threshold` | int [0..100]             | No       | 0                                       | Fuzzy threshold. As per PROM-74.                                                                                                                                                                                          |
-| `fuzz_alg`       | string                   | No       | `subsequence`                           | Fuzzy algorithm. As per PROM-74.                                                                                                                                                                                          |
-| `case_sensitive` | bool                     | No       | true                                    | As per PROM-74.                                                                                                                                                                                                           |
-| `sort_by`        | `alpha` / `score`        | No       |                                         | As per PROM-74.                                                                                                                                                                                                           |
-| `sort_dir`       | `asc` / `dsc`            | No       | `asc`                                   | As per PROM-74.                                                                                                                                                                                                           |
-| `include_score`  | bool                     | No       | false                                   | As per PROM-74.                                                                                                                                                                                                           |
-| `start`, `end`   | rfc3339 / unix_timestamp | No       | last 1h                                 | As per PROM-74.                                                                                                                                                                                                           |
-| `limit`          | int ≥ 0                  | No       | 100, capped by `--web.search.max-limit` | Maximum number of label NAMES returned. Same `has_more` semantics as PROM-74.                                                                                                                                             |
-| `values_limit`   | int ≥ 0                  | No       | 0 (no cap)                              | Maximum number of values returned per label. New to this endpoint.                                                                                                                                                        |
-| `batch_size`     | int > 0                  | No       | 100                                     | As per PROM-74.                                                                                                                                                                                                           |
-
-**Notes:**
-
-***Feature gating***
-
-The endpoint requires *both* `--enable-feature=search-api` (NDJSON + parsing infrastructure) and `--enable-feature=promql-experimental-functions` (the only consumer is `info()` autocomplete; without `info()`, no client can use the response). The handler checks both flags upfront and, if either is missing, responds with the standard non-streaming JSON error (`errorType: unavailable`) carrying a single message that names every missing flag, so an operator sees the whole gap in one round-trip:
-
-* `"info_labels requires --enable-feature=search-api"` — only search-api missing.
-* `"info_labels requires --enable-feature=promql-experimental-functions"` — only experimental-functions missing.
-* `"info_labels requires --enable-feature=search-api,promql-experimental-functions"` — both missing.
-
-***expr***
-
-If `expr` is provided, the server evaluates it as an instant query at the request's `end` timestamp. The result must be a Vector or Matrix; Scalar/String returns `errorBadData`. The server harvests the identifying labels (`job`, `instance`) from each sample/series and uses their values as additional matchers against the info-metric query. If the eval produces no identifying-label values, the stream consists of a single empty batch (carrying any warnings) followed by the success trailer.
-
-The endpoint accepts PromQL, not editor-specific template syntax. A client must resolve local variables and macros before sending `expr`; using the same interpolation path as normal query execution avoids autocomplete evaluating a different expression than the query itself.
-
-This is what makes the endpoint context-aware: `expr=rate(http_requests_total[5m])` gives an autocomplete experience scoped to the info metrics actually relevant to that PromQL expression, without requiring the client to interpret PromQL itself.
-
-When `metric_match` is also set, the two filters apply jointly: an info-metric series must match `metric_match`'s name pattern AND have identifying labels intersecting the `expr` eval result. This lets callers narrow both the info-metric family (e.g. `metric_match==~.*_info`) and the relevant series (e.g. `expr=rate(http_requests_total[5m])`).
-
-***metric_match***
-
-Specifies which info metrics to consider. Prefix syntax mirrors PromQL matcher operators:
-
-* `metric_match=target_info` → `__name__="target_info"` (default)
-* `metric_match==~.*_info` → `__name__=~".*_info"`
-* `metric_match=!=target_info` → `__name__!="target_info"`
-* `metric_match=!~build_info` → `__name__!~"build_info"`
-
-The double-equals in `metric_match==~.*_info` is not a typo — the first `=` is the URL form-value separator and the second `=` is the matcher-type prefix.
-
-Clients deriving `metric_match` from a PromQL `__name__` matcher must preserve the full operator. In particular, a regex matcher is encoded as the form value `=~.*_info`; dropping the leading `=` changes it into an exact metric name.
-
-***match[]***
-
-Not accepted. Requests carrying `match[]` are rejected with `errorBadData`: `"match[] is not supported by info_labels; use metric_match or expr"`.
-
-***values_limit***
-
-Caps the number of values per label. Distinct from `limit`, which caps the number of records (per PROM-74's semantics). Values are sorted alphabetically and truncated after the sort, so the truncation is deterministic.
-
-The two dimensions multiply: a response can contain up to `limit * values_limit` values when both are non-zero. Omitting `values_limit`, or setting it to zero, leaves value cardinality uncapped. Interactive clients should therefore always set it explicitly.
-
-To make `values_limit` a server-memory bound as well as a wire bound, implementations must enforce it while collecting values, retaining only the lexicographically smallest values needed for the deterministic result. Collecting every distinct value and truncating only after the scan bounds the response but not extractor memory.
-
-***start/end***
-
-The default window is the last hour (inherited from PROM-74's `parseSearchParams`). This is conservative — info metrics like `target_info` typically only emit one sample per scrape and may be scraped infrequently, so a deployment with a long scrape interval and an idle window can land outside a 1-hour lookback and return no data. Operators with infrequent scrapes should pass an explicit `start` to widen the window; interactive clients should pass the current editor time range rather than retaining the range from editor initialization. See Known unknowns for the open question of whether `/info_labels` should ship with a longer default than `/search/*`.
-
-***Storage***
-
-The endpoint uses the existing `storage.Querier` interface, not PROM-74's `Searcher`. The unit of work — enumerate info-metric series, collect their non-identifying labels deduped across series, with values — does not map onto `SearchLabelNames` (which returns names without values and would force one `SearchLabelValues` call per name). The search-api `storage.Filter` produced by `buildSearchFilter` is applied to label names in-memory inside the extractor loop, so fuzzy/score behaviour is identical to `/api/v1/search/label_names` for the same input names (iteration order differs because `/info_labels` is series-driven rather than index-driven, but the difference is invisible once results pass through the post-sort).
-
-***Security***
-
-* `expr` is evaluated through the standard `QueryEngine`, so the existing per-query timeout, max-samples limit, and any deployed query authorisation policy apply unchanged. The endpoint adds no new evaluation path.
-* The `namesLimit` cap described in the *Memory bound* note bounds the number of distinct label names, but not the number of values retained for each name. An implementation must apply the name cap to all retained per-name state and enforce a positive `values_limit` during extraction to bound both dimensions; requests with an omitted or zero `values_limit` remain unbounded in the value dimension.
-* The endpoint exposes no metadata that a caller cannot already obtain by combining `/api/v1/labels`, `/api/v1/label/{name}/values`, and client-side post-filtering. It packages the same information more efficiently; it does not widen the read surface.
-* Expensive `expr` is bounded by the existing QueryEngine timeout and max-samples (`--query.timeout`, `--query.max-samples`); `/info_labels` adds no further protection beyond what `/api/v1/query` already enforces.
-
-***Memory bound***
-
-The extractor drains all matching info-metric series before streaming the first batch. To prevent unbounded growth in distinct names on pathological `metric_match` values (e.g. one that matches the entire metric universe), the extractor caps the number of names it collects at `--web.search.max-limit` (default 10000; setting the flag to 0 disables the name cap). The cap applies to all retained per-name state, including memoized filter decisions. Once the cap is hit, the extractor keeps draining the series set to gather values for already-collected names but does not retain state for not-yet-seen names, and a warning is surfaced in the first batch.
-
-Value cardinality is an independent dimension. With a positive `values_limit`, the extractor must retain at most that many values per collected name while preserving the lexicographically smallest values for deterministic output. With `values_limit` unset or zero, values remain unbounded by this endpoint. The extractor is fully memory-bounded by these dimensions only when both the operator name cap and a positive per-request value cap are active.
-
-`sort_by=score` under a hit cap may miss the true top-N because some high-scoring names were never seen — documented as a known limitation; operators who want full coverage can raise the cap. Streaming gives clients incremental rendering after the storage scan completes; it does not eliminate the scan itself.
-
-***Performance***
-
-* Time: O(series matching `metric_match`) × O(labels per series). Per-series work is one label-set iteration plus filter evaluation. Decisions for retained names can be memoized; names encountered after the cap may be re-evaluated rather than retained, trading bounded memory for repeated filter work.
-* Memory: with a positive `values_limit` enforced during extraction, bounded by `namesLimit` (distinct names) × `values_limit` (values per name) × average value length. With the defaults (`--web.search.max-limit=10000`, no `values_limit`), the values dimension is bounded only by the data's natural cardinality. A post-scan truncation does not provide this memory bound.
-* No additional storage round-trips beyond the one info-metric `Select`. The optional `expr` adds one instant-query evaluation through the standard QueryEngine path.
-
-#### Response
-
-* `Content-Type: application/x-ndjson; charset=utf-8`
-
-Zero or more `{results, warnings?}` batch lines, followed by a `{status, has_more, warnings?}` trailer, or — on mid-stream failure after the first batch has been written — a `{status, errorType, error}` line in place of the trailer. Errors that occur before the first batch is written are returned as the usual non-streaming Prometheus JSON error with the matching 4xx/5xx status code.
-
-This is the same contract as the `/api/v1/search/*` endpoints.
-
-The terminal record defines stream completeness. A client must reject the response if EOF occurs before a terminal success or error record, if a line is malformed, if more than one terminal record appears, or if content follows the terminal record. Partial batches must not be treated or cached as a successful response.
-
-URLs in the examples below are shown unescaped for readability — single-quote them on the shell or let curl perform the percent-encoding.
-
-##### Example: no scoping
-
-```ndjson
-{"results":[{"name":"cluster","values":["us-east","us-west"]},{"name":"env","values":["prod","staging"]},{"name":"region","values":["us-east"]},{"name":"version","values":["v1.0","v2.0","v2.1"]}]}
-{"status":"success","has_more":false}
-```
-
-##### Example: scoped by expression
+Example:
 
 ```bash
-curl -N 'http://localhost:9090/api/v1/info_labels?expr=rate(http_requests_total{job="api-gateway"}[5m])'
+curl -N -g 'http://localhost:9090/api/v1/info_labels?expr=rate(http_requests_total{job="api"}[5m])&metric_match[]=__name__=~".+_info"&data_match[]=env="prod"&search[]=ver&sort_by=score&include_score=true'
 ```
 
 ```ndjson
-{"results":[{"name":"cluster","values":["us-east","us-west"]},{"name":"env","values":["prod","staging"]},{"name":"version","values":["v1.0","v2.0"]}]}
+{"results":[{"name":"version","score":1},{"name":"server","score":0.83}]}
 {"status":"success","has_more":false}
 ```
 
-##### Example: scoped by search with relevance scoring
+### `GET|POST /api/v1/info_label_values`
+
+This endpoint requires `label`, interpreted as one exact decoded label name. It is a query parameter rather than a path component so UTF-8 label names do not require a second path-specific quoting contract.
+
+Empty `label`, `__name__`, `job`, and `instance` are rejected because they are not info data labels. `search[]`, if present, filters and ranks values of the selected label; it never changes which label is selected.
+
+Example:
 
 ```bash
-curl -N 'http://localhost:9090/api/v1/info_labels?search[]=ver&sort_by=score&include_score=true'
+curl -N -g 'http://localhost:9090/api/v1/info_label_values?label=version&expr=rate(http_requests_total{job="api"}[5m])&search[]=v2&sort_by=score'
 ```
 
 ```ndjson
-{"results":[{"name":"version","values":["v1.0","v2.0","v2.1"],"score":1},{"name":"server","values":["nginx","envoy"],"score":0.83}]}
+{"results":[{"value":"v2.1"},{"value":"v2.0"}]}
 {"status":"success","has_more":false}
 ```
 
-##### Example: `match[]` rejected
+### Feature gating
 
-```bash
-curl -N 'http://localhost:9090/api/v1/info_labels?match[]={job="prometheus"}'
-```
+Both endpoints require:
 
-```json
-{"status":"error","errorType":"bad_data","error":"match[] is not supported by info_labels; use metric_match or expr"}
-```
+* `--enable-feature=search-api`, for the experimental search and NDJSON infrastructure.
+* `--enable-feature=promql-experimental-functions`, because this API serves the experimental `info()` function.
 
-##### Example: names truncated at namesLimit
+Missing gates return the standard non-streaming Prometheus JSON error with `errorType: unavailable`; the message names every missing feature in one response.
 
-When the extractor hits the `--web.search.max-limit` cap, the first batch carries a warning naming the cap and what to do about it. The trailer's `status` stays `success` because the result set is still well-formed — just incomplete.
+### Stream completeness
+
+A non-2xx response uses the standard Prometheus JSON error format and is not an NDJSON stream. A successful NDJSON stream ends with:
 
 ```ndjson
-{"results":[{"name":"cluster","values":["us-east","us-west"]},...],"warnings":["info-labels names truncated at 10000; narrow metric_match or raise --web.search.max-limit"]}
 {"status":"success","has_more":false}
 ```
 
-### Interface changes
+A client must reject a response when EOF arrives before a terminal record, a line is malformed, more than one terminal record appears, or content follows the terminal record. A mid-stream error record is terminal. Partial batches must not be returned or cached as a successful response.
 
-Smaller than PROM-74's contribution. This proposal does not introduce new storage interfaces:
+Clients should cache only complete successful responses, bound cache size and freshness, key entries by the effective resolved request, deduplicate identical in-flight requests, and evict failures so a later request can retry. Clients should normally omit `limit` and accept the operator-controlled default.
 
-* PROM-74's `Searcher.SearchLabelNames` is not used; the endpoint stays on `storage.Querier`.
-* The search-api request preamble (CORS, feature-gate, form parsing, `parseSearchParams`, querier acquisition, `buildSearchFilter`, sort/order plumbing) is factored out of `newSearchRequest` into a reusable `newAutocompleteRequest` so both `/api/v1/search/*` and `/api/v1/info_labels` share it. This is a small refactor of code that landed with PROM-74: `newSearchRequest` is preserved as a thin wrapper that adds the `storage.Searcher` type assertion the search-api endpoints require.
-* A small helper package (`promql/infohelper`) exposes `ExtractDataLabels(ctx, querier, infoMetricMatcher, identifyingLabelValues, hints, filter, namesLimit, valuesLimit) → []InfoLabelRecord` where `InfoLabelRecord = {Name, Values, Score}`. The filter is applied to label names; the score carries through to the wire when `include_score=true`.
+Editor integrations should forward every completed matcher in the second `info()` argument as its original full PromQL source. The matcher currently being edited must be omitted, while other matchers on the same label remain in scope. The second argument has no metric-name prefix syntax; clients encountering an unquoted identifier or quoted metric-name prefix must use generic completion rather than synthesizing a `__name__` matcher. Users select another info metric explicitly with a matcher such as `{__name__="build_info", ...}`. Variables and macros must be resolved before the request, and quoted UTF-8 label names must be decoded before use as the exact `label`. Completion for `__name__`, `job`, and `instance` remains the general metric or label completion path because those are not discoverable info data labels.
 
-### Extensibility for Mimir, Thanos, Cortex
+### Storage and performance
 
-The per-record JSON shape inherits PROM-74's extensibility story: downstream implementations can add an `extensions` field per record (and an `extensions` map keyed by provider name) without changing the core contract. No new mechanism is required.
+The name endpoint calls `Searcher.SearchLabelNames` with the common scope and a filter that excludes identifying labels before applying search and limit. The value endpoint calls `Searcher.SearchLabelValues` with the exact label and the same scope. This keeps search, scoring, ordering, limiting, and downstream storage optimizations aligned with PROM-74 rather than reimplementing them in an info-specific series extractor.
+
+The optional `expr` adds one standard instant-query evaluation. Existing query timeout, max-samples, lookback override, and authorization behavior applies. The storage search then uses the derived matchers over the exact range that `info()` would select. The endpoint exposes no metadata unavailable through existing label and series APIs; it provides a scoped and efficient autocomplete contract.
+
+The `limit` contract bounds result retention and wire output, not the cardinality of the underlying index or the worst-case storage work. The actual work depends on the `Searcher` implementation, matcher selectivity, requested ordering, and whether it can stop early while still determining `has_more`.
+
+### Extensibility for Mimir, Thanos, and Cortex
+
+As in PROM-74, downstream implementations may add optional per-record extensions without changing the core record shapes:
 
 ```ndjson
-{"results":[{"name":"cluster","values":["us-east","us-west"],"extensions":{"mimir":{"cardinality":42}}}]}
+{"results":[{"name":"cluster","extensions":{"mimir":{"cardinality":42}}}]}
 {"status":"success","has_more":false}
 ```
 
-The pure Prometheus implementation does not include an `extensions` field. Downstream implementations adding it should tag it `json:",omitempty"` so records without provider-specific data stay clean on the wire.
+The Prometheus implementation does not emit extensions.
 
 ### Testing and verification
 
-* **Recommended manual verification (not automated today):** a client can enumerate `target_info` series via `/api/v1/series`, dedupe label names client-side, and compare against `/api/v1/info_labels` output for the same time window.
-* The implementation's unit tests cover the parameter surface, the dual gate, `match[]` rejection, sort/score/fuzzy combinations, `values_limit` truncation, multi-batch streaming, and error paths (invalid expr, scalar result, queryable error).
-* Extraction tests must also verify that the name and value limits constrain retained state during the scan, not only the final response.
-* The Grafana client PoC validates independent editor integration, including expression scoping, metric matching, label-name and label-value completion, and buffered NDJSON consumption. Its production-readiness review motivated the bounded request profiles and completeness requirements documented above.
+Implementation tests cover:
+
+* both endpoints over GET and POST;
+* the dual feature gate;
+* `expr`, repeated name and data matchers, negative-only name matching, and their joint scope;
+* mixed identifying-label presence and conservative cross-pair scoping without false negatives;
+* instant-vector type validation, historical `end`, ignored `start`, and lookback, `offset`, and `@` temporal equivalence with `info()`;
+* exact matcher-construction bounds, duplicate accounting, and rejection before the info `Searcher` opens;
+* exact and UTF-8 label names for value lookup;
+* identifying-label filtering and rejection;
+* matcher count and syntax validation, and rejection of `match[]`, singular legacy matcher parameters, `label` on the name endpoint, and `values_limit`;
+* search, Jaro-Winkler and subsequence fuzzy matching, scoring, ordering, limit, `has_more`, and batching;
+* strict client parsing, bounded caches, in-flight deduplication, and retry after failure.
+
+Manual verification can compare names and values against client-side aggregation of `/api/v1/series` for the same info-metric scope and time window.
 
 ### Migration
 
-New endpoint. Both feature flags it depends on are experimental and opt-in. No migration is required.
-
-### Known unknowns
-
-* **Default start/end lookback.** Aligned with PROM-74's 1h default via the shared `parseSearchParams` helper. Reasonable, but `target_info` can be sparse on short windows — reviewers may want a longer default specific to `/info_labels`.
-* **Whether to accept `match[]` in addition to `expr`.** The current design rejects it on cohesion grounds; reviewers may push back.
-* **Whether identifying labels should be configurable per request.** Today the set is `{"job", "instance"}` from `infohelper.DefaultIdentifyingLabels`. Per-request override is plausible if downstream implementations have different identifier conventions.
-* **One combined `info-labels-api` flag.** Rejected here on grounds of flag proliferation, but worth re-litigating if reviewers prefer a single-flag operator UX.
-* **First-class name-only and exact-name requests.** The current contract can bound name discovery with `values_limit=1` and emulate exact lookup with strict search parameters plus client-side verification, but dedicated semantics would be clearer and avoid returning an unused value during name completion.
-* **A bounded default for values.** Leaving `values_limit` unset preserves all values but leaves response size and extractor memory unbounded in that dimension. A future revision may prefer a server default or operator cap.
+These are new, experimental, opt-in endpoints. No migration is required. The earlier WIP combined `{name, values[]}` shape and singular matcher shorthand were never released; implementations and PoC clients should move to the two-endpoint, repeated-full-matcher contract and reject obsolete parameters so stale callers fail visibly.
 
 ## Alternatives
 
-### 1. Extend `/api/v1/search/label_names` to optionally return values per name
+### 1. One combined `{name, values[]}` endpoint
 
-Would collapse two endpoints into one. Rejected on cohesion grounds: PROM-74 keeps names and values in separate endpoints precisely so that each endpoint's response shape stays simple. The values payload is only useful when the names are scoped to info metrics, so the coupling does not belong on the general search endpoint.
+Rejected. Name and value completion are separate user interactions with different search targets and cardinalities. A combined response either eagerly downloads unused values or requires a second `values_limit` dimension. It also turns exact label selection into a fuzzy-name-search workaround and does not map cleanly to PROM-74's `SearchLabelNames` and `SearchLabelValues` interfaces.
 
-### 2. Add per-name expansion via a follow-up `/api/v1/search/label_values` call
+If measured client latency later justifies removing the second round trip, an optional `include_values` extension on the name endpoint could be proposed separately. The split endpoints remain the canonical bounded operations, and such an extension would need an explicit independent value bound.
 
-An interactive client can defer this call until the user selects a label, making the normal path two requests rather than an eager 1 + N requests. This is viable, but the search endpoints cannot apply the `expr`-derived info-metric scope, so the client cannot keep name and value results consistently scoped for arbitrary PromQL. The dedicated endpoint uses the same scoping contract for both phases.
+### 2. Reuse `/api/v1/search/label_names` and `/api/v1/search/label_values`
 
-### 3. Pure client-side composition (`/api/v1/labels` + `/api/v1/label/{name}/values` + filter)
+These endpoints have the right split but cannot derive the info-series scope from an arbitrary PromQL expression. Adding `expr` and info-specific identifying-label behavior to the general endpoints would mix function-specific semantics into otherwise general label search.
 
-Feasible today but slow at scale and does not address the info-metric-specific scoping. In particular it cannot evaluate a PromQL expression server-side to harvest identifying labels, so the autocomplete cannot be context-aware against arbitrary PromQL.
+### 3. Pure client-side composition
 
-### 4. Subsume into a hypothetical `/api/v1/info()` evaluation endpoint
+Combining labels, per-label values, or series endpoints is possible but transfers substantially more data, may require N+1 requests, and cannot evaluate arbitrary PromQL server-side to keep both completion phases consistently scoped.
 
-Out of scope. `info()` is a PromQL function that already uses the existing `/api/v1/query` flow. `/api/v1/info_labels` is a metadata endpoint that supports building the queries; it is not a query endpoint itself.
+### 4. Use `match[]` instead of `expr`
 
-### 5. Use `match[]` instead of `expr`
+`match[]` handles selectors only. Autocomplete must work for arbitrary expressions users type, including functions and operators.
 
-`match[]` can only express series selectors, not arbitrary PromQL like `rate(http_requests_total[5m])`. Autocomplete must work against expressions users actually type, not the subset that fits inside a series selector.
+### 5. Add an `/api/v1/info()` query endpoint
+
+Out of scope. `info()` already uses the normal PromQL query endpoints. This proposal is metadata discovery for building that query.
 
 ## Action Plan
 
-* [X] Build a working implementation (working branch `arve/info-autocomplete` in `aknuds1/prometheus`).
-* [X] Add the dual feature-gate check to the implementation (search-api + promql-experimental-functions).
-* [X] Open the [WIP upstream implementation PR](https://github.com/prometheus/prometheus/pull/17930).
+* [X] Build a working Prometheus implementation.
+* [X] Validate the contract in the Prometheus UI client.
+* [X] Validate independent integration in the Grafana Prometheus datasource.
+* [X] Split name and exact-label value discovery into separate endpoints based on client feedback.
 * [ ] Finalize this proposal based on community feedback.
-* [ ] Update `docs/querying/api.md` (the implementation already includes this; the action item is post-merge alignment).
+* [ ] Merge the implementation after proposal acceptance.
