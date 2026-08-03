@@ -51,14 +51,18 @@ Prometheus operators running in memory-constrained environments who need to prot
 
 - Fairness and per-job QoS controls are out of scope for the initial implementation.
 - This does not address long-term memory leaks. It is designed to handle spikes and overload scenarios.
+- Because live heap is updated at the conclusion of each garbage collection cycle, the limiter focuses on bounding baseline live heap saturation and sustained load bursts. Extremely rapid intra-GC allocation spikes or uncollectable non-heap anonymous memory growth (e.g., goroutine stacks, OS network buffers) are out of scope for the initial milestone.
 
 ## How
 
-The Memory Limiter acts as a proactive circuit breaker. Periodically (configured by `check_interval`), a background routine checks the current memory usage of the Prometheus process.
+The Memory Limiter acts as a proactive circuit breaker. To prevent false positives caused by Go's normal heap oscillation between collections without incurring stop-the-world pauses, the limiter monitors post-GC live heap (`/gc/heap/live:bytes`) relative to `GOMEMLIMIT` (`/gc/gomemlimit:bytes`) via `runtime/metrics`.
 
-The limiter maintains a **Soft Limit** and a **Hard Limit**.
-* **Soft Limit** = `limit_mib` - `spike_limit_mib` (or calculated via percentages).
-* **Hard Limit** = `limit_mib` (or calculated via `limit_percentage`).
+Periodically (configured by `check_interval`), a background routine calculates the memory pressure ratio:
+`pressure_ratio = live_heap / GOMEMLIMIT`
+
+The limiter maintains two state thresholds:
+* **Soft Limit**: Reached when `pressure_ratio >= soft_limit_ratio` (default `0.70`).
+* **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`).
 
 ### Mitigations
 
@@ -75,45 +79,38 @@ Mitigations are divided into non-destructive actions that delay work (Soft Limit
 
 ### Configuration
 
-The configuration closely follows the OpenTelemetry Collector's memory limiter processor, with added toggles for specific mitigations.
+The configuration closely follows the OpenTelemetry Collector's memory limiter processor, with added toggles for specific mitigations, and is placed under the `runtime` configuration section alongside `gogc`.
 
 ```yaml
-memory_limiter:
-  # Time between measurements of memory usage. Recommended value is 1s.
-  check_interval: 1s
+runtime:
+  memory_limiter:
+    # Time between measurements of memory usage. Recommended value is 1s.
+    check_interval: 1s
 
-  # Maximum amount of memory, in MiB, targeted to be allocated. Defines the hard limit.
-  # limit_mib: 1000
+    # Fraction of GOMEMLIMIT (live heap) at which non-destructive mitigations engage.
+    soft_limit_ratio: 0.70
 
-  # Maximum spike expected between measurements.
-  # Soft limit = limit_mib - spike_limit_mib
-  # spike_limit_mib: 200
+    # Fraction of GOMEMLIMIT (live heap) at which destructive mitigations engage.
+    hard_limit_ratio: 0.85
 
-  # Maximum amount of total memory targeted to be allocated (percentage).
-  limit_percentage: 90
-
-  # Maximum spike expected between measurements (percentage).
-  # Soft limit = limit_percentage - spike_limit_percentage
-  spike_limit_percentage: 20
-
-  # Granular controls to enable/disable specific mitigations
-  enforcement:
-    # Soft Limit
-    pause_block_compaction: true
-    reject_remote_read: true
-    reject_federation: true
-    # Hard Limit
-    fail_scrapes: true
-    reject_otlp: true
-    reject_remote_write: true
-    pause_recording_rules: true
+    # Granular controls to enable/disable specific mitigations
+    enforcement:
+      # Soft Limit
+      pause_block_compaction: true
+      reject_remote_read: true
+      reject_federation: true
+      # Hard Limit
+      fail_scrapes: true
+      reject_otlp: true
+      reject_remote_write: true
+      pause_recording_rules: true
 ```
 
-#### Interaction with `GOMEMLIMIT`
+#### Relationship to `GOMEMLIMIT`
 
-Prometheus already automatically sets `GOMEMLIMIT` to 90% of its total memory limit. When the memory limiter is enabled, we will maintain this automatic behavior but refine it to set `GOMEMLIMIT` to a percentage (default 90%) of the calculated **Soft Limit**.
+Unlike designs that derive or lower `GOMEMLIMIT` from configured memory thresholds, `GOMEMLIMIT` is treated purely as an **input** to the memory limiter. Prometheus continues to automatically set `GOMEMLIMIT` from `--auto-gomemlimit` (defaulting to 90% of total container memory), and the limiter reads this value directly.
 
-For example, if the Soft Limit is calculated to be 700 MiB, `GOMEMLIMIT` will be set to 630 MiB. This lowers the threshold for Go's garbage collector, ensuring it attempts to reclaim memory before Prometheus starts pausing background tasks.
+This ensures that enabling the memory limiter never silently reduces the available memory budget or forces unnecessary GC CPU churn to defend an artificially lowered heap ceiling.
 
 ### Feature Flag
 
@@ -133,12 +130,19 @@ Application owners need to understand why their specific application failed to b
 
 **2. The Prometheus Server Operator:**
 Server operators need to understand the global impact of mitigations, including:
-* **Compaction Status**: [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
+* **Limiter State & Pressure:** [New] `prometheus_memory_limiter_pressure_ratio`: Tracks the current ratio of live heap to `GOMEMLIMIT`.
+* **Compaction Status:** [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
 * **Scrape Skips:** [New] `prometheus_target_scrapes_skipped_total`: Tracks how many scrapes the server has skipped.
-* **Rule Evaluation Pipeline**: [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
-* **Rejected Traffic**: [Existing] `prometheus_http_requests_total`: Tracks rejections of OTLP, remote write, remote read, and federation requests.
+* **Rule Evaluation Pipeline:** [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
+* **Rejected Traffic:** [Existing] `prometheus_http_requests_total`: Tracks rejections of OTLP, remote write, remote read, and federation requests.
 
 ## Future Enhancements
+
+### Non-Heap and Transient Memory Accounting
+
+Because post-GC live heap only tracks retained Go heap objects at collection boundaries, it ignores two classes of memory usage: uncollectable non-heap anonymous memory (e.g., goroutine stacks, CGO allocations, OS network buffers) and rapid intra-GC allocation spikes.
+
+If real-world telemetry shows that servers remain vulnerable to OOM crashes from these non-heap or transient sources, future milestones could introduce secondary triggers to account for them—such as monitoring Linux cgroup v2 pressure stall information (`memory.pressure`) or checking instantaneous total RSS against container limits.
 
 ### Reject PromQL Queries
 
