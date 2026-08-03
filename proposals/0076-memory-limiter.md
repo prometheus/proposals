@@ -12,8 +12,8 @@
   * https://github.com/prometheus/prometheus/issues/16917
 
 * **Other docs or links:**
-  * Promcon 2025 - Scrape Trolley Dillema talk (credit to @bwplotka)
-    * [YouTub Recording](https://www.youtube.com/watch?v=ulHQUCarjjo)
+  * Promcon 2025 - Scrape Trolley Dilemma talk (credit to @bwplotka)
+    * [YouTube Recording](https://www.youtube.com/watch?v=ulHQUCarjjo)
     * [Slides](https://docs.google.com/presentation/d/1jKrUklPdAor9292HrPWtJkIa6ruUhOGo9IFO7fNj-DE/edit?slide=id.p#slide=id.p)
 
 > TL;DR: This proposal introduces a Memory Limiter for Prometheus. It allows the server to proactively and gracefully apply mitigations (such as pausing compaction, pausing recording rules, and dropping scrapes or rejecting OTLP metrics) when memory usage approaches configured limits, preventing out-of-memory (OOM) crashes.
@@ -23,7 +23,7 @@
 Memory exhaustion is a common cause of Prometheus crashes (OOM kills). This can be triggered by many factors:
 - Spikes in scrape load or metric cardinality (e.g., new workloads spun up in Kubernetes).
 - Expensive PromQL queries or recording rules.
-- High volume of incoming OTLP metrics or remote read requests.
+- High volume of incoming OTLP metrics, remote write, remote read, or federation requests.
 - TSDB compaction requiring significant memory.
 
 When Prometheus runs out of memory and crashes, it causes total monitoring unavailability, affecting all targets and users.
@@ -62,16 +62,16 @@ The limiter maintains a **Soft Limit** and a **Hard Limit**.
 
 ### Mitigations
 
-When memory usage exceeds the limits, the following mitigations are applied (if enabled):
+Mitigations are divided into non-destructive actions that delay work (Soft Limit) and lossy actions that discard data (Hard Limit):
 
-**At Soft Limit:**
-- **Pause Compaction**: Pause background TSDB compaction.
-- **Pause Recording Rules**: Pause evaluation of recording rules (alerting rules are not paused).
+**At Soft Limit (Delay work without data loss):**
+- **Pause Block Compaction**: Pause on-disk block merging (`DB.compactBlocks`). Head-to-block compaction and WAL truncation continue uninterrupted so active Head memory and WAL size remain bounded.
+- **Reject Remote Read & Federation**: Reject incoming remote read and federation requests with a 503 Service Unavailable and `Retry-After` header, shedding heavy series materialization overhead.
 
-**At Hard Limit:**
-- **Fail Scrapes**: Skip scrapes to prevent allocation of memory for new samples.
-- **Reject OTLP**: Reject incoming OTLP metrics requests.
-- **Reject Remote Read**: Reject incoming remote read requests.
+**At Hard Limit (Discard work to prevent crashes):**
+- **Fail Scrapes**: Skip scrapes to prevent allocation of memory for new samples. To avoid causing a synchronized WAL append storm when memory is exhausted, skipped scrapes bypass appending per-series staleness markers, letting values carry forward under the standard 5-minute lookback.
+- **Reject OTLP & Remote Write**: Reject incoming OTLP and remote write requests with a 503 and `Retry-After` header. Rejection occurs at handler entry before reading or decoding the request body to prevent transient payload allocations.
+- **Pause Recording Rules**: Pause evaluation of recording rules (alerting rules are not paused). Because missed evaluations leave permanent data gaps, this is treated as lossy. To prevent dependent alerting rules from silently resolving when lookbacks expire, only recording rules with **no local dependent rules** are paused.
 
 ### Configuration
 
@@ -98,11 +98,15 @@ memory_limiter:
 
   # Granular controls to enable/disable specific mitigations
   enforcement:
-    pause_compaction: true
-    pause_recording_rules: true
+    # Soft Limit
+    pause_block_compaction: true
+    reject_remote_read: true
+    reject_federation: true
+    # Hard Limit
     fail_scrapes: true
     reject_otlp: true
-    reject_remote_read: true
+    reject_remote_write: true
+    pause_recording_rules: true
 ```
 
 #### Interaction with `GOMEMLIMIT`
@@ -125,14 +129,14 @@ Understanding that data is missing or delayed and *why* is critical. This featur
 Application owners need to understand why their specific application failed to be scraped or why their OTLP metrics were rejected.
 * **Up Metric:** The `up` metric for their dropped target will record a `0`.
 * **UI /targets Page:** A descriptive scrape error (e.g., `memory limit exceeded`) will be attached to the target's state.
-* **OTLP/Remote-Read Rejections:** OTLP and remote read requests will receive a 503 Service Unavailable error, indicating overload and signaling clients to retry with backoff.
+* **OTLP/Remote-Read/Remote-Write Rejections:** Requesting clients receive a 503 Service Unavailable error with a `Retry-After` header, indicating overload and signaling clients to back off and retry.
 
 **2. The Prometheus Server Operator:**
 Server operators need to understand the global impact of mitigations, including:
-* **Compaction Backlog**: [New] `prometheus_tsdb_compaction_pending_blocks`: Tracks how far behind compaction is in blocks.
+* **Compaction Status**: [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
 * **Scrape Skips:** [New] `prometheus_target_scrapes_skipped_total`: Tracks how many scrapes the server has skipped.
-* **Rule Evaluation Pipeline**: [Existing] `prometheus_rule_group_iterations_missed_total`: Tracks how many times rule group iterations have been missed.
-* **Rejected Metrics**: [Existing] `prometheus_http_requests_total`: Tracks rejections of OTLP and remote read requests.
+* **Rule Evaluation Pipeline**: [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
+* **Rejected Traffic**: [Existing] `prometheus_http_requests_total`: Tracks rejections of OTLP, remote write, remote read, and federation requests.
 
 ## Future Enhancements
 
@@ -171,13 +175,20 @@ The following ideas are compatible and complementary with a Scrape Memory Limite
 
 ## Action Plan
 
+To simplify review and merging, implementation will be staged from core controller logic to individual mitigations:
+
+**Stage 1: Controller & Scrape Mitigation**
 * [ ] Propose and finalize initial design
-* [ ] Expose configuration via feature flag
-* [ ] Implement configuration and memory tracking logic
-* [ ] Implement scrape-abort logic and debuggability metrics (Hard Limit)
+* [ ] Expose configuration via feature flag and implement memory tracking logic
+* [ ] Implement scrape-abort logic without staleness marker injection (Hard Limit)
   * Metric to add: `prometheus_target_scrapes_skipped_total`.
-* [ ] Implement logic to pause/resume TSDB compaction (Soft Limit)
-  * Metric to add: `prometheus_tsdb_compaction_pending_blocks`.
-* [ ] Implement logic to pause/resume recording rule evaluation (Soft Limit)
-* [ ] Implement OTLP request rejection logic (Hard Limit)
-* [ ] Implement Remote Read request rejection logic (Hard Limit)
+
+**Stage 2: Deferrable Mitigations (Soft Limit)**
+* [ ] Implement logic to pause/resume on-disk block compaction only
+  * Metric to add: `prometheus_tsdb_block_compaction_paused`.
+* [ ] Implement Remote Read and Federation request rejection logic with 503 / `Retry-After`
+
+**Stage 3: Lossy Mitigations (Hard Limit)**
+* [ ] Implement OTLP and Remote Write request rejection logic at handler entry
+* [ ] Implement logic to pause/resume independent recording rules
+  * Metric to add: `prometheus_rule_group_iterations_skipped_total`.
