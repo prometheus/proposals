@@ -38,7 +38,7 @@ Current mitigations are fragmented and often static:
 ## Goals
 
 - Prevent Prometheus from crashing due to memory exhaustion by applying graceful mitigations.
-- Provide a unified, top-level global configuration similar to the OpenTelemetry Collector's memory limiter.
+- Provide a unified global configuration under the runtime section to coordinate load shedding across all subsystems.
 - Support both "soft" limits (non-destructive mitigations like pausing compaction) and "hard" limits (destructive mitigations like dropping data).
 - Allow operators to enable/disable specific mitigations based on their needs.
 - Provide clear debuggability when mitigations are triggered.
@@ -51,18 +51,20 @@ Prometheus operators running in memory-constrained environments who need to prot
 
 - Fairness and per-job QoS controls are out of scope for the initial implementation.
 - This does not address long-term memory leaks. It is designed to handle spikes and overload scenarios.
-- Because live heap is updated at the conclusion of each garbage collection cycle, the limiter focuses on bounding baseline live heap saturation and sustained load bursts. Extremely rapid intra-GC allocation spikes or uncollectable non-heap anonymous memory growth (e.g., goroutine stacks, OS network buffers) are out of scope for the initial milestone.
+- Long-term baseline cardinality saturation (where retained live time series permanently exceed available RAM) cannot be solved by load shedding alone and belongs in separate proposals (such as per-job label churn limiting in #17109 and selective series head eviction). This proposal strictly targets preventing OOMs from transient overload and bursts.
 
 ## How
 
-The Memory Limiter acts as a proactive circuit breaker. To prevent false positives caused by Go's normal heap oscillation between collections without incurring stop-the-world pauses, the limiter monitors post-GC live heap (`/gc/heap/live:bytes`) relative to `GOMEMLIMIT` (`/gc/gomemlimit:bytes`) via `runtime/metrics`.
+The Memory Limiter acts as a proactive circuit breaker. Because post-GC live heap is invariant under load shedding (skipping scrapes stops new allocations but does not remove resident series from the TSDB Head), the limiter monitors **in-use total memory** (`/memory/classes/total:bytes` minus `/memory/classes/heap/released:bytes`) relative to `GOMEMLIMIT` (`/gc/gomemlimit:bytes`) via non-stop-the-world `runtime/metrics`.
 
-Periodically (configured by `check_interval`), a background routine calculates the memory pressure ratio:
-`pressure_ratio = live_heap / GOMEMLIMIT`
+In-use memory responds immediately when load is shed, enabling the server to achieve a dynamic equilibrium where mitigations engage during acute bursts, memory recovers, and normal scraping disengages and resumes cleanly.
+
+Periodically (default `check_interval: 100ms`, consuming ~0.001% CPU at 10 Hz), a background routine calculates the memory pressure ratio:
+`pressure_ratio = in_use_memory / GOMEMLIMIT`
 
 The limiter maintains two state thresholds:
 * **Soft Limit**: Reached when `pressure_ratio >= soft_limit_ratio` (default `0.70`).
-* **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`).
+* **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`). These ratio defaults correspond directly to Go GC headroom arithmetic (representing a maximum achievable `GOGC` of roughly 43 and 18, respectively).
 
 ### Mitigations
 
@@ -79,18 +81,18 @@ Mitigations are divided into non-destructive actions that delay work (Soft Limit
 
 ### Configuration
 
-The configuration closely follows the OpenTelemetry Collector's memory limiter processor, with added toggles for specific mitigations, and is placed under the `runtime` configuration section alongside `gogc`.
+The configuration is placed under the runtime configuration section alongside gogc, and provides granular toggles for specific mitigations.
 
 ```yaml
 runtime:
   memory_limiter:
-    # Time between measurements of memory usage. Recommended value is 1s.
-    check_interval: 1s
+    # Time between checks of memory pressure ratio. Recommended value is 100ms.
+    check_interval: 100ms
 
-    # Fraction of GOMEMLIMIT (live heap) at which non-destructive mitigations engage.
+    # Fraction of GOMEMLIMIT (in-use memory) at which non-destructive mitigations engage.
     soft_limit_ratio: 0.70
 
-    # Fraction of GOMEMLIMIT (live heap) at which destructive mitigations engage.
+    # Fraction of GOMEMLIMIT (in-use memory) at which destructive mitigations engage.
     hard_limit_ratio: 0.85
 
     # Granular controls to enable/disable specific mitigations
@@ -112,6 +114,8 @@ Unlike designs that derive or lower `GOMEMLIMIT` from configured memory threshol
 
 This ensures that enabling the memory limiter never silently reduces the available memory budget or forces unnecessary GC CPU churn to defend an artificially lowered heap ceiling.
 
+If `GOMEMLIMIT` is unset (returning `math.MaxInt64` in `runtime/metrics`, which occurs if `--auto-gomemlimit=false` without an explicit environment variable or if auto-detection fails), Prometheus will **fail to start** with an explicit configuration error rather than operating with a silently inert limiter where `pressure_ratio ≈ 0`.
+
 ### Feature Flag
 
 While the feature is experimental, the Memory Limiter will be gated behind a command-line feature flag: `--enable-feature=memory-limiter`, and will follow the usual process for feature graduation.
@@ -130,19 +134,21 @@ Application owners need to understand why their specific application failed to b
 
 **2. The Prometheus Server Operator:**
 Server operators need to understand the global impact of mitigations, including:
-* **Limiter State & Pressure:** [New] `prometheus_memory_limiter_pressure_ratio`: Tracks the current ratio of live heap to `GOMEMLIMIT`.
+* **Limiter State & Pressure:** [New] `prometheus_memory_limiter_pressure_ratio`: Tracks the current ratio of in-use memory to `GOMEMLIMIT`. Additionally exports `prometheus_memory_limiter_live_heap_ratio` (`/gc/heap/live:bytes / GOMEMLIMIT`) as a distinct baseline capacity signal indicating when persistent series growth requires provisioning more server memory.
 * **Compaction Status:** [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
 * **Scrape Skips:** [New] `prometheus_target_scrapes_skipped_total`: Tracks how many scrapes the server has skipped.
 * **Rule Evaluation Pipeline:** [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
 * **Rejected Traffic:** [Existing] `prometheus_http_requests_total`: Tracks rejections of OTLP, remote write, remote read, and federation requests.
 
+## How We Test and Verify
+
+To ensure the limiter protects against OOM crashes without introducing false positives during normal operations, implementation requires the following validation suite:
+1. **False-Positive Steady-State Test:** A healthy Prometheus operating at realistic steady-state utilization (<45% baseline live heap) under continuous scrape and rule evaluation load must remain in state `ok` indefinitely, with `prometheus_memory_limiter_state_seconds_total{state="soft|hard"}` remaining zero.
+2. **Dynamic Equilibrium & Recovery Test:** Under an acute load burst, the server must shed load, stabilize in-use memory below the limit, and return cleanly to `ok` state (with targets returning to `up == 1`) within a bounded recovery window once the burst ends.
+3. **Skip-Path Regression Test:** Asserts that a memory-limited skipped scrape performs O(1) appends (reporting `up = 0` without walking `seriesPrev` to emit per-series staleness markers).
+4. **Compaction Scoping Test:** Asserts that when on-disk block compaction is paused by the Soft Limit, head-to-block compaction (`DB.CompactHead`) and WAL truncation execute unimpeded, keeping active head memory and WAL disk size bounded.
+
 ## Future Enhancements
-
-### Non-Heap and Transient Memory Accounting
-
-Because post-GC live heap only tracks retained Go heap objects at collection boundaries, it ignores two classes of memory usage: uncollectable non-heap anonymous memory (e.g., goroutine stacks, CGO allocations, OS network buffers) and rapid intra-GC allocation spikes.
-
-If real-world telemetry shows that servers remain vulnerable to OOM crashes from these non-heap or transient sources, future milestones could introduce secondary triggers to account for them—such as monitoring Linux cgroup v2 pressure stall information (`memory.pressure`) or checking instantaneous total RSS against container limits.
 
 ### Reject PromQL Queries
 
@@ -152,10 +158,11 @@ Rejecting expensive PromQL queries (or all queries) when memory pressure is high
 
 Future support for degrading scrape load gradually before the hard limit is reached. Instead of a binary drop-everything approach, the limiter would drop an increasing percentage of scrapes as memory usage approaches the hard limit.
 
-### Fairness Mechanisms
+### Fairness and Criticality Mechanisms
 
-The initial implementation of the memory limiter proposed above might inadvertently starve small, critical targets when a noisy neighbor introduces memory pressure. Future iterations could introduce scheduling algorithms to ensure fairness. Advanced approaches like [Deficit Round Robin (DRR)](https://en.wikipedia.org/wiki/Deficit_round_robin) can mathematically guarantee fairness across targets during memory pressure, isolating the disruption to high-cardinality targets.
-To implement fairness, the mechanism will need to predict the relative cost of a scrape so that it can throttle targets proportionally to the expected short-term memory usage they will incurr. This prediction should be based on the **total number of samples** from the target's previous scrape, *not* the number of *new series* added. New series are highly volatile (a target rotating a label will add many new series in one scrape, but zero in the next), making them a poor heuristic for proactive load shedding. Total samples accurately correlate with the short-lived parsing overhead the scrape loop will incur.
+The initial implementation of the memory limiter proposed above might inadvertently starve small, critical targets when a noisy neighbor introduces memory pressure. Future iterations could introduce scheduling algorithms like Deficit Round Robin (DRR) to help distribute throttling across targets.
+
+However, purely size-based or cost-proportional fairness schemes fail when target size is anticorrelated with importance—a frequent reality in observability where massive endpoints like `kube-state-metrics` or Prometheus's own `/metrics` endpoint are simultaneously the largest consumers of transient parsing memory and the most critical telemetry during an incident. Because **size does not equal criticality**, future load shedding will need to pair sample count heuristics with explicit Quality of Service (QoS) or priority metadata to prevent noisy neighbors from starving critical infrastructure monitoring.
 
 ### Per-Job Controls
 
@@ -167,7 +174,6 @@ To implement this, Prometheus could leverage Quality of Service (QoS) or critica
 1. **Do nothing**
 2. **Rejecting only new series ([#16917](https://github.com/prometheus/prometheus/issues/16917), [PR #11124](https://github.com/prometheus/prometheus/pull/11124))**: Instead of dropping the entire scrape, Prometheus would accept updates for time series it already knows about but reject the allocation of *new* series. This violates scrape transactionality, as scrapes should be ingested in full or not at all. Partial ingestion leads to unpredictable query skew (e.g., a success rate query where the success metric is ingested but the newly created error metric is dropped) and breaks fundamental system behavior assumptions. This creates confusing, inconsistent data for the application owner that goes against the principle of least surprise.
 3. **Slowing down scrapes**: Dynamically backing off the scrape interval (e.g., from 15s to 60s) for targets under memory pressure. While this might temporarily reduce memory intake, skipping scrapes entirely sends a clearer signal to users (`up = 0`) that something is wrong. Skipping a single scrape is usually acceptable because the query window generally covers at least twice the scrape interval. Conversely, dynamically slowing down scrapes might silently break assumptions users have built into their alerts and recording rules.
-4. **Independent GOMEMLIMIT configuration**: Instead of applying the GOMEMLIMIT ratio to the scrape memory limiter's limit, we could keep the two configuration knobs entirely separate. This would allow someone to set a higher GOMEMLIMIT compared to their scrape limit, which isn't really something users would want to do. It would also make the configuration more confusing to reason about.
 
 ### Complementary Ideas
 
