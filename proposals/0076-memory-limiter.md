@@ -108,13 +108,24 @@ runtime:
       pause_recording_rules: true
 ```
 
-#### Relationship to `GOMEMLIMIT`
+#### Relationship to Go Runtime Parameters and Capacity Planning
 
-Unlike designs that derive or lower `GOMEMLIMIT` from configured memory thresholds, `GOMEMLIMIT` is treated purely as an **input** to the memory limiter. Prometheus continues to automatically set `GOMEMLIMIT` from `--auto-gomemlimit` (defaulting to 90% of total container memory), and the limiter reads this value directly.
+In accordance with the architectural principle that **the limiter reads runtime parameters and never writes them**, both `GOMEMLIMIT` and `GOGC` (`runtime.gogc`) are treated purely as read-only **inputs**. The limiter manages application load while letting the Go runtime natively manage memory and garbage collection scheduling.
 
-This ensures that enabling the memory limiter never silently reduces the available memory budget or forces unnecessary GC CPU churn to defend an artificially lowered heap ceiling.
+Unlike designs that derive or lower `GOMEMLIMIT` from configured memory thresholds, Prometheus continues to automatically set `GOMEMLIMIT` from `--auto-gomemlimit` (defaulting to 90% of total container memory), and the limiter reads this value directly. This ensures that enabling the memory limiter never silently reduces the available memory budget or forces unnecessary GC CPU churn to defend an artificially lowered heap ceiling.
 
 If `GOMEMLIMIT` is unset (returning `math.MaxInt64` in `runtime/metrics`, which occurs if `--auto-gomemlimit=false` without an explicit environment variable or if auto-detection fails), Prometheus will **fail to start** with an explicit configuration error rather than operating with a silently inert limiter where `pressure_ratio ≈ 0`.
+
+##### Baseline Capacity & `GOGC` Tuning
+Because Go triggers garbage collections based on target heap expansion over the surviving live set (`live_heap * (1 + GOGC/100)`), the limiter can only remain disengaged during steady-state operation if normal GC oscillations do not breach the Soft Limit threshold:
+`live_heap * (1 + GOGC/100) < soft_limit_ratio * GOMEMLIMIT`
+
+At default settings (`GOGC=100`, `soft_limit_ratio: 0.70`), Go permits the heap to double between collections (`1 + 100/100 = 2x`). Thus, to avoid engaging soft load shedding during normal operations, an operator's baseline live heap must remain below **35% of `GOMEMLIMIT`** (half of 70%).
+
+If persistent time-series growth pushes baseline live heap above this 35% boundary, operators have three clear, predictable options to adapt without requiring automated runtime heuristics:
+1. **Provision more container memory:** Increases total available RAM to support higher baseline time series cardinality.
+2. **Statically lower `GOGC`:** Configuring `--runtime.gogc=50` compresses allowable heap expansion between collections, raising the clean baseline live heap ceiling from 35% up to ~46% of `GOMEMLIMIT` at the cost of additional GC CPU usage.
+3. **Raise limit ratios:** Increasing `soft_limit_ratio` creates extra breathing room before non-destructive delays engage.
 
 ### Feature Flag
 
@@ -134,7 +145,7 @@ Application owners need to understand why their specific application failed to b
 
 **2. The Prometheus Server Operator:**
 Server operators need to understand the global impact of mitigations, including:
-* **Limiter State & Memory Pressure:** [New/Existing] Introduces a new boolean gauge, `prometheus_memory_limiter_active{limit="soft|hard"}`, indicating when mitigations are currently engaged. In accordance with Prometheus best practices against exporting pre-calculated ratios, operators monitor memory pressure and baseline capacity directly via existing Go runtime metrics already exposed by `client_golang` (e.g., comparing in-use memory and `go_gc_heap_live_bytes` against `go_gc_gomemlimit_bytes`).
+* **Limiter State & Thresholds:** [New] Introduces a boolean gauge, `prometheus_memory_limiter_active{limit="soft|hard"}`, indicating when mitigations are currently engaged, alongside `prometheus_memory_limiter_limit_bytes{limit="soft|hard"}` to expose the evaluated byte thresholds. Because configured percentage ratios (e.g., `0.70`) vary across servers and `--auto-gomemlimit` detects container RAM dynamically, exposing explicit byte limits allows operators managing large fleets to build unified alerts and dashboards without fine-tuning queries per server configuration. In accordance with best practices against exporting pre-calculated percentage ratios, operators monitor real-time memory pressure directly against these thresholds via existing Go runtime metrics already exposed by `client_golang` (e.g., comparing in-use memory against `go_gc_gomemlimit_bytes`).
 * **Compaction Status:** [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
 * **Scrape Skips:** [New] `prometheus_target_scrapes_skipped_total`: Tracks how many scrapes the server has skipped.
 * **Rule Evaluation Pipeline:** [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
@@ -143,7 +154,7 @@ Server operators need to understand the global impact of mitigations, including:
 ## How We Test and Verify
 
 To ensure the limiter protects against OOM crashes without introducing false positives during normal operations, implementation requires the following validation suite:
-1. **False-Positive Steady-State Test:** A healthy Prometheus operating at realistic steady-state utilization (<45% baseline live heap) under continuous scrape and rule evaluation load must remain in state `ok` indefinitely, with `prometheus_memory_limiter_state_seconds_total{state="soft|hard"}` remaining zero.
+1. **False-Positive Steady-State Test:** A healthy Prometheus operating at realistic steady-state utilization (<35% baseline live heap, matching the maximum allowable threshold before default `GOGC=100` oscillations breach the 70% Soft Limit) under continuous scrape and rule evaluation load must remain in state `ok` indefinitely, with `prometheus_memory_limiter_state_seconds_total{state="soft|hard"}` remaining zero.
 2. **Dynamic Equilibrium & Recovery Test:** Under an acute load burst, the server must shed load, stabilize in-use memory below the limit, and return cleanly to `ok` state (with targets returning to `up == 1`) within a bounded recovery window once the burst ends.
 3. **Skip-Path Regression Test:** Asserts that a memory-limited skipped scrape performs O(1) appends (reporting `up = 0` without walking `seriesPrev` to emit per-series staleness markers).
 4. **Compaction Scoping Test:** Asserts that when on-disk block compaction is paused by the Soft Limit, head-to-block compaction (`DB.CompactHead`) and WAL truncation execute unimpeded, keeping active head memory and WAL disk size bounded.
