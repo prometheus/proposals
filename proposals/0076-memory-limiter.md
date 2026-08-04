@@ -134,7 +134,7 @@ Application owners need to understand why their specific application failed to b
 
 **2. The Prometheus Server Operator:**
 Server operators need to understand the global impact of mitigations, including:
-* **Limiter State & Pressure:** [New] `prometheus_memory_limiter_pressure_ratio`: Tracks the current ratio of in-use memory to `GOMEMLIMIT`. Additionally exports `prometheus_memory_limiter_live_heap_ratio` (`/gc/heap/live:bytes / GOMEMLIMIT`) as a distinct baseline capacity signal indicating when persistent series growth requires provisioning more server memory.
+* **Limiter State & Memory Pressure:** [New/Existing] Introduces a new boolean gauge, `prometheus_memory_limiter_active{limit="soft|hard"}`, indicating when mitigations are currently engaged. In accordance with Prometheus best practices against exporting pre-calculated ratios, operators monitor memory pressure and baseline capacity directly via existing Go runtime metrics already exposed by `client_golang` (e.g., comparing in-use memory and `go_gc_heap_live_bytes` against `go_gc_gomemlimit_bytes`).
 * **Compaction Status:** [Existing/New] Reuses existing `prometheus_tsdb_compactions_skipped_total` (for disabled auto-compaction) plus a new `prometheus_tsdb_block_compaction_paused` boolean gauge.
 * **Scrape Skips:** [New] `prometheus_target_scrapes_skipped_total`: Tracks how many scrapes the server has skipped.
 * **Rule Evaluation Pipeline:** [New] `prometheus_rule_group_iterations_skipped_total`: Tracks rule evaluations skipped due to memory limits (existing missed metrics only increment when ticks fall behind time, not on no-op pauses).
