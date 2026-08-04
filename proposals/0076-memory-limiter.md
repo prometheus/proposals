@@ -64,7 +64,7 @@ Periodically (default `check_interval: 100ms`, consuming ~0.001% CPU at 10 Hz), 
 
 The limiter maintains two state thresholds:
 * **Soft Limit**: Reached when `pressure_ratio >= soft_limit_ratio` (default `0.70`).
-* **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`). These ratio defaults correspond directly to Go GC headroom arithmetic (representing a maximum achievable `GOGC` of roughly 43 and 18, respectively).
+* **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`). These default ratios provide a balanced safety margin: 70% triggers early, non-destructive load shedding, while 85% leaves enough remaining heap headroom for Go's garbage collector to reclaim transient memory before hitting an OOM crash.
 
 ### Mitigations
 
