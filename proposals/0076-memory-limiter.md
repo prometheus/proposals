@@ -117,6 +117,7 @@ Unlike designs that derive or lower `GOMEMLIMIT` from configured memory threshol
 If `GOMEMLIMIT` is unset (returning `math.MaxInt64` in `runtime/metrics`, which occurs if `--auto-gomemlimit=false` without an explicit environment variable or if auto-detection fails), Prometheus will **fail to start** with an explicit configuration error rather than operating with a silently inert limiter where `pressure_ratio ≈ 0`.
 
 ##### Baseline Capacity & `GOGC` Tuning
+
 Because Go triggers garbage collections based on target heap expansion over the surviving live set (`live_heap * (1 + GOGC/100)`), the limiter can only remain disengaged during steady-state operation if normal GC oscillations do not breach the Soft Limit threshold:
 `live_heap * (1 + GOGC/100) < soft_limit_ratio * GOMEMLIMIT`
 
