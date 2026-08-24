@@ -75,7 +75,7 @@ Mitigations are divided into non-destructive actions that delay work (Soft Limit
 
 **At Soft Limit (Delay work without data loss):**
 - **Pause Block Compaction**: Pause on-disk block merging (`DB.compactBlocks`). Head-to-block compaction and WAL truncation continue uninterrupted so active Head memory and WAL size remain bounded.
-- **Reject Remote Read & Federation**: Reject incoming remote read and federation requests with a 503 Service Unavailable and `Retry-After` header, shedding heavy series materialization overhead.
+- **Reject Remote Read & Federation**: Reject incoming remote read and federation requests with a 503 Service Unavailable and `Retry-After` header, shedding heavy series materialization overhead. Unlike local recording rules (where missed evaluations create silent permanent data gaps in TSDB), returning a 503 provides an explicit transient failure signal, allowing external querying engines (like Thanos Ruler or downstream Prometheus instances) to back off and retry once load subsides.
 
 **At Hard Limit (Discard work to prevent crashes):**
 - **Fail Scrapes**: Skip scrapes to prevent allocation of memory for new samples. The check is performed at the start of `scrapeLoop.scrape()` before making the HTTP fetch and allocating response decoding buffers. To avoid causing a synchronized WAL append storm when memory is exhausted, skipped scrapes bypass appending per-series staleness markers, letting values carry forward under the standard 5-minute lookback. Crucially, a skipped scrape **must preserve the existing `scrapeCache`** (bypassing cache flush/eviction paths); clearing the cache on a skipped scrape would trigger a severe re-allocation storm when scraping resumes upon recovery, defeating the limiter's purpose.
