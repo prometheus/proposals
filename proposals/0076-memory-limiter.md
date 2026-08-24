@@ -111,6 +111,16 @@ runtime:
       pause_recording_rules: true
 ```
 
+#### Relationship to Existing Scrape Limits
+
+Prometheus already provides per-scrape and per-job limits: `body_size_limit`, `sample_limit`, `label_limit`, `label_name_length_limit`, `label_value_length_limit`, and `target_limit`.
+
+These existing limits are **static per-target bounds**: they protect against individual misconfigured or malicious endpoints returning massive payloads. However, they cannot coordinate load shedding across thousands of concurrent targets or protect against aggregate memory spikes when many normal-sized targets are scraped concurrently or when memory is consumed by other subsystems (rules, compactions, remote traffic).
+
+The Memory Limiter complements existing limits:
+* `body_size_limit` and `sample_limit` enforce static maximums on individual scrapes to bound the peak allocation of any single HTTP response.
+* The Memory Limiter provides global, dynamic circuit-breaking to protect the overall Go runtime memory budget under aggregate load spikes.
+
 #### Relationship to Go Runtime Parameters and Capacity Planning
 
 The limiter follows a simple rule: **it reads runtime parameters, but never writes them.** Both `GOMEMLIMIT` and `GOGC` (`runtime.gogc`) are treated purely as read-only **inputs**. The limiter manages application load while letting the Go runtime natively manage memory and garbage collection scheduling.
@@ -191,6 +201,7 @@ To implement this, Prometheus could leverage Quality of Service (QoS) or critica
 3. **Slowing down scrapes**: Dynamically backing off the scrape interval (e.g., from 15s to 60s) for targets under memory pressure. While this might temporarily reduce memory intake, skipping scrapes entirely sends a clearer signal to users (`up = 0`) that something is wrong. Skipping a single scrape is usually acceptable because the query window generally covers at least twice the scrape interval. Conversely, dynamically slowing down scrapes might silently break assumptions users have built into their alerts and recording rules.
 4. **Post-GC live heap ratio as the control signal**: Using post-GC retained live heap (`/gc/heap/live:bytes`) instead of total in-use memory to prevent false positives caused by Go's normal garbage collection sawtooth curve. While this accurately measures retained data, it creates a feedback loop problem: skipping scrapes stops new allocations, but it does not remove resident series structures from the TSDB Head. In software experiments, post-GC live heap remains flat when load is shed and only declines when TSDB Head compaction (`Truncate`) eventually executes hours later. Using a live heap sensor would trap the limiter in an extended brownout because the sensor cannot observe the real memory recovery caused by its own load-shedding mitigations.
 5. **Forcing manual garbage collections (`runtime.GC()`) or OS page scavenging**: Automatically invoking `runtime.GC()` or manual OS page unmapping (`debug.FreeOSMemory()`) when memory pressure rises to force early memory reclamation before shedding load. Modern Go (since 1.19) already automatically accelerates collection frequency and background memory scavenging (`runtime.bgscavenge`) as total heap approaches `GOMEMLIMIT`. Simply calling `runtime.GC()` frees dead objects in internal Go memory arenas but leaves physical memory pages mapped to the operating system until the background scavenger returns them, resulting in zero immediate reduction in total in-use RAM or container RSS. Furthermore, forcing synchronous OS page unmapping (`debug.FreeOSMemory()`) turns an otherwise smooth background cleaning task into a blocking CPU stall (costing hundreds of milliseconds on large heaps), which can cause CPU thrashing and lock up the scheduler during traffic spikes.
+6. **Pressure-driven dynamic scrape limits (`body_size_limit` / `sample_limit`)**: Dynamically scaling down per-target byte or sample limits when memory pressure rises. While this might allow partial scrape ingestion under load, partial scrapes violate scrape transactionality (e.g., dropping error metrics while accepting success metrics, causing severe query skew) and unpredictably alter target scrape semantics. A binary circuit breaker at scrape initiation preserves transactional correctness and provides an unambiguous `up == 0` signal to operators.
 
 ### Complementary Ideas
 
