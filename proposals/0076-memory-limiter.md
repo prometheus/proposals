@@ -127,6 +127,8 @@ The limiter follows a simple rule: **it reads runtime parameters, but never writ
 
 Unlike designs that derive or lower `GOMEMLIMIT` from configured memory thresholds, Prometheus continues to automatically set `GOMEMLIMIT` from `--auto-gomemlimit` (defaulting to 90% of total container memory), and the limiter reads this value directly. This ensures that enabling the memory limiter never silently reduces the available memory budget or forces unnecessary GC CPU churn to defend an artificially lowered heap ceiling.
 
+Importantly, `runtime/metrics` exclusively tracks memory managed by the Go runtime allocator (heap, goroutine stacks, runtime metadata). It excludes off-heap memory, such as mmap'd TSDB chunk files and kernel page cache. The reserve buffer between `GOMEMLIMIT` and the hard container cgroup limit (the 10–20% buffer preserved by `--auto-gomemlimit`) is specifically intended to absorb this off-heap and mmap'd footprint.
+
 If `GOMEMLIMIT` is unset (returning `math.MaxInt64` in `runtime/metrics`, which occurs if `--auto-gomemlimit=false` without an explicit environment variable or if auto-detection fails), Prometheus will **fail to start** with an explicit configuration error rather than operating with a silently inert limiter where `pressure_ratio ≈ 0`.
 
 ##### Baseline Capacity & `GOGC` Tuning
