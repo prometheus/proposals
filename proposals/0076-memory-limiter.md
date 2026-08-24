@@ -51,6 +51,7 @@ Prometheus operators running in memory-constrained environments who need to prot
 
 - Fairness and per-job QoS controls are out of scope for the initial implementation.
 - This does not address long-term memory leaks. It is designed to handle spikes and overload scenarios.
+- This proposal bounds sustained global memory intake across subsystems rather than bounding the peak allocation of any individual scrape. Per-target peak burst bounds remain the responsibility of existing controls like `body_size_limit`.
 - Long-term cardinality growth (where retained time series permanently exceed available RAM) cannot be solved by load shedding alone and belongs in separate proposals (such as per-job label churn limiting in #17109 and selective series head eviction). This proposal focuses on preventing OOM crashes from transient overload and bursts.
 
 ## How
@@ -75,7 +76,7 @@ Mitigations are divided into non-destructive actions that delay work (Soft Limit
 - **Reject Remote Read & Federation**: Reject incoming remote read and federation requests with a 503 Service Unavailable and `Retry-After` header, shedding heavy series materialization overhead.
 
 **At Hard Limit (Discard work to prevent crashes):**
-- **Fail Scrapes**: Skip scrapes to prevent allocation of memory for new samples. To avoid causing a synchronized WAL append storm when memory is exhausted, skipped scrapes bypass appending per-series staleness markers, letting values carry forward under the standard 5-minute lookback.
+- **Fail Scrapes**: Skip scrapes to prevent allocation of memory for new samples. The check is performed at the start of `scrapeLoop.scrape()` before making the HTTP fetch and allocating response decoding buffers. To avoid causing a synchronized WAL append storm when memory is exhausted, skipped scrapes bypass appending per-series staleness markers, letting values carry forward under the standard 5-minute lookback.
 - **Reject OTLP & Remote Write**: Reject incoming OTLP and remote write requests with a 503 and `Retry-After` header. Rejection occurs at handler entry before reading or decoding the request body to prevent transient payload allocations.
 - **Pause Recording Rules**: Pause evaluation of recording rules (alerting rules are not paused). Because missed evaluations leave permanent data gaps, this is treated as lossy. To prevent dependent alerting rules from silently resolving when lookbacks expire, only recording rules with **no local dependent rules** are paused. Because Prometheus cannot detect when external evaluation engines (such as Thanos Ruler or centralized alerting architectures) depend on derived rules over Remote Read or Federation, operators running distributed alerting pipelines are strongly advised to disable this mitigation (`enforcement.pause_recording_rules: false`).
 
