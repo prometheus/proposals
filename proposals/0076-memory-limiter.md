@@ -58,7 +58,7 @@ Prometheus operators running in memory-constrained environments who need to prot
 
 The Memory Limiter acts as a proactive circuit breaker. Because post-GC live heap does not decrease when load is shed (skipping scrapes stops new allocations but does not remove existing series from the TSDB Head), the limiter monitors **in-use total memory** (`/memory/classes/total:bytes` minus `/memory/classes/heap/released:bytes`) relative to `GOMEMLIMIT` (`/gc/gomemlimit:bytes`) via lightweight `runtime/metrics`.
 
-In-use memory responds immediately when load is shed, enabling the server to achieve a dynamic equilibrium where mitigations engage during acute bursts, memory recovers, and normal scraping disengages and resumes cleanly.
+By stopping the intake of new scrape responses and unparsed payloads, transient parsing allocations immediately cease. This allows Go's garbage collector to rapidly reclaim temporary buffers on subsequent GC cycles, enabling the server to achieve a dynamic equilibrium where mitigations engage during acute bursts, in-use memory recovers, and normal scraping disengages and resumes cleanly.
 
 Periodically (default `check_interval: 100ms`, consuming ~0.001% CPU at 10 Hz), a background routine calculates the memory pressure ratio:
 `pressure_ratio = in_use_memory / GOMEMLIMIT`
