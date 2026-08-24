@@ -67,6 +67,8 @@ The limiter maintains two state thresholds:
 * **Soft Limit**: Reached when `pressure_ratio >= soft_limit_ratio` (default `0.70`).
 * **Hard Limit**: Reached when `pressure_ratio >= hard_limit_ratio` (default `0.85`), or immediately if Go's runtime GC CPU limiter engages (`/gc/limiter/last-enabled:gc-cycle`). These default ratios provide a balanced safety margin: 70% triggers early, non-destructive load shedding, while 85% leaves enough remaining heap headroom for Go's garbage collector to reclaim transient memory before hitting an OOM crash.
 
+To prevent rapid oscillation and state flapping during borderline memory spikes, the controller applies internal damping across evaluation cycles before transitioning between states. Furthermore, while on-disk block compaction is paused under the Soft Limit, Head compaction (`DB.CompactHead`) and WAL truncation continue uninterrupted, ensuring active Head memory and WAL disk size remain bounded throughout extended mitigation periods.
+
 ### Mitigations
 
 Mitigations are divided into non-destructive actions that delay work (Soft Limit) and lossy actions that discard data (Hard Limit):
