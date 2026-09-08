@@ -51,7 +51,7 @@ Prometheus operators running in memory-constrained environments who need to prot
 
 - Fairness and per-job QoS controls are out of scope for the initial implementation.
 - This does not address long-term memory leaks. It is designed to handle spikes and overload scenarios.
-- This proposal bounds sustained global memory intake across subsystems rather than bounding the peak allocation of any individual scrape. Per-target peak burst bounds remain the responsibility of existing controls like `body_size_limit`.
+- This proposal bounds sustained global memory intake across subsystems rather than bounding the peak allocation of any individual scrape. Per-target peak burst bounds remain the responsibility of existing controls like `body_size_limit` (note that `body_size_limit` defaults to `0` / unlimited, so on a default Prometheus instance nothing bounds this peak unless explicitly configured).
 - Long-term cardinality growth (where retained time series permanently exceed available RAM) cannot be solved by load shedding alone and belongs in separate proposals (such as per-job label churn limiting in #17109 and selective series head eviction). This proposal focuses on preventing OOM crashes from transient overload and bursts.
 
 ## How
@@ -118,8 +118,8 @@ Prometheus already provides per-scrape and per-job limits: `body_size_limit`, `s
 These existing limits are **static per-target bounds**: they protect against individual misconfigured or malicious endpoints returning massive payloads. However, they cannot coordinate load shedding across thousands of concurrent targets or protect against aggregate memory spikes when many normal-sized targets are scraped concurrently or when memory is consumed by other subsystems (rules, compactions, remote traffic).
 
 The Memory Limiter complements existing limits:
-* `body_size_limit` and `sample_limit` enforce static maximums on individual scrapes to bound the peak allocation of any single HTTP response.
-* The Memory Limiter provides global, dynamic circuit-breaking to protect the overall Go runtime memory budget under aggregate load spikes.
+* `body_size_limit` can bound response buffer allocations for individual targets, though it defaults to `0` (unlimited). Meanwhile, `sample_limit` bounds ingested sample count into the TSDB Head but cannot bound response allocation, as it is evaluated in the parser loop after `readResponse` has already buffered the entire decompressed response body in memory.
+* The Memory Limiter provides global, dynamic circuit-breaking to protect the overall Go runtime memory budget under aggregate load spikes across all subsystems.
 
 #### Relationship to Go Runtime Parameters and Capacity Planning
 
