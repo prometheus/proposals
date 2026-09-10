@@ -133,7 +133,7 @@ func (m PrometheusTargetIntervalLengthSeconds) With(
 ) prometheus.Observer { ... }
 ```
 
-Unlabelled metrics get a plain constructor and `const_labels` become constructor parameters. `GaugeFunc` is the exception: its value comes from a closure at scrape time, so the registry marks it `only_opts: true`, Weaver emits only an `Opts()` accessor, and the closure stays hand-written.
+Unlabelled metrics get a plain constructor and `const_labels` become constructor parameters. For `GaugeFunc`, the value comes from a closure at scrape time, so the registry marks it `only_opts: true`, Weaver emits only an `Opts()` accessor, and the closure stays hand-written. Custom collectors use generated descriptor factories while keeping their collection-time metric creation hand-written.
 
 Package code imports these types from `<package>/internal/semconv`. The generated API shape is not settled; we fix it while migrating the first package.
 
@@ -141,11 +141,11 @@ The same Weaver run also emits a `README.md` per package covering name, type, un
 
 ### Contract testing
 
-A Go test compares what the code declares against the registry. No running Prometheus, nothing installed.
+A Go test compares what the code declares against the registry, with supplemental collection fixtures for information descriptors cannot expose. No running Prometheus, nothing installed.
 
-`Collector.Describe()` yields a descriptor for every metric a collector declares, sample or no sample. The test registers the collectors, reads the descriptors, and compares them to the registry. This needs accessors on `prometheus.Desc`, which today exposes only `Err()` and `String()`. Additive, no new dependencies.
+For registered checked collectors, `Collector.Describe()` yields a descriptor for every declared metric, sample or no sample. The test reads descriptors from a Go registry populated through production construction and registration paths, then compares them to the semantic convention registry. This needs read-only accessors on `prometheus.Desc`, which today exposes only `Err()` and `String()`. Additive, no new dependencies.
 
-The accessors must also expose a metric type, which `Desc` does not carry today — the type lives on the concrete metric. Without it, `instrument` and `annotations.prometheus.histogram_type` have nothing to compare against and a gauge quietly becoming a counter is invisible to the only check we have. Typed constructors can set it; `prometheus.NewDesc` reports `UNTYPED`, so the three non-test call sites (`scrape/metrics.go`, `discovery/file/file.go`) should move to typed constructors during the migration.
+`Desc` must also store and expose metric type, populated by typed constructors. This distinguishes counter, gauge, summary, and histogram, catching a gauge-to-counter change even in a vector with no children. Classic, native, and mixed histograms all report `HISTOGRAM`, so descriptor comparison cannot distinguish those representations or validate their bucket configuration. `prometheus.NewDesc` continues to report `UNTYPED`; the custom collectors using it need the supplemental type checks below.
 
 Units need care in the other direction. `prometheus.Opts` has a `Unit` field and no Prometheus metric sets it, so every descriptor reports an empty unit while the registry declares the real one. The first phase keeps the registry's unit as metadata and requires the descriptor's to stay empty, reporting any non-empty value as a difference — an attempt to populate `Opts.Unit` becomes visible rather than silently unchecked, and no package waits on a repository-wide edit. That edit is observable, not cosmetic: `Opts.Unit` reaches the descriptor hash, `MetricFamily.Unit`, and `# UNIT` in OpenMetrics, and from there scrape and TSDB metadata, remote write, and `/api/v1/metadata`. Names are unaffected; the encoder only rewrites `_total` on counters.
 
@@ -154,6 +154,12 @@ The comparison runs per package, not over one global surface. Each migrated pack
 Declarations beat scrapes, because a running instance emits much less than it declares. Configure no Alertmanager and the notifier's per-alertmanager metrics never appear. `Describe()` returns them anyway, with the const-versus-variable label split that a scrape drops. It also carries a unit field, though as noted above nothing populates it today.
 
 It also catches a metric nobody registered. Delete one collector from a `MustRegister` call and it compiles, `go vet` stays quiet, regeneration produces no diff, and the metric never exists at runtime. Generation cannot help, because the wiring is hand-written.
+
+Supplemental fixtures call `Registry.Gather()` directly and inspect its protobuf results. For histograms, they instantiate vector children, record deterministic observations, and check each gathered histogram's classic and native representations against `histogram_type`. Native schema presence identifies native data, including schema zero. Configured finite classic buckets identify the classic representation; an optional `+Inf` bucket carrying an exemplar alone does not establish mixed-histogram mode. Removing either representation from a declared mixed histogram must fail. These checks establish the representation; they do not claim to validate every construction option, such as bucket limits or reset durations.
+
+The three `NewDesc` sites in scrape metadata (`scrape/metrics.go`) and file timestamps (`discovery/file/file.go`) retain their custom collection logic and use generated descriptors. Descriptor comparison checks names, help, labels, and the empty-unit requirement. Their `UNTYPED` descriptor result means declaration-time type information is unavailable; the expected emitted type still comes from the registry and is checked against gathered metric families. A custom collector changing its emitted gauge to a counter must fail even though its descriptor is unchanged.
+
+Sample coverage is tracked separately from the full descriptor inventory. The fixtures must collectively produce every custom or histogram family requiring supplemental checks in at least one populated case, validate every exercised configuration, and fail on missing coverage or gathering errors. Empty or removal cases can legitimately emit no samples while retaining their descriptors. Custom-collector fixtures cover empty, populated, and removed jobs or files: removed sources stop producing their former series, while a configured scrape job with no targets retains its existing zero-valued metadata metrics.
 
 The test reads a flat, already-resolved registry, leaving `ref`, `extends`, imports, and group merging to Weaver at authoring time. It catches drift before it ships, but tells a deployed downstream nothing about how to follow a rename. That needs a versioned rename schema per release, a follow-on.
 
@@ -185,7 +191,7 @@ So "safe metric evolution across the ecosystem" means consumers detect drift the
 
 * **`.With()` allocations on hot paths**: `.With()` allocates a `prometheus.Labels` map per call, likely too much for per-scrape or per-sample metrics. Benchmark a typed `WithX(value string)` fast path first ([reviewer comment](https://github.com/prometheus/prometheus/pull/17868#discussion_r2736198866)).
 
-* **Validator module home**: the `Desc` accessors are the only `client_golang` change proposed here. Registry parsing stays out, because `client_golang` is one module with no nested `go.mod`, so a schema package there would push YAML and OTel-schema dependencies onto nearly every exporter. It could live in a nested module there, a new repository under `prometheus`, or elsewhere. Blocks nothing else.
+* **Validator module home**: the `client_golang` changes are limited to `Desc` metadata accessors and metric type storage populated by typed constructors. Supplemental collection checks use the existing `Registry.Gather()` API. Registry parsing stays out, because `client_golang` is one module with no nested `go.mod`, so a schema package there would push YAML and OTel-schema dependencies onto nearly every exporter. It could live in a nested module there, a new repository under `prometheus`, or elsewhere. Blocks nothing else.
 
 * **Template and policy hosting**: in this repository under `build/`, in `client_golang` for ecosystem reuse, or bundled into Weaver itself ([weaver#1145](https://github.com/open-telemetry/weaver/pull/1145)), which would end the question. Decide before the migration is stable.
 
@@ -218,9 +224,9 @@ These metrics describe Prometheus' own implementation, not a convention for othe
 ## Action Plan
 
 * [ ] Get consensus on this proposal.
-* [ ] Add `Desc` accessors to `client_golang` so declared metrics can be read.
+* [ ] Add `Desc` metadata accessors and metric type storage to `client_golang`, populated by typed constructors while `NewDesc` remains untyped.
 * [ ] Write `semconv/registry.yaml` by hand, package by package.
-* [ ] Build in-process contract testing, one package at a time, and run it in CI.
+* [ ] Build in-process contract testing with descriptor inventory checks and supplemental collection fixtures for histogram representations and custom-collector types, one package at a time, and run it in CI.
 * [ ] Generate code for one small package and settle the generated API there.
 * [ ] Benchmark `.With()` before touching hot paths.
 * [ ] Generate the rest, one pull request per package.
