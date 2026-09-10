@@ -14,7 +14,7 @@
   * [OTel Semantic Convention specification](https://opentelemetry.io/docs/specs/semconv/): YAML schemas describing telemetry, with tooling to generate code and docs from them.
   * [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver): the toolchain that resolves, validates, and renders those schemas.
 
-> TL;DR: Define every metric the Prometheus binary exports in one [OTel semantic convention registry](https://opentelemetry.io/docs/specs/semconv/). Generate the instrumentation code and the docs from it, check the code against it in CI, and publish it so downstream projects can check their own references.
+> TL;DR: Define the metrics Prometheus itself owns in one [OTel semantic convention registry](https://opentelemetry.io/docs/specs/semconv/). Generate the instrumentation code and the docs from it, check the code against it in CI, and publish it so downstream projects can check their own references.
 
 ## Why
 
@@ -31,11 +31,11 @@ Help strings are inconsistent, some describing counter semantics and some the ev
 
 ## Goals
 
-* [Required] One machine-readable registry describes every metric Prometheus exposes. The Go code stops being a second source of truth.
+* [Required] One machine-readable registry describes every Prometheus-owned metric, in the sense fixed under Scope. The Go code stops being a second source of truth.
 * [Required] No hand-written metric descriptors. Instrumentation code comes from the registry.
 * [Required] Generated documentation, which therefore cannot drift.
 * [Required] A CI check that catches drift between the registry and the binary, with no OTel Collector and no Weaver binary in the test path.
-* [Required] Stability (`development`, `stable`, `deprecated`) as a schema field, so lifecycle changes are reviewable.
+* [Required] Maturity (`development`, `stable`) and structured deprecation as schema fields, so lifecycle changes are reviewable.
 * [Nice to have] A base for multi-language generation and ecosystem tooling built on the same registry.
 
 ### Audience
@@ -46,34 +46,77 @@ Prometheus maintainers and contributors. Operators who build dashboards and aler
 
 * Changing metric names, labels, or semantics. It changes how metrics are defined, not what they measure.
 * Adopting the OTel SDK. `client_golang` stays the instrumentation layer.
+* Owning metrics whose descriptors a dependency defines, including `go_*`, `process_*`, and `promhttp_*`, even though we register them.
+* Settling whether `prometheus_build_info` is an exception to that rule. Scope explains the case; until it is decided the metric stays out.
 * Migrating exporters or other ecosystem projects.
 * Publishing the registry as upstream OTel semantic conventions.
 
 ## How
 
+### Scope
+
+A metric is ours when the server binary exposes it *and* its descriptor is defined in this repository. Both halves matter. The second excludes `go_*`, `process_*`, and `promhttp_*`, whose metadata we do not define. Two of them are not even a fixed surface: `go_*` varies with the Go version and with the `WithGoCollectorRuntimeMetrics` options at `cmd/prometheus/main.go:379-388`, and `process_*` is registered on Linux only (`client_golang/prometheus/registry.go:46-47`). The first excludes descriptors defined here but never served: `documentation/examples/remote_storage/remote_storage_adapter` alone defines `received_samples_total`, `sent_samples_total`, `failed_samples_total`, and `prometheus_influxdb_ignored_samples_total`. Deciding by descriptor definition rather than name prefix also means no tool has to guess whether an unfamiliar family is ours.
+
+`prometheus_build_info` is the one case on the line: its descriptor lives in `client_golang/prometheus/collectors/version`, but we choose its namespace at `cmd/prometheus/main.go:155` and our own mixin queries it. The rule above excludes it and it stays excluded until we decide otherwise, which is a decision worth making explicitly rather than by omission — adopting it would mean describing metadata we can detect changing but cannot change.
+
 ### The registry
 
-One `semconv/registry.yaml` describes every metric the binary exposes. A single file keeps name uniqueness and stability audits trivial and gives consumers one artifact to fetch. Split it per package later if it gets unwieldy.
+One `semconv/registry.yaml` describes every metric in scope above. A single file keeps name uniqueness and stability audits trivial and gives consumers one artifact to fetch. Split it per package later if it gets unwieldy.
 
 ```yaml
 groups:
   - id: metric.prometheus_tsdb_compaction_duration_seconds
     type: metric
-    stability: stable
+    stability: development
     brief: Duration of compaction runs.
     metric_name: prometheus_tsdb_compaction_duration_seconds
     instrument: histogram
     unit: s
     annotations:
       prometheus:
+        package: tsdb
+        help: Duration of compaction runs
         histogram_type: mixed_histogram
         exponential_buckets: {start: 1, factor: 2, count: 14}
         bucket_factor: 1.1
         max_bucket_number: 100
         min_reset_duration: "1h"
+
+  - id: attr.prometheus.scrape
+    type: attribute_group
+    brief: Attributes for scrape metrics.
+    attributes:
+      - id: prometheus.scrape.interval
+        type: string
+        stability: development
+        brief: The configured scrape interval the observation belongs to.
+        examples: ["15s", "1m"]
+        annotations:
+          prometheus:
+            label_name: interval
+
+  - id: metric.prometheus_target_interval_length_seconds
+    type: metric
+    stability: development
+    brief: Actual intervals between scrapes.
+    metric_name: prometheus_target_interval_length_seconds
+    instrument: histogram
+    unit: s
+    attributes:
+      - ref: prometheus.scrape.interval
+    annotations:
+      prometheus:
+        package: scrape
+        help: Actual intervals between scrapes.
+        histogram_type: summary
+        objectives: {0.01: 0.001, 0.05: 0.005, 0.5: 0.05, 0.90: 0.01, 0.99: 0.001}
 ```
 
-Go code, documentation, and the contract test all derive from this file. `annotations.prometheus` carries what OTel has no field for: histogram variant, buckets, callback gauges, and construction-time labels.
+Go code, documentation, and the contract test all derive from this file. `annotations.prometheus` carries what OTel has no field for: the owning package, the `client_golang` help string, each attribute's Prometheus label name, the histogram variant and its bucket or objective configuration, callback gauges, and construction-time labels.
+
+Two fields hold the same sentence on purpose. `brief` follows OTel conventions, terminal period included; `annotations.prometheus.help` is the `client_golang` `Help` string verbatim and is what the contract test compares. Without the split, `prometheus_tsdb_compaction_duration_seconds` fails on punctuation alone — its help is `Duration of compaction runs`, no period (`tsdb/compact.go:121-128`). A policy keeps the two in step.
+
+Labels are OTel attributes, but an attribute ID names a *concept* while a label name is a *wire name*. WAL record type and appended-sample type both carry `label_name: type` and mean different things, so they need separate definitions rather than one shared `type`. Each attribute gets a namespaced ID and records its label name in `annotations.prometheus.label_name`, which Weaver preserves in the resolved output. The examples propose `prometheus.<package>.<label>` for attribute IDs and `attr.<namespace>` for their group IDs; confirm both before the first package lands, since they set precedent across roughly 250 metrics and are churn to change afterwards.
 
 Generated output lands in `<package>/internal/semconv/` as `metrics.gen.go` and `README.md`. `internal` keeps generated types out of the public API and `.gen.go` marks their origin, both per review feedback on the [proof-of-concept](https://github.com/prometheus/prometheus/pull/17868). Templates and policies are not committed here; see the hosting question.
 
@@ -102,7 +145,13 @@ A Go test compares what the code declares against the registry. No running Prome
 
 `Collector.Describe()` yields a descriptor for every metric a collector declares, sample or no sample. The test registers the collectors, reads the descriptors, and compares them to the registry. This needs accessors on `prometheus.Desc`, which today exposes only `Err()` and `String()`. Additive, no new dependencies.
 
-Declarations beat scrapes, because a running instance emits much less than it declares. Configure no Alertmanager and the notifier's per-alertmanager metrics never appear. `Describe()` returns them anyway, with the unit and the const-versus-variable label split that a scrape drops.
+The accessors must also expose a metric type, which `Desc` does not carry today — the type lives on the concrete metric. Without it, `instrument` and `annotations.prometheus.histogram_type` have nothing to compare against and a gauge quietly becoming a counter is invisible to the only check we have. Typed constructors can set it; `prometheus.NewDesc` reports `UNTYPED`, so the three non-test call sites (`scrape/metrics.go`, `discovery/file/file.go`) should move to typed constructors during the migration.
+
+Units need care in the other direction. `prometheus.Opts` has a `Unit` field and no Prometheus metric sets it, so every descriptor reports an empty unit while the registry declares the real one. The first phase keeps the registry's unit as metadata and requires the descriptor's to stay empty, reporting any non-empty value as a difference — an attempt to populate `Opts.Unit` becomes visible rather than silently unchecked, and no package waits on a repository-wide edit. That edit is observable, not cosmetic: `Opts.Unit` reaches the descriptor hash, `MetricFamily.Unit`, and `# UNIT` in OpenMetrics, and from there scrape and TSDB metadata, remote write, and `/api/v1/metadata`. Names are unaffected; the encoder only rewrites `_total` on counters.
+
+The comparison runs per package, not over one global surface. Each migrated package builds its collectors in deterministic fixtures and compares the union of their descriptors against the registry entries whose `annotations.prometheus.package` names it. That value is a repository-relative package directory — `tsdb`, `scrape`, `tsdb/wlog` — so it doubles as the `<package>/internal/semconv/` output path generation already needs. Where collectors depend on configuration, table-driven fixtures cover the supported variants: a metric need not appear in every variant, but the union must equal that package's declared surface. This is the same group annotation generation needs in order to know which package owns a metric, so one annotation serves both.
+
+Declarations beat scrapes, because a running instance emits much less than it declares. Configure no Alertmanager and the notifier's per-alertmanager metrics never appear. `Describe()` returns them anyway, with the const-versus-variable label split that a scrape drops. It also carries a unit field, though as noted above nothing populates it today.
 
 It also catches a metric nobody registered. Delete one collector from a `MustRegister` call and it compiles, `go vet` stays quiet, regeneration produces no diff, and the metric never exists at runtime. Generation cannot help, because the wiring is hand-written.
 
@@ -110,7 +159,7 @@ The test reads a flat, already-resolved registry, leaving `ref`, `extends`, impo
 
 ### Metric lifecycle and evolution
 
-`registry.yaml` carries OTel stability levels: `development` for anything that may change without notice, `stable` for public API needing a deprecation cycle, `deprecated` for metrics kept until a major version drops them. Weaver can emit deprecation warnings from these, and removing a stable metric requires a schema change visible in review and in git history.
+`registry.yaml` carries OTel stability levels: `development` for anything that may change without notice and `stable` for public API needing a deprecation cycle. Deprecation is a separate structured field rather than a third level: the `deprecated` stability value still parses, but upstream marks it deprecated, and the structured field carries a reason (`renamed`, `obsoleted`, `uncategorized`) plus `renamed_to` for a rename. A deprecated metric therefore keeps its maturity and gains that field. Weaver can emit deprecation warnings from these, and removing a stable metric requires a schema change visible in review and in git history.
 
 This proposal adds the field and makes changes to it reviewable. It does not define what `stable` obligates, how long a deprecation cycle runs, or which of today's metrics qualify. That is policy, not schema, and marking a metric `stable` commits us to compatibility we have never promised. Migrated metrics carry `development` until a follow-on decides otherwise.
 
@@ -129,14 +178,14 @@ So "safe metric evolution across the ecosystem" means consumers detect drift the
 * Every `histogram` declares `annotations.prometheus.histogram_type`, one of `classic_histogram`, `native_histogram`, `mixed_histogram`, `summary`.
 * Classic and mixed histograms declare `buckets` or `exponential_buckets`.
 * Native and mixed histograms declare `bucket_factor`, `max_bucket_number`, and `min_reset_duration`.
+* Summaries declare `objectives`, the one variant in that enum with no rule behind it today.
+* Every metric declares `annotations.prometheus.package`, and every metric attribute declares `label_name`.
 
 ### Open questions
 
-* **`.With()` allocations on hot paths**: `.With()` allocates a `prometheus.Labels` map per call, likely too much for per-scrape or per-sample metrics. Benchmark a typed `WithX(value string)` fast path first ([reviewer comment](https://github.com/prometheus/prometheus/pull/17868#discussion_r2716984753)).
+* **`.With()` allocations on hot paths**: `.With()` allocates a `prometheus.Labels` map per call, likely too much for per-scrape or per-sample metrics. Benchmark a typed `WithX(value string)` fast path first ([reviewer comment](https://github.com/prometheus/prometheus/pull/17868#discussion_r2736198866)).
 
 * **Validator module home**: the `Desc` accessors are the only `client_golang` change proposed here. Registry parsing stays out, because `client_golang` is one module with no nested `go.mod`, so a schema package there would push YAML and OTel-schema dependencies onto nearly every exporter. It could live in a nested module there, a new repository under `prometheus`, or elsewhere. Blocks nothing else.
-
-* **Mapping registry entries to packages**: generation needs to know which package owns each metric. A group annotation is the obvious mechanism; the shape is an implementation detail.
 
 * **Template and policy hosting**: in this repository under `build/`, in `client_golang` for ecosystem reuse, or bundled into Weaver itself ([weaver#1145](https://github.com/open-telemetry/weaver/pull/1145)), which would end the question. Decide before the migration is stable.
 
