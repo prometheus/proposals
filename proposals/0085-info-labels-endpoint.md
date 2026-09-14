@@ -7,7 +7,7 @@
 * **Implementation Status:** Not implemented upstream ([WIP implementation PR](https://github.com/prometheus/prometheus/pull/17930)).
 
 * **Related Issues and PRs:**
-  * [PROM-74 — V2 API for labels and values discovery](https://github.com/prometheus/proposals/pull/74). This proposal builds on PROM-74's NDJSON model, feature gate, search behavior, and storage interfaces. The request bounds below follow the current search implementation and are authoritative where PROM-74's original text differs.
+  * [PROM-74 — V2 API for labels and values discovery](https://github.com/prometheus/proposals/pull/74). This proposal builds on PROM-74's NDJSON model, feature gate, search behavior, and storage interfaces. The request defaults and bounds below follow the current search implementation and are authoritative where PROM-74's original text differs.
   * [PROM-37 — Simplify joins with info metrics in PromQL](./0037-native-support-for-info-metrics-metadata.md). Introduces the `info()` PromQL function supported by this autocomplete API.
   * [Prometheus PR #19557 — fix `info()` with mixed identifying-label presence](https://github.com/prometheus/prometheus/pull/19557). Independent correctness fix for the existing experimental evaluator; it is not part of this proposal.
   * [Grafana Prometheus datasource PR #244](https://github.com/grafana/grafana-prometheus-datasource/pull/244). Independent client PoC and source of the client-integration feedback incorporated here.
@@ -71,8 +71,8 @@ Search capability is fail-closed across the full active query path. Before strea
 | `timeout`        | duration / float seconds      | No       | `--query.timeout`        | Shared timeout for expression evaluation and the subsequent info-series search. Explicit values are capped by `--query.timeout`.                                                                 |
 | `start`, `end`   | rfc3339 / unix timestamp      | No       | last 1h                  | Storage search window when `expr` is absent. With `expr`, `start` must parse but is ignored for range selection and ordering validation; `end` supplies the default `time`.                      |
 | `search[]`       | []string                      | No       |                          | At most 32 search terms, matched against names or values according to the endpoint. Multiple terms have OR semantics.                                                                            |
-| `fuzz_threshold` | int [0..100]                  | No       | 0                        | Fuzzy threshold, as in PROM-74.                                                                                                                                                                  |
-| `fuzz_alg`       | `jarowinkler` / `subsequence` | No       | `jarowinkler`            | Fuzzy algorithm, as in PROM-74.                                                                                                                                                                  |
+| `fuzz_threshold` | int [0..100]                  | No       | 0                        | Fuzzy-score threshold. At 0, `subsequence` accepts any subsequence match; `jarowinkler` performs substring matching only.                                                                        |
+| `fuzz_alg`       | `jarowinkler` / `subsequence` | No       | `subsequence`            | Fuzzy algorithm, following the current Prometheus search implementation.                                                                                                                         |
 | `case_sensitive` | bool                          | No       | true                     | Case sensitivity, as in PROM-74.                                                                                                                                                                 |
 | `sort_by`        | `alpha` / `score`             | No       | value ascending          | Ordering, as in PROM-74. `sort_by=score` requires `search[]`.                                                                                                                                    |
 | `sort_dir`       | `asc` / `dsc`                 | No       | `asc`                    | Direction for alphabetical ordering. Accepted only with explicit `sort_by=alpha`.                                                                                                                |
@@ -130,7 +130,7 @@ curl -N -g 'http://localhost:9090/api/v1/info_labels?expr=rate(http_requests_tot
 ```
 
 ```ndjson
-{"results":[{"name":"version","score":1},{"name":"server","score":0.83}]}
+{"results":[{"name":"version","score":1},{"name":"server","score":0.9435}]}
 {"status":"success","has_more":false}
 ```
 
@@ -147,7 +147,7 @@ curl -N -g 'http://localhost:9090/api/v1/info_label_values?label=version&expr=ra
 ```
 
 ```ndjson
-{"results":[{"value":"v2.1"},{"value":"v2.0"}]}
+{"results":[{"value":"v2.0"},{"value":"v2.1"}]}
 {"status":"success","has_more":false}
 ```
 
