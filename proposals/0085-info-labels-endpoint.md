@@ -109,6 +109,8 @@ Matcher construction is also bounded before the info-series `Searcher` is opened
 
 The name matchers, data matchers, and `expr` apply jointly. Expression warnings are merged with storage warnings and exposed on the stream.
 
+Suggestions are indexed candidates within this scope. The temporal selection hints restrict which storage ranges are searched, but do not guarantee that every returned candidate has a sample in that range. Together with conservative identifying-label cross-pairs, this means a suggestion does not establish that the completed query will find a matching sample or successfully join it with `info()`. The endpoints do not provide sample-presence or cardinality guarantees.
+
 Clients must resolve editor-specific variables and macros before sending `expr`, using the same semantics as normal query execution. Otherwise autocomplete and query execution can observe different expressions.
 
 ### Security and admission control
@@ -170,17 +172,49 @@ Expiry before streaming returns the normal Prometheus JSON error with HTTP 503 a
 
 ### Stream completeness
 
-A non-2xx response uses the standard Prometheus JSON error format and is not an NDJSON stream. A successful NDJSON stream ends with:
+A non-2xx response uses the standard Prometheus JSON error format and is not an NDJSON stream. A terminal `status: success` establishes that the stream completed successfully. For example, a complete name response without truncation is:
 
 ```ndjson
+{"results":[{"name":"region"}]}
 {"status":"success","has_more":false}
 ```
 
+`has_more` reports whether additional distinct, eligible results remain beyond the effective limit after scoping, filtering, and deduplication. Reaching exactly the limit does not itself establish truncation. Neither does an operator reducing the default limit. For example, with `limit=1`, a response with another eligible name ends with:
+
+```ndjson
+{"results":[{"name":"region"}]}
+{"status":"success","has_more":true}
+```
+
+Warnings are independent of stream completion and limit truncation. A backend warning may indicate incomplete discovery even when the stream succeeds with `has_more: false`; that flag does not certify coverage of unavailable backend data. Not every warning means results were lost. For example, a downstream backend that allows partial discovery could return:
+
+```ndjson
+{"results":[{"name":"region"}],"warnings":["Some storage sources were unavailable; discovery may be incomplete."]}
+{"status":"success","has_more":false}
+```
+
+Clients must retain warnings from both batch records and the terminal record, without inferring completeness from warning text or treating every warning as truncation.
+
 A client must reject a response when EOF arrives before a terminal record, a line is malformed, more than one terminal record appears, or content follows the terminal record. A mid-stream error record is terminal. Partial batches must not be returned or cached as a successful response.
 
-Clients should cache only complete successful responses, bound cache size and freshness, key entries by the effective resolved request, deduplicate identical in-flight requests, and evict failures so a later request can retry. Clients should normally omit `limit` and accept the operator-controlled default.
+Clients should cache only complete successful streams, preserving `has_more` and all warnings with the results. Such a cache entry need not represent exhaustive discovery. Clients should bound cache size and freshness, key entries by the effective resolved request, deduplicate identical in-flight requests, and evict failures so a later request can retry. Clients should normally omit `limit` and accept the operator-controlled default.
 
 Editor integrations should forward every completed matcher in the second `info()` argument as its original full PromQL source. The matcher currently being edited must be omitted, while other matchers on the same label remain in scope. The second argument has no metric-name prefix syntax; clients encountering an unquoted identifier or quoted metric-name prefix must use generic completion rather than synthesizing a `__name__` matcher. Users select another info metric explicitly with a matcher such as `{__name__="build_info", ...}`. Variables and macros must be resolved before the request, and quoted UTF-8 label names must be decoded before use as the exact `label`. Completion for `__name__`, `job`, and `instance` remains the general metric or label completion path because those are not discoverable info data labels.
+
+### Choosing a matching strategy
+
+Clients that want contiguous substring matching can request `fuzz_alg=jarowinkler` with `fuzz_threshold=0`. For example, this searches data-label names containing `region` on production targets associated with the expression:
+
+```sh
+curl --no-buffer --get 'http://localhost:9090/api/v1/info_labels' \
+  --data-urlencode 'expr=rate(http_requests_total{job="api"}[5m])' \
+  --data-urlencode 'data_match[]=env="prod"' \
+  --data-urlencode 'search[]=region' \
+  --data-urlencode 'fuzz_alg=jarowinkler' \
+  --data-urlencode 'fuzz_threshold=0'
+```
+
+Additional `search[]` terms broaden matching with OR, while additional `data_match[]` matchers narrow the info-series scope with AND. Search terms apply to names on `info_labels` and values on `info_label_values`; the latter still requires one exact `label` selected by the client. Scores describe lexical matching, not semantic confidence or the likelihood that a suggestion will produce query results.
 
 ### Storage and performance
 
@@ -203,7 +237,7 @@ The Prometheus implementation does not emit extensions.
 
 ### Testing and verification
 
-Implementation tests cover:
+Required implementation coverage:
 
 * both endpoints over GET and POST;
 * the dual feature gate;
@@ -215,6 +249,10 @@ Implementation tests cover:
 * identifying-label filtering and rejection;
 * matcher count and syntax validation, and rejection of `match[]` and `label` on the name endpoint;
 * search, Jaro-Winkler and subsequence fuzzy matching, scoring, ordering, limit, `has_more`, and batching;
+* zero, fewer than, exactly, and more than the effective limit of eligible results, including filtering, cross-block deduplication, and a reduced operator-controlled default;
+* substring-only matching at `fuzz_alg=jarowinkler&fuzz_threshold=0`, OR across search terms, and AND across scope matchers;
+* successful streams with warnings in batches or the trailer, including `has_more: false`, and preservation of warnings and truncation metadata in cached responses;
+* indexed historical candidates and conservative cross-pairs without inferring per-candidate sample presence or a successful runtime join;
 * omitted, shorter, capped, invalid, pre-stream, and mid-stream timeout behavior, plus caller cancellation;
 * route-capability advertisement for every feature-gate and Agent-mode combination;
 * fail-closed behavior for mixed search-capable and incapable primary or secondary storage, while ignoring noop storage;
