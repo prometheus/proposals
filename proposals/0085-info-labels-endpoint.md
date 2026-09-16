@@ -12,7 +12,7 @@
   * [Prometheus PR #19557 — fix `info()` with mixed identifying-label presence](https://github.com/prometheus/prometheus/pull/19557). Independent correctness fix for the existing experimental evaluator; it is not part of this proposal.
   * [Grafana Prometheus datasource PR #244](https://github.com/grafana/grafana-prometheus-datasource/pull/244). Independent client PoC and source of the client-integration feedback incorporated here.
 
-> TL;DR: Add `GET|POST /api/v1/info_labels` and `GET|POST /api/v1/info_label_values` as info-metric companions to PROM-74's experimental search API. Both endpoints apply the same `expr` and repeated `data_match[]` scope. The first searches data-label names; the second searches values for one exact data-label name. They reuse the current search API's NDJSON, search, sort, score, limit, batch, and storage behavior, apply one timeout across expression evaluation and storage search, and require both `search-api` and `promql-experimental-functions`.
+> TL;DR: Add `GET|POST /api/v1/search/info_labels` and `GET|POST /api/v1/search/info_label_values` as dedicated info-metric operations within PROM-74's experimental search API. Both endpoints apply the same `expr` and repeated `data_match[]` scope. The first searches data-label names; the second searches values for one exact data-label name. They reuse the current search API's NDJSON, search, sort, score, limit, batch, and storage behavior, apply one timeout across expression evaluation and storage search, and require both `search-api` and `promql-experimental-functions`.
 
 ## Why
 
@@ -47,12 +47,12 @@ Existing APIs cannot express those operations efficiently and consistently:
 
 Add two dual-gated endpoints with a shared scope and distinct result types:
 
-| Endpoint                    | Search target                         | Result record                           |
-|-----------------------------|---------------------------------------|-----------------------------------------|
-| `/api/v1/info_labels`       | Non-identifying label names           | `{ "name": string, "score"?: number }`  |
-| `/api/v1/info_label_values` | Values of the exact `label` parameter | `{ "value": string, "score"?: number }` |
+| Endpoint                           | Search target                         | Result record                           |
+|------------------------------------|---------------------------------------|-----------------------------------------|
+| `/api/v1/search/info_labels`       | Non-identifying label names           | `{ "name": string, "score"?: number }`  |
+| `/api/v1/search/info_label_values` | Values of the exact `label` parameter | `{ "value": string, "score"?: number }` |
 
-These are top-level `info_*` endpoints rather than `/api/v1/search/*` resources because `expr`, the info-specific matcher split, and the dual `info()` feature gate are function-specific semantics. Reusing PROM-74's `Searcher`, request parameters, and NDJSON contract does not make the operations general label search.
+These are dedicated operations within the Search API family. They share PROM-74's `Searcher`, search parameters, and NDJSON contract, while separate routes keep the info-specific `expr` and `data_match[]` scope, expression-dependent time semantics, and dual feature gate explicit.
 
 The separation follows the two editor interactions and PROM-74's label-name and label-value split. It avoids a combined `{name, values[]}` response whose two independent cardinality dimensions require `values_limit`, encourages eager value retrieval, and cannot give the selected label first-class exact semantics.
 
@@ -119,16 +119,16 @@ An `expr` request is a query, not metadata-only discovery. Response presence can
 
 Deployments whose authorization layer cannot distinguish requests by form or query parameter must protect both endpoint routes as query surfaces, including requests that omit `expr`. The endpoints consolidate existing discovery operations, but `expr` makes it incorrect to claim that their observable result is limited to metadata already available through label APIs.
 
-### `GET|POST /api/v1/info_labels`
+### `GET|POST /api/v1/search/info_labels`
 
 This endpoint searches non-identifying label names on the scoped info series. `__name__`, `job`, and `instance` are filtered before the result limit is applied, so they cannot consume autocomplete slots.
 
-The `label` parameter is rejected; callers seeking values must use `/api/v1/info_label_values`.
+The `label` parameter is rejected; callers seeking values must use `/api/v1/search/info_label_values`.
 
 Example:
 
 ```bash
-curl -N -g 'http://localhost:9090/api/v1/info_labels?expr=rate(http_requests_total{job="api"}[5m])&data_match[]=__name__=~".+_info"&data_match[]=env="prod"&search[]=ver&sort_by=score&include_score=true'
+curl -N -g 'http://localhost:9090/api/v1/search/info_labels?expr=rate(http_requests_total{job="api"}[5m])&data_match[]=__name__=~".+_info"&data_match[]=env="prod"&search[]=ver&sort_by=score&include_score=true'
 ```
 
 ```ndjson
@@ -136,7 +136,7 @@ curl -N -g 'http://localhost:9090/api/v1/info_labels?expr=rate(http_requests_tot
 {"status":"success","has_more":false}
 ```
 
-### `GET|POST /api/v1/info_label_values`
+### `GET|POST /api/v1/search/info_label_values`
 
 This endpoint requires `label`, interpreted as one exact decoded label name. It is a query parameter rather than a path component so UTF-8 label names do not require a second path-specific quoting contract.
 
@@ -145,7 +145,7 @@ Empty `label`, `__name__`, `job`, and `instance` are rejected because they are n
 Example:
 
 ```bash
-curl -N -g 'http://localhost:9090/api/v1/info_label_values?label=version&expr=rate(http_requests_total{job="api"}[5m])&search[]=v2&sort_by=score'
+curl -N -g 'http://localhost:9090/api/v1/search/info_label_values?label=version&expr=rate(http_requests_total{job="api"}[5m])&search[]=v2&sort_by=score'
 ```
 
 ```ndjson
@@ -206,7 +206,7 @@ Editor integrations should forward every completed matcher in the second `info()
 Clients that want contiguous substring matching can request `fuzz_alg=jarowinkler` with `fuzz_threshold=0`. For example, this searches data-label names containing `region` on production targets associated with the expression:
 
 ```sh
-curl --no-buffer --get 'http://localhost:9090/api/v1/info_labels' \
+curl --no-buffer --get 'http://localhost:9090/api/v1/search/info_labels' \
   --data-urlencode 'expr=rate(http_requests_total{job="api"}[5m])' \
   --data-urlencode 'data_match[]=env="prod"' \
   --data-urlencode 'search[]=region' \
@@ -225,6 +225,8 @@ The optional `expr` adds one standard instant-query evaluation. Existing max-sam
 The `limit` contract bounds result retention and wire output, not the cardinality of the underlying index or the worst-case storage work. The actual work depends on the `Searcher` implementation, matcher selectivity, requested ordering, and whether it can stop early while still determining `has_more`.
 
 ### Extensibility for Mimir, Thanos, and Cortex
+
+PROM-74's `include_metadata` illustrates optional enrichment of search results: on `/api/v1/search/metric_names`, it adds metric `type`, `help`, and `unit` when requested and available. That option is not part of this proposal's info-label request contract. Info-label results identify data-label names or values, and a deduplicated result can come from multiple info metrics; metadata about a source metric would not describe the returned label itself. Future enrichment of info-label results fits the Search API model, but needs a separately defined metadata source and schema.
 
 As in PROM-74, downstream implementations may add optional per-record extensions without changing the core record shapes:
 
@@ -263,7 +265,7 @@ Manual verification can compare names and values against client-side aggregation
 
 ### Migration
 
-These are new, experimental, opt-in endpoints. No stored-data migration is required. Implementations and PoC clients should use the two-endpoint, repeated-full-matcher contract.
+These are new, experimental, opt-in endpoints. No stored-data migration is required. Implementations and PoC clients should use the two-endpoint, repeated-full-matcher contract under `/api/v1/search/`.
 
 ## Alternatives
 
@@ -275,7 +277,7 @@ If measured client latency later justifies removing the second round trip, an op
 
 ### 2. Reuse `/api/v1/search/label_names` and `/api/v1/search/label_values`
 
-These endpoints have the right split but cannot derive the info-series scope from an arbitrary PromQL expression. Adding `expr` and info-specific identifying-label behavior to the general endpoints would mix function-specific semantics into otherwise general label search.
+The general endpoints have the right name/value split, but their existing contract does not derive info-series scope from an arbitrary PromQL expression. A mode such as `scope=info` would need a different scoping contract (`data_match[]` and optional `expr` in place of `match[]`) and expression-dependent time semantics. Dedicated endpoints within the same `/api/v1/search/` namespace keep those contracts explicit while sharing implementation and optional result-enrichment patterns.
 
 ### 3. Pure client-side composition
 
