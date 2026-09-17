@@ -24,11 +24,12 @@ members
 └── <repository>-maintainers
     └── <repository>-admins (only where explicitly needed)
 ```
+
 Repository permissions increase with each level:
 
 * members: Read
-* <repository>-maintainers: Maintain
-* <repository>-admins: Admin, only as a documented exception
+* `<repository>-maintainers`: Maintain
+* `<repository>-admins`: Admin, only as a documented exception
 
 Every active, non-fork public repository receives a dedicated Maintainers team. After replacement team access is verified, direct repository permissions are removed from organization members so that human access is inherited through teams. Human organization Owner access is limited to active Steering Committee members and approved temporary exceptions.
 
@@ -47,23 +48,23 @@ The two Prometheus GitHub organizations have grown organically. Their current te
 ## Goals
 
 1. Give every Prometheus Member a clear place in a read-only Members team in both organizations.
-1. Give every in-scope repository a dedicated Maintainers team.
-1. Establish predictable, repository-specific team names and ownership.
-1. Normalize Maintainer access on GitHub's Maintain permission.
-1. Reserve Admin access for separately named and justified teams.
-1. Automate maintenance of MAINTAINERS.md files in our GitHub repositories.
-1. Remove direct repository grants from organization members after replacement team access has been verified.
-1. Align human organization Owner access with active Steering Committee membership.
+2. Give every in-scope repository a dedicated Maintainers team.
+3. Establish predictable, repository-specific team names and ownership.
+4. Normalize Maintainer access on GitHub's Maintain permission.
+5. Reserve Admin access for separately named and justified teams.
+6. Automate maintenance of MAINTAINERS.md files in our GitHub repositories.
+7. Remove direct repository grants from organization members after replacement team access has been verified.
+8. Align human organization Owner access with active Steering Committee membership.
 
 ## Non-Goals
 
 1. Change the membership application process.
-1. Cover private, archived, or forked repositories.
-1. Assign individual people to teams.
-1. Infer maintainership where no clear maintainer record exists.
-1. Reorganize bot, CI service-account, security-response, or other non-human access.
-1. Change the internal ownership model or existing CODEOWNERS file in prometheus/prometheus.
-1. Define a place to organize contributor roles
+2. Cover private, archived, or forked repositories.
+3. Assign individual people to teams.
+4. Infer maintainership where no clear maintainer record exists.
+5. Reorganize bot, CI service-account, security-response, or other non-human access.
+6. Change the internal ownership model or existing CODEOWNERS file in prometheus/prometheus.
+7. Define a place to organize contributor roles
 
 ## How
 
@@ -88,8 +89,8 @@ GitHub already gives organization members Read access to public repositories by 
 
 Every in-scope repository receives:
 
-* <repository>-maintainers
-* <repository>-admins, only when Admin access is explicitly justified
+* `<repository>-maintainers`
+* `<repository>-admins`, only when Admin access is explicitly justified
 
 The Maintainers team is nested below members. Any approved Admins team is nested below its repository's Maintainers team.
 
@@ -101,7 +102,7 @@ This model creates 82 repository Maintainers teams and two organization-level Me
 
 Maintainer status does not automatically imply GitHub Admin access. Maintainers teams receive Maintain, which supports repository management without granting sensitive or destructive capabilities.
 
-Where Admin access is operationally necessary, it is granted through a separate <repository>-admins team:
+Where Admin access is operationally necessary, it is granted through a separate `<repository>-admins` team:
 
 * Membership is limited to the smallest practical set of people.
 * The reason for Admin access is documented.
@@ -154,7 +155,7 @@ The repository still receives a dedicated prometheus-maintainers team, and human
 * Delegate future changes to its ownership and MAINTAINERS.md model to the repository's existing decision-making process.
 * Address the relationship between its repository team and component owners in a separate future proposal.
 
-### Inventory 
+### Inventory
 
 #### prometheus org (51)
 
@@ -244,53 +245,52 @@ The repository still receives a dedicated prometheus-maintainers team, and human
 * prometheus-community/windows_exporter
 * prometheus-community/yet-another-cloudwatch-exporter
 
-
 ### Action Plan
 
 #### Phase 1: Validate inventory and ownership
 
 1. Confirm the repository inventory.
-1. Confirm the canonical Maintainers team name for each repository.
-1. Compare current access with each repository's MAINTAINERS.md.
-1. Resolve the 21 repositories without a clear maintainer record through Steering Committee validation or appointment, or record them as unmaintained when no maintainers can be identified.
-1. Identify exceptional Admin and non-human access that must remain separate.
-1. Audit human Owner access in both organizations against the active Steering Committee roster.
-1. Identify temporary Owner exceptions and confirm that their approval, reason, and expiration or review condition are documented.
+2. Confirm the canonical Maintainers team name for each repository.
+3. Compare current access with each repository's MAINTAINERS.md.
+4. Resolve the 21 repositories without a clear maintainer record through Steering Committee validation or appointment, or record them as unmaintained when no maintainers can be identified.
+5. Identify exceptional Admin and non-human access that must remain separate.
+6. Audit human Owner access in both organizations against the active Steering Committee roster.
+7. Identify temporary Owner exceptions and confirm that their approval, reason, and expiration or review condition are documented.
 
 #### Phase 2: Establish the hierarchy
 
 1. Create closed members teams in both organizations.
-1. Populate them with accepted Prometheus Members.
-1. Create or rename a dedicated Maintainers team for every in-scope repository.
-1. Nest every Maintainers team below members.
-1. Nest any approved repository Admins team below its Maintainers team.
-1. Grant Owner access in both organizations to every active Steering Committee member who does not already have it.
+2. Populate them with accepted Prometheus Members.
+3. Create or rename a dedicated Maintainers team for every in-scope repository.
+4. Nest every Maintainers team below members.
+5. Nest any approved repository Admins team below its Maintainers team.
+6. Grant Owner access in both organizations to every active Steering Committee member who does not already have it.
 
 #### Phase 3: Apply repository permissions
 
 For one repository at a time:
 
 1. Grant Read to members.
-1. Grant Maintain to the repository's Maintainers team.
-1. Grant Admin only to an approved Admins team.
-1. Verify the effective permissions of representative members at each level.
+2. Grant Maintain to the repository's Maintainers team.
+3. Grant Admin only to an approved Admins team.
+4. Verify the effective permissions of representative members at each level.
 
 #### Phase 4: Standardize ownership
 
 1. For every repository except prometheus/prometheus, add the Maintainers team as the repository-wide CODEOWNER and default reviewer.
-1. Preserve valid path-specific ownership rules.
-1. Confirm that MAINTAINERS.md resolves to a visible team with sufficient explicit repository access.
-1. Reconcile team membership with MAINTAINERS.md.
-1. Leave the existing prometheus/prometheus MAINTAINERS.md file unchanged.
+2. Preserve valid path-specific ownership rules.
+3. Confirm that MAINTAINERS.md resolves to a visible team with sufficient explicit repository access.
+4. Reconcile team membership with MAINTAINERS.md.
+5. Leave the existing prometheus/prometheus MAINTAINERS.md file unchanged.
 
 #### Phase 5: Retire superseded access
 
 1. For each human Owner who is not an active Steering Committee member or an approved temporary exception, verify replacement team access and revoke Owner access while retaining organization membership.
-1. Verify that every organization member's effective access is provided by the correct teams.
-1. Remove direct repository grants from organization members after replacement team access is verified.
-1. Remove duplicate grants from legacy teams only after verification.
-1. Remove each repository's MAINTAINERS.md after its Maintainers team has been populated and validated.
-1. Retain separately scoped CI, bot, security, and service-account access.
-1. Rename or retire empty and superseded human-access teams.
-1. Record justified exceptions to the naming and permission model.
-1. Audit all 82 repositories against the acceptance criteria.
+2. Verify that every organization member's effective access is provided by the correct teams.
+3. Remove direct repository grants from organization members after replacement team access is verified.
+4. Remove duplicate grants from legacy teams only after verification.
+5. Remove each repository's MAINTAINERS.md after its Maintainers team has been populated and validated.
+6. Retain separately scoped CI, bot, security, and service-account access.
+7. Rename or retire empty and superseded human-access teams.
+8. Record justified exceptions to the naming and permission model.
+9. Audit all 82 repositories against the acceptance criteria.
