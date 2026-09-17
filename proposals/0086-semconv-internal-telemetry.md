@@ -1,7 +1,7 @@
 # Prometheus Internal Telemetry as an OTel Semantic Convention Registry
 
 * **Owners:**
-  * Nicolas Takashi [@nicolastakashi](https://github.com/nicolastakashi) [nicolas.takashi@coralogix.com](mailto:nicolas.takashi@coralogix.com)
+  * Nicolas Takashi [@nicolastakashi](https://github.com/nicolastakashi) [nicolas.takashi@dash0.com](mailto:nicolas.takashi@dash0.com)
   * Arthur Silva Sens [@ArthurSens](https://github.com/ArthurSens) [arthursens2005@gmail.com](mailto:arthursens2005@gmail.com)
 
 * **Implementation Status:** `Partially implemented`
