@@ -30,7 +30,7 @@ Repository permissions increase with each level:
 * <repository>-maintainers: Maintain
 * <repository>-admins: Admin, only as a documented exception
 
-Every active, non-fork public repository receives a dedicated Maintainers team. After replacement team access is verified, direct repository permissions are removed from organization members so that human access is inherited through teams.
+Every active, non-fork public repository receives a dedicated Maintainers team. After replacement team access is verified, direct repository permissions are removed from organization members so that human access is inherited through teams. Human organization Owner access is limited to active Steering Committee members and approved temporary exceptions.
 
 ## Why
 
@@ -53,6 +53,7 @@ The two Prometheus GitHub organizations have grown organically. Their current te
 1. Reserve Admin access for separately named and justified teams.
 1. Automate maintenance of MAINTAINERS.md files in our GitHub repositories.
 1. Remove direct repository grants from organization members after replacement team access has been verified.
+1. Align human organization Owner access with active Steering Committee membership.
 
 ## Non-Goals
 
@@ -116,7 +117,15 @@ During migration, existing direct grants may remain temporarily to avoid interru
 * Ensure effective access is inherited from members, a repository Maintainers team, or an explicitly approved Admins team.
 * Use a team for every future human access grant, including exceptional access.
 
-This policy does not alter the inherent organization-wide authority of GitHub organization owners. Bot, service-account, and outside-collaborator access is not converted automatically and should be reviewed separately.
+Organization Owner access is governed separately below. Bot, service-account, and outside-collaborator access is not converted automatically and should be reviewed separately.
+
+### Organization Owner access
+
+Every active member of the Prometheus Steering Committee, as defined by `prometheus/governance`, must have GitHub Owner access to both the `prometheus` and `prometheus-community` organizations.
+
+No other human organization member may hold Owner access except as a temporary exception approved by the Steering Committee. The approval and reason must be documented, and the exception must include an expiration or review condition.
+
+When Owner access is revoked from an organization member, the person remains an organization member and retains legitimate repository access through the teams defined by this proposal. Before revoking Owner access, verify that the person's replacement team access is correct.
 
 ### Repository ownership and `MAINTAINERS.MD`
 
@@ -245,6 +254,8 @@ The repository still receives a dedicated prometheus-maintainers team, and human
 1. Compare current access with each repository's MAINTAINERS.md.
 1. Resolve the 21 repositories without a clear maintainer record through Steering Committee validation or appointment, or record them as unmaintained when no maintainers can be identified.
 1. Identify exceptional Admin and non-human access that must remain separate.
+1. Audit human Owner access in both organizations against the active Steering Committee roster.
+1. Identify temporary Owner exceptions and confirm that their approval, reason, and expiration or review condition are documented.
 
 #### Phase 2: Establish the hierarchy
 
@@ -253,6 +264,7 @@ The repository still receives a dedicated prometheus-maintainers team, and human
 1. Create or rename a dedicated Maintainers team for every in-scope repository.
 1. Nest every Maintainers team below members.
 1. Nest any approved repository Admins team below its Maintainers team.
+1. Grant Owner access in both organizations to every active Steering Committee member who does not already have it.
 
 #### Phase 3: Apply repository permissions
 
@@ -273,6 +285,7 @@ For one repository at a time:
 
 #### Phase 5: Retire superseded access
 
+1. For each human Owner who is not an active Steering Committee member or an approved temporary exception, verify replacement team access and revoke Owner access while retaining organization membership.
 1. Verify that every organization member's effective access is provided by the correct teams.
 1. Remove direct repository grants from organization members after replacement team access is verified.
 1. Remove duplicate grants from legacy teams only after verification.
