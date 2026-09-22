@@ -92,5 +92,4 @@ The main alternative is to use dots, but that contradicts https://github.com/pro
 
 ## Action Plan
 
-
 This task is depending on native metadata acquisition and storage.
