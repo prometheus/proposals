@@ -66,9 +66,13 @@ In the first example, the `power.status` metadata in the `resource` namespace be
 
 `foo{resource[power.status]="down"}`
 
+`foo{resource[power.status]=~"down|stopped"}`
+
 6. Native metadata can be used to filter with promotion.
 
 `foo{resource[power.status]="down" as power.status}`
+
+`foo{resource[power.status]=~"down|stopped" as power.status}`
 
 7. Native metadata can be promoted with `group_right`, `group_left`, and other keywords that take labels.
 
@@ -88,7 +92,5 @@ The main alternative is to use dots, but that contradicts https://github.com/pro
 
 ## Action Plan
 
-Tasks required to adopt the proposed approach:
 
-* [ ] Task one `<GH issue>`
-* [ ] Task two `<GH issue>` ...
+This task is depending on native metadata acquisition and storage.
