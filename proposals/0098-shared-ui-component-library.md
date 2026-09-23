@@ -48,15 +48,15 @@ The current solution is copy-paste, and it is already failing in ways that will 
 * **No shared visual language.** Components can be copied; design tokens cannot be copied usefully, because there is nothing to copy them from. Prometheus's theme is defined inline in `App.tsx` and sets no brand color, so the UI is Mantine-default blue. The docs site is the only one of the three with both a Prometheus-colored theme and a working color scheme toggle, and nothing connects it to the other two. The two UIs will look meaningfully different even where their components match, and neither looks like prometheus.io.
 * **The toolchains are diverging with nothing pulling them back.** Both UIs are on Mantine 9 and React 19, but almost nothing else agrees:
 
-  |                                    | Alertmanager `ui/mantine-ui` | Prometheus `web/ui`                                          | Docs `prometheus/docs`               |
-  |------------------------------------|------------------------------|--------------------------------------------------------------|--------------------------------------|
-  | Mantine / React                    | 9 / 19                       | 9 / 19                                                       | 8 / 19                               |
-  | Package manager                    | npm, no workspace            | pnpm workspaces                                              | npm, no workspace                    |
-  | Lint / format                      | Biome                        | ESLint 9 + Prettier                                          | ESLint 9 (`eslint-config-next`)      |
-  | Bundler / TypeScript / test runner | Vite 8 / 7 / Vitest 4        | Vite 6 / 5.9 / Vitest 3                                      | Next 16 / 5 / none                   |
-  | Theme                              | `src/theme.ts`, empty stub   | inline `createTheme` in `App.tsx`                            | `src/theme.ts`, brand palette        |
-  | Dark mode                          | not implemented              | fully implemented                                            | fully implemented                    |
-  | Supply-chain `.npmrc`              | none                         | `allow-git=none`, `ignore-scripts=true`, `min-release-age=3` | none                                 |
+  |                                    | Alertmanager `ui/mantine-ui` | Prometheus `web/ui`                                          | Docs `prometheus/docs`          |
+  | ---------------------------------- | ---------------------------- | ------------------------------------------------------------ | ------------------------------- |
+  | Mantine / React                    | 9 / 19                       | 9 / 19                                                       | 8 / 19                          |
+  | Package manager                    | npm, no workspace            | pnpm workspaces                                              | npm, no workspace               |
+  | Lint / format                      | Biome                        | ESLint 9 + Prettier                                          | ESLint 9 (`eslint-config-next`) |
+  | Bundler / TypeScript / test runner | Vite 8 / 7 / Vitest 4        | Vite 6 / 5.9 / Vitest 3                                      | Next 16 / 5 / none              |
+  | Theme                              | `src/theme.ts`, empty stub   | inline `createTheme` in `App.tsx`                            | `src/theme.ts`, brand palette   |
+  | Dark mode                          | not implemented              | fully implemented                                            | fully implemented               |
+  | Supply-chain `.npmrc`              | none                         | `allow-git=none`, `ignore-scripts=true`, `min-release-age=3` | none                            |
 
   The docs column is context, not a convergence target — it is a statically exported Next.js site rather than a Vite SPA, and its tooling should match Next's conventions. Its Mantine 8 pin is an upgrade for the docs repo to make before it adopts the token layer, not a constraint on the library.
 
