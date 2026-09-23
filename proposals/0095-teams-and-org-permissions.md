@@ -63,7 +63,7 @@ The two Prometheus GitHub organizations have grown organically. Their current te
 3. Assign individual people to teams.
 4. Infer maintainership where no clear maintainer record exists.
 5. Reorganize bot, CI service-account, security-response, or other non-human access.
-6. Change the internal ownership model or existing CODEOWNERS file in prometheus/prometheus.
+6. Change the internal ownership models or existing CODEOWNERS files in prometheus/prometheus or prometheus-community/helm-charts.
 7. Define a place to organize contributor roles
 
 ## How
@@ -130,7 +130,7 @@ When Owner access is revoked from an organization member, the person remains an 
 
 ### Repository ownership and `MAINTAINERS.MD`
 
-Every in-scope repository has one Maintainers team with Maintain access. Except for prometheus/prometheus, that team becomes the repository-wide fallback owner.
+Every in-scope repository has one Maintainers team with Maintain access. Except for `prometheus/prometheus` and `prometheus-community/helm-charts`, that team becomes the repository-wide fallback owner.
 
 Automation will maintain MAINTAINERS.md files. When a GitHub user is added to or removed from a repository maintainer or admin team, this automation will open a Pull Request to reflect the change.
 
@@ -144,16 +144,17 @@ No repository should be migrated by guessing its maintainers. For each of the 21
 
 If the Steering Committee cannot identify maintainers for a repository, record it as unmaintained. Its MAINTAINERS.md file must not name a Maintainers team; instead, it must contain a comment explaining that the repository is unmaintained and looking for contributors.
 
-### Special handling for `prometheus/prometheus`
+### Special handling for `prometheus/prometheus` and `prometheus-community/helm-charts`
 
-The prometheus/prometheus repository is organized around multiple components and areas of ownership. This proposal does not attempt to replace or simplify that structure.
+The prometheus/prometheus repository is organized around multiple components and areas of ownership. Similarly, prometheus-community/helm-charts is organized around independently maintained charts, with largely distinct maintainer sets represented by path-specific CODEOWNERS rules. This proposal does not attempt to replace or simplify either structure.
 
-The repository still receives a dedicated prometheus-maintainers team, and human repository permissions should still be inherited through teams. However:
+Both repositories still receive their dedicated repository Maintainers teams, and human repository permissions should still be inherited through teams. However:
 
-* Keep its existing MAINTANIERS.md file unchanged during this migration.
-* Do not add prometheus-maintainers as a repository-wide CODEOWNER through this proposal.
-* Delegate future changes to its ownership and MAINTAINERS.md model to the repository's existing decision-making process.
-* Address the relationship between its repository team and component owners in a separate future proposal.
+* Keep their existing MAINTAINERS.md and CODEOWNERS files unchanged during this migration.
+* Do not add prometheus-maintainers or helm-charts-maintainers as repository-wide CODEOWNERS through this proposal.
+* Preserve the existing path-specific ownership rules and approval workflows.
+* Delegate future changes to these ownership and MAINTAINERS.md models to each repository's existing decision-making process.
+* Address the relationship between the repository teams and component or chart owners in a separate future proposal.
 
 ### Inventory
 
@@ -277,11 +278,11 @@ For one repository at a time:
 
 #### Phase 4: Standardize ownership
 
-1. For every repository except prometheus/prometheus, add the Maintainers team as the repository-wide CODEOWNER and default reviewer.
+1. For every repository except prometheus/prometheus and prometheus-community/helm-charts, add the Maintainers team as the repository-wide CODEOWNER and default reviewer.
 2. Preserve valid path-specific ownership rules.
 3. Confirm that MAINTAINERS.md resolves to a visible team with sufficient explicit repository access.
 4. Reconcile team membership with MAINTAINERS.md.
-5. Leave the existing prometheus/prometheus MAINTAINERS.md file unchanged.
+5. Leave the existing prometheus/prometheus and prometheus-community/helm-charts MAINTAINERS.md and CODEOWNERS files unchanged.
 
 #### Phase 5: Retire superseded access
 
@@ -289,7 +290,7 @@ For one repository at a time:
 2. Verify that every organization member's effective access is provided by the correct teams.
 3. Remove direct repository grants from organization members after replacement team access is verified.
 4. Remove duplicate grants from legacy teams only after verification.
-5. Remove each repository's MAINTAINERS.md after its Maintainers team has been populated and validated.
+5. Remove each repository's MAINTAINERS.md after its Maintainers team has been populated and validated, except for the component-oriented repositories identified above.
 6. Retain separately scoped CI, bot, security, and service-account access.
 7. Rename or retire empty and superseded human-access teams.
 8. Record justified exceptions to the naming and permission model.
