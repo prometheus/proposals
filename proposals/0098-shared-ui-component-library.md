@@ -49,7 +49,7 @@ The current solution is copy-paste, and it is already failing in ways that will 
 * **The toolchains are diverging with nothing pulling them back.** Both UIs are on Mantine 9 and React 19, but almost nothing else agrees:
 
   |                                    | Alertmanager `ui/mantine-ui` | Prometheus `web/ui`                                          | Docs `prometheus/docs`          |
-  | ---------------------------------- | ---------------------------- | ------------------------------------------------------------ | ------------------------------- |
+  |------------------------------------|------------------------------|--------------------------------------------------------------|---------------------------------|
   | Mantine / React                    | 9 / 19                       | 9 / 19                                                       | 8 / 19                          |
   | Package manager                    | npm, no workspace            | pnpm workspaces                                              | npm, no workspace               |
   | Lint / format                      | Biome                        | ESLint 9 + Prettier                                          | ESLint 9 (`eslint-config-next`) |
