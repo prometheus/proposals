@@ -55,7 +55,7 @@ Existing PromQL queries do not return native metadata unless they are explicitly
 
 In PromQL, native metadata are typed key-value pairs. Any hierarchy that might exist in the backend is split by dots.
 
-3. Native metadata are referenced as `namespace[cpu.foo]` or `namespace["super+name"]` (quoting follows the rules for label and metric names).
+3. Native metadata are referenced as `~namespace.cpu.foo` or `~namespace."super+name"` (quoting follows the rules for label and metric names). An optional `~` can be added to prevent metadata promotion to the output. `~~namespace.cpu.foo`
 
 4. Native metadata can be used to filter metrics when prefixed with `~`, in which case they are promoted as labels.
 
