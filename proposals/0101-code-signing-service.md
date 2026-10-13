@@ -1,4 +1,4 @@
-## Opt-in code-signing service for Prometheus ecosystem projects
+## Opt-in Windows Authenticode code-signing service for Prometheus ecosystem projects
 
 * **Owners:**
   * [@jkroepke](https://github.com/jkroepke)
@@ -7,13 +7,15 @@
 
 * **Related Issues and PRs:**
   * [windows_exporter README: binaries signed with a self-signed certificate](https://github.com/prometheus-community/windows_exporter/blob/main/README.md)
+  * [CNCF service desk request CNCFSD-2729](https://cncfservicedesk.atlassian.net/servicedesk/customer/portal/1/CNCFSD-2729)
+  * [Discussion in the CNCF TAG Security and Compliance Slack channel](https://cloud-native.slack.com/archives/C08JZ9YLAA3/p1791834990035849)
 
 * **Other docs or links:**
   * [Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/)
   * [Azure Artifact Signing pricing](https://azure.microsoft.com/pricing/details/artifact-signing/)
   * [SignPath Foundation terms](https://signpath.org/terms)
 
-> TL;DR: This proposal asks the Prometheus team to obtain shared access to a publicly trusted code-signing service (for example Azure Artifact Signing, provisioned through the CNCF / Linux Foundation) and to make it available to repositories in the `prometheus` and `prometheus-community` GitHub organizations. Using it is **opt-in per repository**: the maintainers of each project decide on their own whether and what they sign. Only release builds are signed, never snapshots or pull request builds. This proposal deliberately does **not** decide whether Prometheus binaries should be signed.
+> TL;DR: This proposal asks the Prometheus team to obtain shared access to a publicly trusted **Windows Authenticode** code-signing service (for example Azure Artifact Signing, provisioned through the CNCF / Linux Foundation) for Windows executables (`.exe`) and installers (`.msi`), and to make it available to repositories in the `prometheus` and `prometheus-community` GitHub organizations. Using it is **opt-in per repository**: the maintainers of each project decide on their own whether and what they sign. Only release builds are signed, never snapshots or pull request builds. The proposal depends on the CNCF / Linux Foundation providing the account; without it, there is nothing to act on. Linux binaries, macOS binaries, and container images are out of scope. This proposal deliberately does **not** decide whether Prometheus binaries should be signed.
 
 ## Why
 
@@ -30,7 +32,7 @@ Today a project that wants publicly trusted signatures has no path inside the Pr
 
 ## Goals
 
-* Give interested projects in `prometheus` and `prometheus-community` access to a publicly trusted code-signing service.
+* Give interested projects in `prometheus` and `prometheus-community` access to a publicly trusted Windows Authenticode code-signing service for their Windows release artifacts (`.exe` binaries and `.msi` installers).
 * Keep the decision to sign with each project's maintainers. Projects that do not want signing are not affected at all.
 * Sign **release builds only**. Snapshot, nightly, `main` branch, and pull request builds stay unsigned, so a signature always identifies an artifact the maintainers deliberately released.
 * No long-lived signing keys in GitHub secrets: signing is authorized through GitHub Actions OIDC, scoped per repository.
@@ -43,11 +45,19 @@ Maintainers of Prometheus ecosystem projects that publish binaries, the Promethe
 ## Non-Goals
 
 * Deciding that Prometheus or any other project **must** sign its binaries. There is no ecosystem-wide signing policy in this proposal.
+* Signing Linux or other non-Windows binaries. Linux has no OS-level equivalent of Authenticode, and the service only produces Authenticode signatures.
+* Setting up a signing account outside of the CNCF / Linux Foundation, for example paid by individual maintainers or by a single company.
 * Changing the release process of projects that do not opt in, including `promu` defaults.
 * Container image signing or artifact attestations (cosign / Sigstore, SLSA provenance). These solve a different problem and can be discussed separately.
 * Apple code signing and notarization. The same governance model could be reused later, but it is out of scope here.
 
 ## How
+
+### Precondition: an account provided by the CNCF / Linux Foundation
+
+This proposal only becomes actionable if the CNCF / Linux Foundation can provide (or grant access to) an account for a publicly trusted signing service. Accepting the proposal means "the Prometheus ecosystem wants to use such a service under the governance below, once it is available", not that the Prometheus team procures one on its own.
+
+The CNCF already operates a Microsoft-sponsored Azure tenant, which is mainly used by the Kubernetes project. An additional Azure subscription with an Artifact Signing account in that tenant is the expected path. The request is tracked in [CNCFSD-2729](https://cncfservicedesk.atlassian.net/servicedesk/customer/portal/1/CNCFSD-2729). If the CNCF cannot provide it, this proposal is put on hold; see [Alternatives](#alternatives) for fallbacks that would need a new decision.
 
 ### Governance
 
@@ -61,11 +71,11 @@ This keeps the ecosystem-level decision small ("the service exists, here is how 
 
 The preferred option is **Azure Artifact Signing** (formerly Trusted Signing):
 
-* The account, the identity validation, and the billing belong to the **Linux Foundation / CNCF**, which is an eligible organization for Public Trust certificates. The certificate subject would be the validated legal name of that organization.
+* The account, the identity validation, and the billing belong to the **Linux Foundation / CNCF** (as an Azure subscription in the existing CNCF Azure tenant), which is an eligible organization for Public Trust certificates. The certificate subject would be the validated legal name of that organization.
 * Cost is low: the Basic tier is about USD 10 per month and includes 5,000 signatures. Because only releases are signed, a project such as windows_exporter needs four signatures per release (two executables and two MSIs), so even many opted-in projects together stay far below the quota.
 * Certificates are short-lived (rotated daily) and keys never leave Microsoft-managed HSMs. There is no PFX file to leak.
 * SmartScreen reputation is tied to the validated publisher identity instead of a single certificate, so it carries over across releases and projects.
-* It signs everything `signtool` can sign (PE files, MSI, MSIX, scripts) and has an official GitHub Action.
+* It produces Windows Authenticode signatures for everything `signtool` can sign (PE files such as `.exe` and `.dll`, MSI, MSIX, PowerShell scripts) and has an official GitHub Action. It does not sign Linux or macOS binaries.
 
 Access control per repository:
 
@@ -106,7 +116,7 @@ windows_exporter would be the first adopter, replacing its self-signed certifica
 
 ### Open questions
 
-* Does the CNCF / Linux Foundation already hold, or want to host, an Artifact Signing account (or another publicly trusted signing service) for its projects? This proposal would be the basis for a CNCF service desk request.
+* Can the CNCF / Linux Foundation provide an Artifact Signing account in its existing Azure tenant ([CNCFSD-2729](https://cncfservicedesk.atlassian.net/servicedesk/customer/portal/1/CNCFSD-2729))? This is the precondition for everything else.
 * Which publisher name appears on the certificate (for example "The Linux Foundation" or "Cloud Native Computing Foundation"), and is that acceptable to the projects?
 * One shared certificate profile or one per project? A shared profile builds reputation faster; separate profiles isolate a compromised or misbehaving project.
 * Who in the Prometheus team administers the account and grants access?
@@ -120,8 +130,9 @@ windows_exporter would be the first adopter, replacing its self-signed certifica
 
 ## Action Plan
 
+* [x] Open a CNCF service desk request for an Artifact Signing account owned by the CNCF / Linux Foundation ([CNCFSD-2729](https://cncfservicedesk.atlassian.net/servicedesk/customer/portal/1/CNCFSD-2729)).
+* [ ] Get confirmation from the CNCF / Linux Foundation that the account can be provided. Until then, this proposal is not actionable.
 * [ ] Agree on this proposal and on the admins of the signing service.
-* [ ] Open a CNCF service desk request for an Artifact Signing account (or equivalent) owned by the CNCF / Linux Foundation.
 * [ ] Create the certificate profile and the Entra application with federated credentials for the first adopter.
 * [ ] Document how a project opts in (issue template plus workflow snippet).
 * [ ] Migrate windows_exporter from its self-signed certificate and limit its signing to release builds.
