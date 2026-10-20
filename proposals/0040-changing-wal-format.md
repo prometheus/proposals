@@ -7,12 +7,14 @@
   * [@krajorama](https://github.com/krajorama)
   * [@bboreham](https://github.com/bboreham)
   * [@carrieedwards](https://github.com/carrieedwards)
+  * [@machine424](https://github.com/machine424)
 
-* **Implementation Status:** Not implemented [prototype](https://github.com/prometheus/prometheus/pull/15565)
+* **Implementation Status:** Partially implemented (adopted in [PROM-60](0060-st-storage.md))
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/prometheus/issues/15200
   * https://github.com/prometheus/prometheus/issues/14730
+  * [PROM-60: Native TSDB Support for Start Timestamp (ST)](0060-st-storage.md)
   * [WAL changes for NHCB](https://docs.google.com/document/d/1oYmvK7rrRFNrkM4Hrze8OsaK4z0GGj4pXl6VT6S_ef0/edit?tab=t.0#heading=h.545ogb8wlxze)
   * [Segment versioning prototype](https://github.com/prometheus/prometheus/pull/15565)
 
@@ -21,9 +23,9 @@
   * https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md
   * [Ganesh's blog](https://ganeshvernekar.com/blog/prometheus-tsdb-the-head-block/)
 
-> TL;DR: We need to break forward compatibility of the WAL format. This document proposes a data migration strategy for WAL and a lightweight ways we can be more transparent about those in each Prometheus release.
+> TL;DR: We need to break forward compatibility of the WAL format. This document proposes a data migration strategy for WAL and lightweight ways to be transparent about compatibility in each Prometheus release.
 >
-> We propose to version WAL by segments; with the version in the filename e.g.`00000002-v2`. For the migration, we propose the *LTS-enhanced [Two-Fold Migration Strategy](#how-two-fold-migration-strategy) with a `--storage.<...>.wal-version` flag for each Prometheus mode*.
+> Instead of versioning WAL segments or directories, we propose introducing new WAL record types (e.g. `SamplesV2`) gated behind feature flags (`--enable-feature=<feature>`) for writing, while using the *LTS-enhanced [Two-Fold Migration Strategy](#how-two-fold-migration-strategy)* before enabling new record writes by default.
 
 ## Glossary
 
@@ -93,48 +95,70 @@ No docs or formal strategy was developed, but Prometheus generally follow the ["
 
 ## How
 
-We recommend the [Two-Fold Migration Strategy](#how-two-fold-migration-strategy) with the two important additions:
+We recommend the [Two-Fold Migration Strategy](#how-two-fold-migration-strategy) using new WAL record types and existing feature flags (`--enable-feature`), with two key rules:
 
-* A new flag that tells Prometheus what WAL version to write.
-* There can be multiple "forward compatible" versions, but the official minimum is **the previous [Long-Term-Support (LTS) release](https://prometheus.io/docs/introduction/release-cycle/)**. The forward compatibility can be optionally backported to the LTS, instead of waiting up to a 1y, depending on the risk.
+* **New record types behind feature flags**: Unless we need to change the segment or record header format itself, the existing WAL dispatch table (`record.Type` byte mapped to its encoder/decoder) is sufficient to evolve WAL records. When changing how existing data is encoded in the WAL (for example, `SamplesV2` in [PROM-60](0060-st-storage.md)), Prometheus unconditionally supports reading both the old and new record types as soon as the new record type is introduced, while writing the new record type is initially opt-in via a `--enable-feature=<name>` flag.
+* **LTS fallback requirement**: There can be multiple forward-compatible releases, but the official minimum before enabling writes of the new WAL record type by default is **the previous [Long-Term-Support (LTS) release](https://prometheus.io/docs/introduction/release-cycle/)**.
 
-An example flow could look as follows:
+An example flow for rolling out a new WAL record format (such as `SamplesV2` for `st-storage`) looks as follows:
 
-1. Prometheus LTS 3.1 only supports WAL v1.
-2. Prometheus 3.3 adds WAL v2.
-3. We wait unit next LTS so e.g. 3.24.
-4. Prometheus 3.25 can now switch to WAL v2.
-5. Prometheus 4.0 can remove WAL v1 support.
+1. Prometheus LTS 3.0 only supports `Samples` (v1) records.
+2. Prometheus 3.3 adds read and write support for `SamplesV2` records. Reading `SamplesV2` is always enabled; writing `SamplesV2` requires `--enable-feature=st-storage`.
+3. We wait until the next LTS release (for example, Prometheus 3.5 LTS), which includes `SamplesV2` read support.
+4. A subsequent release after that LTS (once the feature is stable) can switch to writing `SamplesV2` by default, because users can now safely roll back to the previous LTS release (3.5 LTS) without losing samples during WAL replay.
+5. Prometheus 4.0 can remove legacy record support if deprecated.
 
-In terms of flag, we propose to add an integer `--storage.<tsdb|agent>.wal-version` flag, with the default to `1`. The flag tells Prometheus to write a particular WAL ve for both WAL and WBL. Similar to other flags like compression it has `stateful` consequence: once new version is used, users will be able to revert only to certain Prometheus versions. Help of this flag will explain clearly what's possible and what Prometheus version you will be able to revert to. We will change the default for this flag to a new version ONLY when (at least) one previous LTS Prometheus version can read that version (while writing the old one). The initial version would be `1`. Rationales for flag are [explained later](#how-why-flag).
+Similar to other storage flags (like compression), enabling a WAL-affecting feature flag before the next LTS has a stateful consequence: once the new record type is written to disk, rolling back to a Prometheus version that predates the new record decoder will skip those records during replay. We propose to document this clearly in:
 
-The proposed flag definitions:
+* The [feature flags documentation](https://prometheus.io/docs/prometheus/latest/feature_flags/), explicitly listing the minimum Prometheus version (and LTS version) that can read the WAL when the flag is enabled, and what happens when the flag is disabled or rolled back.
+* Release notes whenever a new WAL record type is added or enabled by default.
+* `tsdb/docs` for developers.
 
-```go
-	serverOnlyFlag(a, "storage.tsdb.wal-version", fmt.Sprintf("Version for the new WAL segments. Supported versions: %v. Version 1 is supported since v2.40+", wlog.ReleasedSupportedSegmentVersions())).
-		Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.tsdb.WALSegmentVersion)
+See the [alternatives](#alternatives) for other ideas, including explicit WAL segment filename versioning if we ever need to change the segment envelope itself.
 
-	agentOnlyFlag(a, "storage.agent.wal-version", fmt.Sprintf("Version for the new WAL segments. Supported versions: %v. Version 1 is supported since v2.40+", wlog.ReleasedSupportedSegmentVersions())).
-		Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.agent.WALSegmentVersion)
-```
+### How: Why Feature Flags and New Record Types?
 
-To achieve WAL versioning we also propose to start versioning the WAL. This is necessary to communicate a breaking change and to tell Prometheus what WAL format to write in.
+Using new record types with `--enable-feature` flags instead of introducing a separate `--storage.<tsdb|agent>.wal-version` flag and segment versioning has several benefits:
 
-Given the WAL [format](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md) is technically a "WAL Segment format" (WAL consists of list of segments), we propose to version WAL per segment. We propose capturing the version in the filename. This changes the segment filename format as follows:
+* Allows users to opt in to new features sooner while keeping the default path safe for rollbacks to the previous LTS.
+* Avoids introducing a separate numeric WAL segment version (`v2`, `v3`) that does not tell users which specific feature is active, and avoids forcing developers working on independent WAL changes to synchronize on a single monotonic segment version number.
+* Gives developers early feedback and makes end-to-end testing of both old and new formats straightforward.
+
+### How: Two-Fold Migration Strategy
+
+Given the following example:
+
+![twofold.png](../assets/2024-11-25_changing_wal_format/twofold.png)
+
+1. We release Prometheus X+1 version that supports reading both Y and Y+1 data, but still writes Y by default (writing Y+1 is opt-in behind a feature flag).
+2. After at least one LTS release includes Y+1 read support, we release a Prometheus version that supports reading both Y and Y+1 data and writes new data as Y+1 by default.
+
+While the diagram shows a single intermediate release with forward compatibility (where Y and Y+1 are supported for reading, and Y is written by default), in practice multiple minor releases and at least one LTS release will sit between step 1 and step 2.
+
+Technically we keep read support for the old record format until at least the next major release.
+
+Pros:
+* Users have a durable rollout and rollback path to the previous LTS release without needing to change flags when rolling back one LTS version.
+* Developers have clear rules on how to ship WAL changes that would otherwise break rollbacks.
+* Allows rolling back from X+2 to X by stepping through X+1 (or disabling the feature flag) and waiting for the WAL segments to cycle (~2h).
+
+Cons:
+* Users who downgrade across multiple LTS versions without checking release notes can still be caught by surprise.
+  * **Mitigation**: Clear documentation in feature flag docs and release notes, plus guaranteeing compatibility with at least the previous LTS release.
+* Waiting for an LTS release before enabling by default takes time.
+  * **Mitigation**: Users can opt in immediately via `--enable-feature`.
+
+## Alternatives
+
+### Alternative: Version WAL per segment in the filename (`-v<version>`) and add `--storage.<...>.wal-version` flag
+
+Given the WAL [format](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md) is a sequence of segment files, we considered versioning the WAL per segment in the filename alongside an integer `--storage.<tsdb|agent>.wal-version` flag:
 
 ```
 <8 digit sequence> => <8 digit sequence>[-v<version>]
 ```
 
-For example, following filenames would be now valid: `00000010`, `00000010-v1`, `00000010-v2`, `00000010-v24`. The filename based segment versioning has the following benefits:
-
-* We can cleanly mix different versions of segments in Prometheus.
-* It's relatively simple to implement (lots of LOC changed though, see [the prototype](https://github.com/prometheus/prometheus/pull/15565)).
-* Current Prometheus code [will, generally, naturally skip segments with unknown version in the Prometheus versions prior to this change](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L931). In the worse places we will see ["not a valid filename" errors](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L163).
-* Quick glance over `wal` or `wbl` directory tells if the migration to a next version happened or not.
-* We can extend the filename format in future segment version, cleanly e.g. another suffix for sharding.
-
-The mixed situation could look as follows:
+For example, valid segment filenames would be `00000010`, `00000010-v1`, `00000010-v2`. A mixed directory during upgrade/downgrade would look like:
 
 ```
 wal/ 
@@ -151,74 +175,16 @@ wal/
     └── 00000000
 ```
 
-We propose to document that behaviour in:
-
-* dedicated guide for users
-* flag help
-* tsdb/docs for devs
-
-Finally, we propose that all Prometheus releases will contain the content similar to the following one:
-
-| Data        | Supported | Writes |
-|-------------|-----------|--------|
-| WAL         | v1, v2    | v1     |
-| Block index | v2        | v2     |
-
-```
-The last revertable Prometheus version: v3.0.0 
-```
-
-See the [alternatives](#alternatives) for other ideas.
-
-### How: Why Flag?
-
-There are two reasons for the flag:
-
-* Allows users to get the new features sooner and skip the safety mechanism.
-* It simplifies the compatibility guarantees as the flag default mechanism guides users and devs in the rollout and revert procedures e.g:
-  * when we switch to writing v2, it's clearly visible in a flag default value.
-  * when we at some point remove support of WAL v1, it's clear when it happens (`v1` flag value is removed).
-* It allows users to set Prometheus to write the old format if needed (de-risking further).
-* Gives devs quicker feedback, makes testing easier, and motivates further contributions.
-
-### How: Two-Fold Migration Strategy
-
-Given the following example:
-
-![twofold.png](../assets/2024-11-25_changing_wal_format/twofold.png)
-
-1. We release Prometheus X+1 version that supports both Y and Y+1 data but still writes Y.
-2. We release Prometheus X+2 version that supports both Y and Y+1 data, but now it writes new data as Y+1.
-
-While this example shows only one version where of forward compatibility (when Y and Y+1 are supported, but Y is still written), in practice there could be more "forward compatible releases" within this strategy.
-
-Technically we have to keep old format read (and write) support until the next major release.
-
 Pros:
-* Users have a durable rollout path back and forth.
-* Dev has clarity on how to develop "breaking revert" changes.
-* In theory, it allows revert to X from X+2, by going through X+1 and ensuring all data was migrated (eventually) to Y version. In practice however that eventuality is long, or hard to discover.
+* Can cleanly mix different segment versions on disk, and a quick `ls` of the `wal` or `wbl` directory shows whether new segments are being written.
+* Useful if we ever need to change the outer segment framing or page/record header format rather than just adding record types.
+* Current Prometheus code [generally skips segments with non-numeric suffixes](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L931) or fails with ["not a valid filename" errors](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L163).
 
 Cons:
-* It can catch users by surprise.
-  * **Mitigation**: We also plan guide and documentation and support LTS release.
-* It takes time to rollout new changes if you want them fast.
-  * **Mitigation**: We plan to add a flag to opt-in sooner.
-
-## Alternatives
-
-### Alternative: Different separator than `-v`
-
-We might want to use different format than
-
-```
-<8 digit sequence>[-v<version>]
-```
-
-For example, `.` would be perhaps more visually appealing.
-
-Cons:
-* `.` might be confused with the file extension.
+* Most WAL changes only add or update record types, which the existing `record.Type` byte already handles without changing segment filenames.
+* A numeric segment version like `v3` is opaque to users (it does not convey whether it relates to native histograms, start timestamps, or compression) and requires extra coordination when multiple features are developed concurrently.
+* Large surface area in the codebase (~1500 LOC in [the prototype](https://github.com/prometheus/prometheus/pull/15565)).
+* If we use `.` instead of `-v` as the separator, `.` could be confused with a file extension.
 
 ### Alternative: Capture segment version in a segment header
 
@@ -292,33 +258,20 @@ Cons:
 * We already suffer from replay problems, so I propose an eventual rewrite.
 * Rewrite is more risking than read-only WAL (of previous version)
 
-### Alternative: Don't version WAL, don't introduce a flag
+### Alternative: Don't introduce a feature flag for writing new WAL formats
 
 Pro:
-* One issue with a flag is that we lose "automatic" rollout for some users e.g. what if we will have another v3 WAL version, but users sets an explicit `--storage.tsdb.stateful.write-wal-version=v3` option? For those users they will need to make a manual choice and there might be not aware of benefits of a new WAL or do any work to test new WAL for their setup. With raw two-fold strategy format is forced, but also transparent (if without issues).
+* Users get the new format automatically once the two-fold migration completes, without having to know about or manage a feature flag.
 
 Cons:
-* Takes more time for features to be available to users
-* Demotivating for format changes (long feedback loop)
-* Harder to communicate what exactly changed in each Prometheus version or even implement backward compatibility?
-
-### Alternative: Use feature flag instead
-
-Instead of `--storage.tsdb.stateful.write-wal-version` we could add a feature flag like logic.
-
-We could add a flag that is similar to the current feature flags `--enable-feature`, but it has a "stateful" consequence -- once used, users will be able to revert only to certain Prometheus versions. For example a new `--enable-stateful-feature` flag to signal that behaviour.
-
-Pros:
-* No new flags for other storage pieces
-
-Cons:
-* No clear logic for defaulting here
-* No clear ability to force Prometheus to write to wal v1 here unless we add a "feature flag value" for v1, which is odd.
+* Takes much longer for new features to be available to users who want to test or adopt them before the next LTS cycle completes.
+* Slower feedback loop for developers implementing storage changes.
+* No straightforward way for users to opt out of writing the new format if they need to prepare for an emergency downgrade.
 
 ## Action Plan
 
-The tasks to do in order to migrate to the new idea.
+The tasks to do in order to adopt this strategy:
 
-* [ ] Introduce segment based versioning; [pending PR](https://github.com/prometheus/prometheus/pull/15565).
-* [ ] Document WAL proposed recommendation for devs and users.
-* [ ] Ensure each release of Prometheus mention either each version of the data format or what Prometheus version you can roll back it to.
+* [X] Apply the feature-flag and LTS two-fold WAL migration strategy in [PROM-60 (`st-storage`)](0060-st-storage.md).
+* [ ] Document the WAL and TSDB two-fold migration strategy and LTS compatibility guarantees for developers and users.
+* [ ] Ensure stateful feature flags and release notes document the minimum Prometheus version required for lossless WAL rollback.
