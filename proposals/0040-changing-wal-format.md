@@ -99,7 +99,7 @@ No docs or formal strategy was developed, but Prometheus generally follow the ["
 We recommend the [Two-Fold Migration Strategy](#how-two-fold-migration-strategy) using new WAL record types and existing feature flags (`--enable-feature`), with two key rules:
 
 * **New record types behind feature flags**: Unless we need to change the segment or record header format itself, the existing WAL dispatch table (`record.Type` byte mapped to its encoder/decoder) is sufficient to evolve WAL records. When changing how existing data is encoded in the WAL (for example, `SamplesV2` in [PROM-60](0060-st-storage.md)), Prometheus unconditionally supports reading both the old and new record types as soon as the new record type is introduced, while writing the new record type is initially opt-in via a `--enable-feature=<name>` flag.
-* **LTS fallback requirement**: There can be multiple forward-compatible releases, but the official minimum before enabling writes of the new WAL record type by default is **the previous [Long-Term-Support (LTS) release](https://prometheus.io/docs/introduction/release-cycle/)**.
+* **LTS fallback requirement**: There can be multiple forward-compatible releases, but the official minimum before enabling writes of the new WAL record type by default is **the previous [Long-Term-Support (LTS) release](https://prometheus.io/docs/introduction/release-cycle/)**. We do not recommend backporting read support to an already-released LTS just to switch the default write format sooner, because other storage or TSDB changes introduced after that older LTS may still prevent a clean rollback to it.
 
 An example flow for rolling out a new WAL record format (such as `SamplesV2` for `st-storage`) looks as follows:
 
