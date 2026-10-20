@@ -90,7 +90,7 @@ No docs or formal strategy was developed, but Prometheus generally follow the ["
 ## Non-Goals
 
 * TSDB format can, but does not need to follow the same recommendations. We want to change the WAL format now, so prioritizing WAL.
-* Mentioning Write-Before-Log (WBL) or checkpoints, both uses WAL format internally.
+* Mentioning Write-Behind-Log (WBL) or checkpoints separately, as both use the WAL format internally. (WBL is stored as a separate WAL on disk because out-of-order samples are only known to be accepted when written into the out-of-order head chunk after the main WAL write, so WBL records only accepted out-of-order samples for replay into the out-of-order head.)
 * To reduce the scope we don't mention [memory snapshot format](https://github.com/prometheus/prometheus/blob/fd5ea4e0b590d57df1e2ef41d027f2a4f640a46c/tsdb/docs/format/memory_snapshot.md#L1) for now.
 
 ## How
