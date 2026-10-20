@@ -21,8 +21,8 @@
   * https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md
   * [Ganesh's blog](https://ganeshvernekar.com/blog/prometheus-tsdb-the-head-block/)
 
-> TL;DR: We need to break forward compatibility of the WAL format. This document proposes a data migration strategy for WAL and a lightweight ways we can be more transparent about those in each Prometheus release. 
-> 
+> TL;DR: We need to break forward compatibility of the WAL format. This document proposes a data migration strategy for WAL and a lightweight ways we can be more transparent about those in each Prometheus release.
+>
 > We propose to version WAL by segments; with the version in the filename e.g.`00000002-v2`. For the migration, we propose the *LTS-enhanced [Two-Fold Migration Strategy](#how-two-fold-migration-strategy) with a `--storage.<...>.wal-version` flag for each Prometheus mode*.
 
 ## Glossary
@@ -35,7 +35,7 @@ For this document, I use the following wording:
 
 In this document, data "compatibility" means both:
 
-* Prometheus won't crash during compatible rollout or reverts. 
+* Prometheus won't crash during compatible rollout or reverts.
 * No data is lost during compatible rollouts or reverts.
 
 ## Why
@@ -51,7 +51,7 @@ The [current WAL data](https://github.com/prometheus/prometheus/blob/975d5d7357a
 * [metric type in metadata record](https://github.com/prometheus/prometheus/blob/e410a215fbe89b67f0e8edef9de25ede503ea4e0/tsdb/record/record.go#L111)
 * [metadata fields are arbitrary labels in metadata record](https://github.com/prometheus/prometheus/blob/e410a215fbe89b67f0e8edef9de25ede503ea4e0/tsdb/record/record.go#L608).
 
-Historically, we didn't hit major problems because we were only adding new semantic data (e.g. exemplars, metadata, new native histograms) as new records. 
+Historically, we didn't hit major problems because we were only adding new semantic data (e.g. exemplars, metadata, new native histograms) as new records.
 However, these days, we need to add features to existing data (e.g. custom buckets that will replace classic histograms, cleanup of histogram records or created timestamps to samples). Even if we create a new record for those and use it for new samples, any rollback will **lose that information as they appear unknown in the old version**.
 
 For the TSDB changes (see the [context](#context-tsdb-format-changes), tribally, we use an undocumented ["2-fold" migration strategy](#how-two-fold-migration-strategy). However, WAL data is typically significantly smaller, around ~30m worth of samples (time to gather 120 samples for a chunk, for 15s intervals), plus 2h series records in WAL.
@@ -112,14 +112,14 @@ The proposed flag definitions:
 
 ```go
 	serverOnlyFlag(a, "storage.tsdb.wal-version", fmt.Sprintf("Version for the new WAL segments. Supported versions: %v. Version 1 is supported since v2.40+", wlog.ReleasedSupportedSegmentVersions())).
-Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.tsdb.WALSegmentVersion)
+		Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.tsdb.WALSegmentVersion)
 
-    agentOnlyFlag(a, "storage.agent.wal-version", fmt.Sprintf("Version for the new WAL segments. Supported versions: %v. Version 1 is supported since v2.40+", wlog.ReleasedSupportedSegmentVersions())).
-Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.agent.WALSegmentVersion)
+	agentOnlyFlag(a, "storage.agent.wal-version", fmt.Sprintf("Version for the new WAL segments. Supported versions: %v. Version 1 is supported since v2.40+", wlog.ReleasedSupportedSegmentVersions())).
+		Default(fmt.Sprintf("%v", wlog.DefaultSegmentVersion)).Uint32Var(&cfg.agent.WALSegmentVersion)
 ```
- 
+
 To achieve WAL versioning we also propose to start versioning the WAL. This is necessary to communicate a breaking change and to tell Prometheus what WAL format to write in.
- 
+
 Given the WAL [format](https://github.com/prometheus/prometheus/blob/main/tsdb/docs/format/wal.md) is technically a "WAL Segment format" (WAL consists of list of segments), we propose to version WAL per segment. We propose capturing the version in the filename. This changes the segment filename format as follows:
 
 ```
@@ -176,7 +176,7 @@ There are two reasons for the flag:
 
 * Allows users to get the new features sooner and skip the safety mechanism.
 * It simplifies the compatibility guarantees as the flag default mechanism guides users and devs in the rollout and revert procedures e.g:
-  * when we switch to writing v2, it's clearly visible in a flag default value. 
+  * when we switch to writing v2, it's clearly visible in a flag default value.
   * when we at some point remove support of WAL v1, it's clear when it happens (`v1` flag value is removed).
 * It allows users to set Prometheus to write the old format if needed (de-risking further).
 * Gives devs quicker feedback, makes testing easier, and motivates further contributions.
@@ -215,7 +215,7 @@ We might want to use different format than
 <8 digit sequence>[-v<version>]
 ```
 
-For example, `.` would be perhaps more visually appealing. 
+For example, `.` would be perhaps more visually appealing.
 
 Cons:
 * `.` might be confused with the file extension.
