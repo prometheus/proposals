@@ -56,7 +56,7 @@ The [current WAL data](https://github.com/prometheus/prometheus/blob/975d5d7357a
 Historically, we didn't hit major problems because we were only adding new semantic data (e.g. exemplars, metadata, new native histograms) as separate, additive records.
 However, these days, we need to add fields to existing sample data (e.g. custom buckets that replace classic histograms, cleanup of histogram records, or start timestamps on samples). If we write samples using a new record type (such as `SamplesV2`) and immediately roll back to an older Prometheus version that does not yet know how to decode that record type, the older version will treat the entire record as unknown and **lose the whole sample** (not just the newly added field). Avoiding this requires ensuring the target rollback version already knows how to read the new record type before enabling writes by default.
 
-For the TSDB changes (see the [context](#context-tsdb-format-changes), tribally, we use an undocumented ["2-fold" migration strategy](#how-two-fold-migration-strategy). However, WAL data is typically significantly smaller, around ~30m worth of samples (time to gather 120 samples for a chunk, for 15s intervals), plus 2h series records in WAL.
+For the TSDB changes (see the [context](#context-tsdb-format-changes)), tribally, we use an undocumented ["2-fold" migration strategy](#how-two-fold-migration-strategy). Compared to full TSDB retention, WAL data on disk spans at most ~3h of samples right before head compaction (plus 2h of series records), and when memory-mapped head chunks are intact, only the last ~30m of samples (the open chunk of 120 samples at a 15s scrape interval) comes strictly from the WAL during replay.
 
 ### Pitfalls of the current solution
 
