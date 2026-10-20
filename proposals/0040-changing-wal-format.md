@@ -145,7 +145,7 @@ Pros:
 
 Cons:
 * Users who downgrade across multiple LTS versions without checking release notes can still be caught by surprise.
-  * **Mitigation**: Clear documentation in feature flag docs and release notes, plus guaranteeing compatibility with at least the previous LTS release.
+  * **Mitigation**: Clear documentation in feature flag docs and release notes, guaranteeing compatibility with at least the previous LTS release, and logging a clear warning during WAL replay if unknown record types from a newer Prometheus version are encountered.
 * Waiting for an LTS release before enabling by default takes time.
   * **Mitigation**: Users can opt in immediately via `--enable-feature`.
 
@@ -178,6 +178,7 @@ wal/
 
 Pros:
 * Can cleanly mix different segment versions on disk, and a quick `ls` of the `wal` or `wbl` directory shows whether new segments are being written.
+* Allows a fast static check on startup to verify that the Prometheus binary supports all WAL segment versions present on disk before starting replay.
 * Useful if we ever need to change the outer segment framing or page/record header format rather than just adding record types.
 * Current Prometheus code [generally skips segments with non-numeric suffixes](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L931) or fails with ["not a valid filename" errors](https://github.com/prometheus/prometheus/blob/addaf419efba330c1e8bc7b2c7d59e878b8ac71a/tsdb/wlog/wlog.go#L163).
 
