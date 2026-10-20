@@ -260,6 +260,17 @@ Cons:
 * We already suffer from replay problems, so I propose an eventual rewrite.
 * Rewrite is more risking than read-only WAL (of previous version)
 
+### Alternative: Preserve unknown WAL records or segments across rollbacks for later replay
+
+When an older Prometheus version encounters unknown WAL records (or higher `-vX` segment files) after a rollback, it could move them aside or keep them on disk instead of dropping them during checkpoint/truncation, so that a subsequent roll-forward to a newer Prometheus version could replay and recover them.
+
+Pros:
+* Can recover data even after an unsupported rollback followed by a roll-forward.
+
+Cons:
+* While running the rolled-back version, head compaction continues advancing `minValidTime` and writing TSDB blocks. By the time Prometheus rolls forward again, the preserved records would typically fall into already-compacted time ranges (requiring out-of-order ingestion or block overlapping) and series references (`HeadSeriesRef`) from the old WAL segments may no longer match the active head after checkpoints and garbage collection.
+* Checkpointing and segment truncation would need special logic to carry over unparsed records or skip deleting older segment files without blocking normal WAL cleanup.
+
 ### Alternative: Don't introduce a feature flag for writing new WAL formats
 
 Pro:
