@@ -53,8 +53,6 @@ Prometheus server maintainers, PromQL maintainers, rule authors, and maintainers
 
 ## How
 
-Once the rule manager migrates to `AppenderV2` ([prometheus#17632](https://github.com/prometheus/prometheus/issues/17632)), [`Group.Eval`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/rules/group.go#L598-L604) will append samples using `app.Append(0, s.Metric, 0, s.T, s.F, nil, s.H, storage.AOptions{Metadata: meta})`.
-
 We propose rolling out recording rule metadata in two parts: automatic runtime deduction and optional YAML configuration.
 
 ### 1. Automatic metadata deduction (naive algorithm)
