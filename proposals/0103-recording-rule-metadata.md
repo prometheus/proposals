@@ -31,7 +31,7 @@ As Prometheus evolves toward first-class metadata support through native TSDB me
 ### Pitfalls of the current solution
 
 * Recording rule evaluation only writes sample values and labels, without deducing or storing metric metadata (`type`, `unit`, `help`) for the resulting series.
-* Requiring users to manually annotate thousands of existing recording rules in YAML before getting any `type` metadata in Remote Write 2.0 or `/api/v1/metadata` is impractical.
+* Rule definitions in YAML provide no fields to specify `type`, `unit`, or `help` for a recording rule.
 * When `--enable-feature=type-and-unit-labels` ([PROM-39](./0039-metadata-labels.md)) is enabled, PromQL strips `__type__` and `__unit__` on any operation that drops `__name__` (such as `rate()`, `sum()`, or arithmetic). As a result, most recording rules produce series without `__type__` or `__unit__` labels, while rules that do not drop `__name__` (such as `label_replace()` or plain selectors) silently keep the input series' `__type__` and `__unit__` labels without writing corresponding `metadata.Metadata` records to the WAL.
 
 ## Goals
