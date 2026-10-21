@@ -16,7 +16,7 @@
 * **Other docs or links:**
   * [PROM-39: Metric Family Identity Extension: Type and Unit as Labels](./0039-metadata-labels.md)
 
-> TL;DR: This document proposes storing metric metadata (`type`, `unit`, `help`) for series produced by recording rules. It introduces a naive runtime deduction algorithm (behind a feature flag or configuration option) that infers metadata from evaluated samples and preserved schema labels, paired with optional `type`, `unit`, and `help` fields in recording rule YAML definitions to override or enrich the deduced metadata.
+> TL;DR: This document proposes storing metric metadata (`type`, `unit`, `help`) for series produced by recording rules. It introduces runtime deduction algorithm (behind a feature flag or configuration option) that infers metadata from evaluated samples and preserved schema labels, paired with optional `type`, `unit`, and `help` fields in recording rule YAML definitions to override or enrich the deduced metadata.
 
 ## Why
 
