@@ -39,7 +39,7 @@ As Prometheus evolves toward first-class metadata support through native TSDB me
 Goals and use cases for the solution as proposed in [How](#how):
 
 * Store metric metadata (`type`, `unit`, `help`) for all recording rule series so that WAL metadata records, Remote Write 2.0, `type-and-unit-labels`, and `/api/v1/metadata` (via [prometheus#19563](https://github.com/prometheus/prometheus/pull/19563)) receive consistent metadata.
-* Provide a naive automatic type deduction mechanism that works out of the box for existing recording rules without requiring YAML changes.
+* Provide a runtime metadata deduction mechanism that works out of the box for existing recording rules without requiring YAML changes.
 * Allow users to optionally specify `type`, `unit`, and `help` in recording rule YAML files to document rules and override automatic deduction when needed.
 
 ### Audience
@@ -55,7 +55,7 @@ Prometheus server maintainers, PromQL maintainers, rule authors, and maintainers
 
 We propose rolling out recording rule metadata in two parts: automatic runtime deduction and optional YAML configuration.
 
-### 1. Automatic metadata deduction (naive algorithm)
+### 1. Runtime metadata deduction
 
 Behind a feature flag or configuration setting, Prometheus automatically deduces metadata for every sample `s` produced by a recording rule.
 
@@ -213,11 +213,11 @@ We defer deep AST inference because:
 
 * Without querying TSDB metadata at rule load time, the AST alone does not know the types or units of the input vector selectors.
 * Even `sum(my_counter_total)` is not a monotonic counter when series churn occurs, so inferring `counter` from `sum()` can mislead downstream consumers.
-* The naive runtime check (`s.H == nil` vs `s.H.CounterResetHint`, plus preserved `__type__`/`__unit__` labels) handles float gauges, counter histograms, gauge histograms, and `label_replace` rules with minimal code complexity.
+* Runtime sample inspection (float vs native histogram `CounterResetHint`, plus preserved `__type__`/`__unit__` labels) handles float gauges, counter histograms, gauge histograms, and `label_replace` rules with minimal complexity.
 
 ## Action Plan
 
 * [ ] Pass metadata when appending rule samples to storage ([prometheus#17632](https://github.com/prometheus/prometheus/issues/17632)).
 * [ ] Fix `without` aggregations and alerting rule evaluation so `__type__` and `__unit__` labels are not leaked when `--enable-feature=type-and-unit-labels` is enabled.
-* [ ] Implement naive automatic metadata deduction for recording rules behind a feature flag / config option ([prometheus#20027](https://github.com/prometheus/prometheus/issues/20027)).
+* [ ] Implement runtime metadata deduction for recording rules behind a feature flag / config option ([prometheus#20027](https://github.com/prometheus/prometheus/issues/20027)).
 * [ ] Extend `model/rulefmt` and `promtool` with optional `help`, `type`, and `unit` fields for recording rules ([prometheus#20027](https://github.com/prometheus/prometheus/issues/20027)).
