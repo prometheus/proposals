@@ -25,7 +25,7 @@ Recording rules evaluate PromQL expressions and write the resulting samples back
 As Prometheus evolves toward first-class metadata support through `AppenderV2` ([prometheus#17632](https://github.com/prometheus/prometheus/issues/17632)), native TSDB metadata storage ([prometheus#19563](https://github.com/prometheus/prometheus/pull/19563)), Remote Write 2.0, and type-and-unit labels ([PROM-39](./0039-metadata-labels.md)), leaving recorded series without metadata creates several gaps:
 
 1. Humans and AI tools rely on `/api/v1/metadata` (and UIs such as Grafana's metrics explorer) to discover metrics, understand what a pre-computed recording rule represents, and autocomplete PromQL queries. Recorded series are currently invisible in `/api/v1/metadata`.
-2. Strongly typed backends receiving data via Remote Write 2.0 or OTLP (such as Google Cloud Managed Service for Prometheus) require a valid metric type for every series. Because recording rules emit `METRIC_TYPE_UNSPECIFIED` in Remote Write 2.0, receivers have to fall back to heuristics or reject recorded metrics.
+2. Strongly typed backends receiving data via Remote Write 2.0 require a valid metric type for every series. Because recording rules emit `METRIC_TYPE_UNSPECIFIED` in Remote Write 2.0, receivers have to fall back to heuristics or reject recorded metrics. This is also relevant if we go with the [new RW2`stateless` modes](https://github.com/prometheus/docs/pull/3147)
 3. Type-aware PromQL features (such as warning when `rate()` is applied to a non-counter, or future type-based aggregations) cannot reason about recorded series unless their type is stored.
 
 ### Pitfalls of the current solution
