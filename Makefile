@@ -1,6 +1,7 @@
 include .bingo/Variables.mk
 
-MD_FILES_TO_FORMAT=$(shell find . -name "*.md" | grep -v ".bingo/README.md")
+# Preserve the organization-wide Name <email> @handle format in MAINTAINERS.md.
+MD_FILES_TO_FORMAT=$(shell find . -name "*.md" ! -path "./MAINTAINERS.md" | grep -v ".bingo/README.md")
 
 help: ## Displays help.
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
