@@ -35,17 +35,17 @@ Help strings are inconsistent, some describing counter semantics and some the ev
 * [Required] One machine-readable registry describes every Prometheus-owned metric, in the sense fixed under Scope. The Go code stops being a second source of truth.
 * [Required] No hand-written metric descriptors. Instrumentation code comes from the registry.
 * [Required] Generated documentation, which therefore cannot drift.
-* [Required] A CI check that catches drift between the registry and the binary. Generation runs Weaver in its own Makefile target; `go test` reads the committed resolved JSON and needs neither Weaver nor an OTel Collector installed.
 * [Required] Stability (`development`, `stable`) and structured deprecation as schema fields, so lifecycle changes are reviewable.
+* [Nice to have] A CI check that catches drift between the registry and the binary. How to run it is still open, see Contract testing for the approach this proposal leans towards and Alternatives for the ones it rejects.
 * [Nice to have] A base for multi-language generation and ecosystem tooling built on the same registry.
 
 ### Audience
 
-Prometheus maintainers and contributors. Operators who build dashboards and alerts on these metrics. OTel tools that consume our telemetry.
+Prometheus maintainers and contributors. Operators who build dashboards, alerts, and other artifacts on these metrics. Downstream projects that consume them, such as mixins.
 
 ## Non-Goals
 
-* Changing metric names, labels, or semantics. It changes how metrics are defined, not what they measure.
+* Changing metric names, labels, or semantics. It changes how metrics are defined, not what they measure. Help text is the exception and does change.
 * Adopting the OTel SDK. `client_golang` stays the instrumentation layer.
 * Owning metrics whose descriptors a dependency defines, including `go_*`, `process_*`, and `promhttp_*`, even though we register them.
 * Settling whether `prometheus_build_info` is an exception to that rule. Scope explains the case; until it is decided the metric stays out.
@@ -57,88 +57,93 @@ Prometheus maintainers and contributors. Operators who build dashboards and aler
 
 ### Signal scope
 
-This proposal covers metrics. Traces come next, logs do not.
+This proposal covers metrics, traces will be the next natural addition, logs should be evaluated in the future.
 
 Metrics come first because more things outside Prometheus depend on them: dashboards, alerts, and the mixins in other repositories hardcode these names and cannot check a reference today. Traces then reuse everything here, since Weaver describes spans in the same schema and the per-package layout extends to them unchanged.
 
-Weaver earns its place in the build only once it holds more than one signal, so metrics-only is the first step and this direction is done when traces generate from the same definitions. Logs stay out while their schemas are still moving.
-
 ### Scope
 
-A metric is ours when the server binary exposes it *and* we define its descriptor in this repository. Both halves matter. The second excludes `go_*`, `process_*`, and `promhttp_*`, whose metadata we do not define. Two of them are not even a fixed set. `go_*` varies with the Go version and with the `WithGoCollectorRuntimeMetrics` options `cmd/prometheus` passes, and `process_*` exists on Linux only. The first half excludes descriptors defined here but never served. `documentation/examples/remote_storage/remote_storage_adapter` alone defines `received_samples_total`, `sent_samples_total`, `failed_samples_total`, and `prometheus_influxdb_ignored_samples_total`. Deciding by descriptor definition rather than name prefix also means no tool has to guess whether an unfamiliar family is ours.
+A metric is ours when the server binary exposes it *and* we define its descriptor in this repository.
 
-`prometheus_build_info` is the one case on the line. `client_golang` defines its descriptor, but we choose its namespace and our own mixin queries it. The rule excludes it and it stays excluded until we decide otherwise. Adopting it would mean describing metadata we can detect changing but cannot change.
+The descriptor half excludes `go_*`, `process_*`, and `promhttp_*`, whose metadata a dependency defines and which are not even a fixed set: `go_*` varies with the Go version and the `WithGoCollectorRuntimeMetrics` options `cmd/prometheus` passes, and `process_*` exists on Linux only. The exposure half excludes descriptors defined here but never served, such as those in `documentation/examples/remote_storage/remote_storage_adapter`. Deciding by descriptor definition rather than name prefix also means no tool has to guess whether an unfamiliar family is ours.
+
+`prometheus_build_info` is the one case on the line: `client_golang` defines its descriptor, but we choose its namespace and our own mixin queries it. The rule excludes it, because adopting it would mean describing metadata we can detect changing but cannot change. Revisit if that changes.
 
 ### The registry
 
-One `semconv/registry.yaml` is the authoring source for every metric in scope above, populated package by package during migration. A single file keeps name uniqueness and stability audits trivial. Split it per package later if it gets unwieldy; tests and consumers read the resolved artifact described below.
+A v2 registry under `semconv/` is the authoring source for every metric in scope above, populated package by package during migration. It is a `manifest.yaml` naming the registry and its schema URL, plus one or more definition files. Start with a single definition file, which keeps name uniqueness and stability audits trivial, and split it per package if it gets unwieldy. Tests and consumers read the published artifact described below, never these.
 
 ```yaml
-groups:
-  - id: metric.prometheus_tsdb_compaction_duration_seconds
-    type: metric
+file_format: definition/2
+
+attributes:
+  - key: prometheus.scrape.interval
+    type: string
     stability: development
+    brief: The configured scrape interval the observation belongs to.
+    examples: ["15s", "1m"]
+    annotations:
+      prometheus:
+        label_name: interval
+
+attribute_groups:
+  - id: attr.prometheus.scrape
+    visibility: public
+    brief: Attributes for scrape metrics.
+    stability: development
+    attributes:
+      - ref: prometheus.scrape.interval
+
+metrics:
+  - name: prometheus_tsdb_compaction_duration_seconds
     brief: Duration of compaction runs.
-    metric_name: prometheus_tsdb_compaction_duration_seconds
+    requirement_level: recommended
     instrument: histogram
     unit: s
+    stability: development
     annotations:
       prometheus:
         package: tsdb
-        help: Duration of compaction runs
         histogram_type: mixed_histogram
         exponential_buckets: {start: 1, factor: 2, count: 14}
         bucket_factor: 1.1
         max_bucket_number: 100
         min_reset_duration: "1h"
 
-  - id: attr.prometheus.scrape
-    type: attribute_group
-    brief: Attributes for scrape metrics.
-    attributes:
-      - id: prometheus.scrape.interval
-        type: string
-        stability: development
-        brief: The configured scrape interval the observation belongs to.
-        examples: ["15s", "1m"]
-        annotations:
-          prometheus:
-            label_name: interval
-
-  - id: metric.prometheus_target_interval_length_seconds
-    type: metric
-    stability: development
+  - name: prometheus_target_interval_length_seconds
     brief: Actual intervals between scrapes.
-    metric_name: prometheus_target_interval_length_seconds
+    requirement_level: recommended
     instrument: histogram
     unit: s
+    stability: development
     attributes:
-      - ref: prometheus.scrape.interval
+      - ref_group: attr.prometheus.scrape
     annotations:
       prometheus:
         package: scrape
-        help: Actual intervals between scrapes.
         histogram_type: summary
-        objectives: {0.01: 0.001, 0.05: 0.005, 0.5: 0.05, 0.90: 0.01, 0.99: 0.001}
+        objectives: {0.01: 0.001, 0.5: 0.05, 0.99: 0.001}
 ```
 
-Go code, documentation, and the contract test all derive from this file. `annotations.prometheus` carries what OTel has no field for: the owning package, the `client_golang` help string, each attribute's Prometheus label name, the histogram variant and its bucket or objective configuration, callback gauges, and construction-time labels.
+Go code, documentation, and the contract test all derive from this file. `annotations.prometheus` carries what OTel has no field for: the owning package, each attribute's Prometheus label name, the histogram variant and its bucket or objective configuration, callback gauges, and construction-time labels.
 
-Two fields hold the same sentence on purpose. `brief` follows OTel conventions, terminal period included; `annotations.prometheus.help` is the `client_golang` `Help` string verbatim and is what the contract test compares. Without the split, `prometheus_tsdb_compaction_duration_seconds` fails on punctuation alone, because its help is `Duration of compaction runs`, with no period. A policy keeps the two in step.
+`brief` is the only description. Generation emits it as the `client_golang` `Help` string, so one sentence feeds the code, the docs, and `# HELP`. A second verbatim-help field would have held today's exposition byte-for-byte, at the cost of two sentences per metric and a policy to keep them together.
 
-Labels are OTel attributes, but an attribute ID names a *concept* while a label name is a *wire name*. WAL record type and appended-sample type both carry `label_name: type` and mean different things, so they need separate definitions rather than one shared `type`. Each attribute gets a namespaced ID and records its label name in `annotations.prometheus.label_name`, which Weaver preserves in the resolved output. The examples propose `prometheus.<package>.<label>` for attribute IDs and `attr.<namespace>` for their group IDs; confirm both before the first package lands, since they set precedent across roughly 250 metrics and are churn to change afterwards.
+OTel attribute keys are unique across the registry, while a Prometheus label name is only unique within one metric. Two metrics that both label something `type` therefore cannot share a key, and Weaver rejects the registry if they try. Each attribute takes a namespaced key instead, and `annotations.prometheus.label_name` carries the wire name that generation and the contract test need. Attribute keys follow `prometheus.<package>.<label>`, their group IDs `attr.<namespace>`.
 
-Generated output lands in `<package>/internal/semconv/` as `metrics.gen.go` and `README.md`. `internal` keeps generated types out of the public API and `.gen.go` marks their origin, both per review feedback on the [proof-of-concept](https://github.com/prometheus/prometheus/pull/17868). Templates and policies are not committed here; see the hosting question.
+Generated output lands in `<package>/internal/semconv/` as `metrics.gen.go` and `README.md`, which keeps generated types out of the public API and marks their origin, per review feedback on the [proof-of-concept](https://github.com/prometheus/prometheus/pull/17868).
+
+The Jinja2 templates and Rego policies that produce it have no home yet, see the hosting question.
 
 ### Generation and publication
 
-Check in `semconv/registry.resolved.json` alongside the authoring source in the Prometheus repository. An export template run through `weaver registry generate` writes a JSON object containing the resolved v1 `groups`, with `ref`, `extends`, imports, and group merging already resolved. Each metric carries its expanded attributes, whose `name` fields retain the semantic IDs while `annotations.prometheus.label_name` retains the wire names. Preserve the remaining definition metadata, including Prometheus annotations, stability, and structured deprecation, and keep deprecated definitions. Omit the top-level `registry_url` and each group's diagnostic `lineage`, which can contain checkout paths, and use deterministic ordering and serialization.
+`weaver registry package` writes the published artifact, `resolved.yaml` plus its `manifest.yaml`, and both are committed under `semconv/`. The alternative is a Jinja export template of our own, which renders the document Weaver treats as internal and carries no format version, so we would own a bespoke shape forever. `package` gives the opposite: `file_format: resolved/2.0`, a published JSON Schema, `ref` and `extends` already resolved, annotations and stability and structured deprecation preserved, file paths stripped on publish, and byte-identical output across runs.
 
-One Makefile target validates policies and regenerates the JSON, instrumentation, and documentation from the same registry. Pin Weaver, templates, policies, and any registry dependencies, and pin the resolved output format version explicitly rather than taking Weaver's default; format changes require corresponding exporter and reader changes. Establish the JSON generation target and its CI freshness check before the first contract test, then add code and documentation generation as packages migrate. CI regenerates all applicable output and fails on changed, missing, or unexpected generated files.
+The cost is that `package` requires a v2 registry, and v2 is Alpha with breaking changes in both 0.27 and 0.28. Pin the Weaver version that produces the artifact and diff the output on every upgrade. Upstream semconv has not moved to v2 yet, so we would be early.
 
-Consumers fetch this same file from Prometheus Git history at a commit SHA or a release tag containing it. The first package demonstrates consumption by commit SHA; expanding migration does not wait for a release. Coverage grows as package registry entries and contract fixtures land. An omitted metric may belong to an unmigrated package or be outside this proposal's ownership scope, so absence from a partial registry alone is not proof of removal.
+One Makefile target validates policies and regenerates the artifact, the instrumentation, and the documentation. CI regenerates everything and fails on changed, missing, or unexpected files.
 
-Before expanding migration, verify that two checkout locations produce identical generated output, that the resolved artifact preserves label annotations and lifecycle metadata, and that CI rejects stale or missing generated output.
+Consumers fetch the artifact from Prometheus Git history at a commit SHA or a release tag. Coverage grows as packages migrate, so an omitted metric may belong to an unmigrated package or sit outside our ownership scope, and absence from a partial registry is not proof of removal.
 
 ### Instrumentation code generation
 
@@ -150,7 +155,7 @@ For the `prometheus_tsdb_compaction_duration_seconds` entry above, generation wr
 func NewPrometheusTsdbCompactionDurationSeconds() prometheus.Histogram {
 	return prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:                            "prometheus_tsdb_compaction_duration_seconds",
-		Help:                            "Duration of compaction runs",
+		Help:                            "Duration of compaction runs.",
 		Buckets:                         prometheus.ExponentialBuckets(1, 2, 14),
 		NativeHistogramBucketFactor:     1.1,
 		NativeHistogramMaxBucketNumber:  100,
@@ -159,7 +164,7 @@ func NewPrometheusTsdbCompactionDurationSeconds() prometheus.Histogram {
 }
 ```
 
-`Help` comes from `annotations.prometheus.help` and the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, for the reasons under Contract testing.
+`Help` comes from `brief` and the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, for the reasons under Contract testing.
 
 The `tsdb` package drops its hand-written `prometheus.NewHistogram(...)` block and calls the constructor instead:
 
@@ -180,7 +185,7 @@ Unlabelled metrics get a plain constructor and `const_labels` become constructor
 
 Package code imports these types from `<package>/internal/semconv`. The generated API shape is not settled; we fix it while migrating the first package.
 
-The same Weaver run also emits a `README.md` per package covering name, type, unit, label semantics, stability, and examples for every metric. Same input as the code, so the two cannot disagree.
+The same run emits the package `README.md`, covering name, type, unit, label semantics, stability, and examples for every metric.
 
 ### Contract testing
 
@@ -198,9 +203,9 @@ Declarations beat scrapes, because a running instance emits much less than it de
 
 It also catches a metric nobody registered. Delete one collector from a `MustRegister` call and it compiles, `go vet` stays quiet, regeneration produces no diff, and the metric never exists at runtime. Generation cannot help, because the wiring is hand-written.
 
-Supplemental fixtures call `Registry.Gather()` directly and inspect its protobuf results, covering the two things descriptors cannot answer. For histograms, they record deterministic observations and check the gathered classic and native representations against `histogram_type`, so removing either from a declared mixed histogram fails. For the `NewDesc` sites in scrape metadata and file discovery, which retain hand-written collection and report `UNTYPED`, they check the emitted type against the registry, so a custom collector switching a gauge to a counter fails even though its descriptor is unchanged. These checks establish the representation; they do not validate every construction option, such as bucket limits or reset durations. Fixtures must populate every family needing a supplemental check at least once and fail on missing coverage.
+Supplemental fixtures call `Registry.Gather()` directly and inspect its protobuf results, covering the two things descriptors cannot answer. For histograms, they record deterministic observations and check the gathered classic and native representations against `histogram_type`, so removing either from a declared mixed histogram fails. For the `NewDesc` sites in scrape metadata and file discovery, they check the emitted type against the registry, so a custom collector switching a gauge to a counter fails even though its descriptor is unchanged. These checks establish the representation; they do not validate every construction option, such as bucket limits or reset durations. Fixtures must populate every family needing a supplemental check at least once and fail on missing coverage.
 
-The test reads metric groups from the committed `semconv/registry.resolved.json`, using their package annotations to select the expected definitions. The Go reader does not resolve authoring constructs. This catches drift before it ships; applying renames for deployed downstreams needs a versioned rename schema per release, described under Emitting a schema file.
+The test reads the committed `semconv/resolved.yaml`, so the Go reader never resolves authoring constructs. It does expand the integer indexes that `resolved/2.0` uses to reference its `attribute_catalog`. This catches drift before it ships; applying renames for deployed downstreams needs a versioned rename schema per release, described under Emitting a schema file.
 
 ### Emitting a schema file
 
@@ -208,15 +213,15 @@ Structured deprecation records a rename in the registry, which covers review and
 
 Prometheus is gaining the ability to read one. [prometheus#18858](https://github.com/prometheus/prometheus/pull/18858) adds `__semconv_url__` and `__schema_url__` matchers. Given a schema file, they run one query per historical name and merge the results under the version the query asked for. Point that at a schema file for our own internal metrics and an old dashboard query keeps resolving across the release that renamed the metric.
 
-So the schema file belongs beside `registry.resolved.json` as a release artifact, and the `renamed_to` fields become its input instead of review-only metadata.
+So the schema file belongs beside `resolved.yaml` as a release artifact, and the `renamed_to` fields become its input instead of review-only metadata.
 
-Weaver cannot generate one yet. `weaver registry diff` compares two versions, but nobody has settled how a registry plus its deprecation metadata becomes a schema file. [weaver#613](https://github.com/open-telemetry/weaver/issues/613) is still formalising which transformations to allow, [weaver#614](https://github.com/open-telemetry/weaver/issues/614) has not picked a transformation language, and [weaver#450](https://github.com/open-telemetry/weaver/issues/450) explains why the v1.1 bidirectional model does not hold up. Those are design questions waiting on someone with a real use for the output, and prometheus#18858 is one. That makes schema-file generation the second thing worth pushing upstream, alongside a `client_golang` template.
+semconv already does this and we can copy the mechanism. Its `make generate-schema-next` runs `weaver registry diff` against the previous release tag, renders the result through a Jinja template, and prepends the new section onto the previous file. The result is committed at `schemas/<version>` and published at `https://opentelemetry.io/schemas/<version>`. Their release workflow generates it and fails the release when it is missing.
 
-Nothing here blocks on it. Until it lands we declare renames in the registry and downstreams apply them by hand, which sets what a rename costs rather than whether the registry works.
+What we would add is the per-release wiring, not a new capability. [weaver#450](https://github.com/open-telemetry/weaver/issues/450) is worth reading first, since it explains why the v1.1 format cannot express a reversible transformation, which bounds what a consumer can do with the file.
 
 ### Metric lifecycle and evolution
 
-`registry.yaml` carries OTel stability levels: `development` for anything that may change without notice and `stable` for public API needing a deprecation cycle. Deprecation is a separate structured field rather than a third level. The `deprecated` stability value still parses, but upstream marks it deprecated, and the structured field carries a reason (`renamed`, `obsoleted`, `uncategorized`) plus `renamed_to` for a rename. A deprecated metric therefore keeps its stability and gains that field. Weaver can emit deprecation warnings from these, and removing a stable metric requires a schema change visible in review and in git history.
+The registry carries OTel stability levels: `development` for anything that may change without notice and `stable` for public API needing a deprecation cycle. Deprecation is a separate structured field rather than a third level. The `deprecated` stability value still parses, but upstream marks it deprecated, and the structured field carries a reason (`renamed`, `obsoleted`, `uncategorized`) plus `renamed_to` for a rename. A deprecated metric therefore keeps its stability and gains that field. Weaver can emit deprecation warnings from these, and removing a stable metric requires a schema change visible in review and in git history.
 
 This proposal adds the field and makes changes to it reviewable. It does not define what `stable` obligates, how long a deprecation cycle runs, or which of today's metrics qualify. That is policy, not schema, and marking a metric `stable` commits us to compatibility we have never promised. Migrated metrics carry `development` until a follow-on decides otherwise.
 
@@ -244,7 +249,7 @@ So "safe metric evolution across the ecosystem" means consumers detect drift the
 
 * **`.With()` allocations on hot paths**: `.With()` allocates a `prometheus.Labels` map per call, likely too much for per-scrape or per-sample metrics. Benchmark a typed `WithX(value string)` fast path first ([reviewer comment](https://github.com/prometheus/prometheus/pull/17868#discussion_r2736198866)).
 
-* **Validator module home**: the `client_golang` changes are limited to `Desc` metadata accessors and metric type storage populated by typed constructors. Supplemental collection checks use the existing `Registry.Gather()` API. Keep optional registry parsing and validation tooling separate from the broadly used main module so its dependencies can evolve independently. The repository already has an [`exp` submodule](https://github.com/prometheus/client_golang/blob/main/exp/go.mod); a separate module there, a new repository under `prometheus`, or another home could host the validator. It needs only a reader for the resolved JSON, not the Weaver authoring schema resolver. Decide its home when implementing the first contract test.
+* **Validator module home**: keep optional registry parsing and validation tooling separate from the broadly used main module so its dependencies can evolve independently. The repository already has an [`exp` submodule](https://github.com/prometheus/client_golang/blob/main/exp/go.mod); a separate module there, a new repository under `prometheus`, or another home could host the validator. It needs only a reader for `resolved/2.0`, not the Weaver authoring schema resolver. Decide its home when implementing the first contract test.
 
 * **Template and policy hosting**: in this repository under `build/`, in `client_golang` for ecosystem reuse, or bundled into Weaver itself. [weaver#1145](https://github.com/open-telemetry/weaver/pull/1145) merged and expanded Weaver's default templates, so a `client_golang` template now has somewhere to go upstream, which would end the question. Decide before the migration is stable.
 
@@ -274,7 +279,7 @@ Keep the constructor calls and enforce naming, units, and histogram rules with `
 
 ### Generate the registry from instrumentation code
 
-Invert the direction: emit `registry.yaml` from the binary using the same `Desc` introspection and commit it as a golden file, the way Go tracks its own API in `api/go1.*.txt`. CI fails on a diff.
+Invert the direction: emit the registry from the binary using the same `Desc` introspection and commit it as a golden file, the way Go tracks its own API in `api/go1.*.txt`. CI fails on a diff.
 
 This costs contributors almost nothing and gives regression safety on its own. It can also carry lifecycle and label semantics, as long as we attach that metadata in Go or a companion source. Introspection cannot recover it, and today's empty descriptor units do not even reveal the intended unit.
 
@@ -302,12 +307,13 @@ These metrics describe Prometheus' own implementation, not a convention for othe
 
 * [ ] Get consensus on this proposal.
 * [ ] Add `Desc` metadata accessors and metric type storage to `client_golang`, populated by typed constructors while `NewDesc` remains untyped.
-* [ ] Write `semconv/registry.yaml` by hand, package by package.
-* [ ] Add the pinned generation target for `semconv/registry.resolved.json` and its CI freshness check before the first contract test.
+* [ ] Write the `semconv/` v2 registry by hand, package by package.
+* [ ] Move the registry to v2 and add the pinned `weaver registry package` target and its CI freshness check, before the first contract test.
 * [ ] Build in-process contract testing with descriptor inventory checks and supplemental collection fixtures for histogram representations and custom-collector types, one package at a time, and run it in CI.
 * [ ] Generate code and documentation for one small package through the same target, extend the freshness check to those outputs, and settle the generated API there.
-* [ ] Verify the generation acceptance checks above and demonstrate reading the first package's artifact by commit SHA; release tags containing the file provide release-version lookup without gating further migration.
+* [ ] Demonstrate reading the first package's artifact by commit SHA; release tags containing the file provide release-version lookup without gating further migration.
 * [ ] Benchmark `.With()` before touching hot paths.
 * [ ] Generate the rest, one pull request per package.
 * [ ] Follow-on: extend the registry to traces, reusing the same generation target and per-package layout.
-* [ ] Upstream a `client_golang` template into Weaver's defaults, and make the case for schema-file generation using prometheus#18858 as the consumer.
+* [ ] Upstream a `client_golang` template into Weaver's defaults.
+* [ ] Generate a per-release schema file with `weaver registry diff`, following semconv's own pipeline.
