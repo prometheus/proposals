@@ -71,7 +71,7 @@ The descriptor half excludes `go_*`, `process_*`, and `promhttp_*`, whose metada
 
 ### The registry
 
-A v2 registry under `semconv/` is the authoring source for every metric in scope above, populated package by package during migration. It is a `manifest.yaml` naming the registry and its schema URL, plus one or more definition files. Start with a single definition file, which keeps name uniqueness and stability audits trivial, and split it per package if it gets unwieldy. Tests and consumers read the published artifact described below, never these.
+A v2 registry under `semconv/` is the authoring source for every metric in scope above, populated package by package during migration. It is a `manifest.yaml` naming the registry and its schema URL, plus one or more definition files. Start with a single definition file, which keeps name uniqueness and stability audits trivial, and split it per package if it gets unwieldy. Tests and consumers read `semconv/resolved.yaml`, the `file_format: resolved/2.0` artifact that `weaver registry package` publishes from them, never these files.
 
 ```yaml
 file_format: definition/2
@@ -135,19 +135,9 @@ Generated output lands in `<package>/internal/semconv/` as `metrics.gen.go` and 
 
 The Jinja2 templates and Rego policies that produce it have no home yet, see the hosting question.
 
-### Generation and publication
-
-`weaver registry package` writes the published artifact, `resolved.yaml` plus its `manifest.yaml`, and both are committed under `semconv/`. The alternative is a Jinja export template of our own, which renders the document Weaver treats as internal and carries no format version, so we would own a bespoke shape forever. `package` gives the opposite: `file_format: resolved/2.0`, a published JSON Schema, `ref` and `extends` already resolved, annotations and stability and structured deprecation preserved, file paths stripped on publish, and byte-identical output across runs.
-
-The cost is that `package` requires a v2 registry, and v2 is Alpha with breaking changes in both 0.27 and 0.28. Pin the Weaver version that produces the artifact and diff the output on every upgrade. Upstream semconv has not moved to v2 yet, so we would be early.
-
-One Makefile target validates policies and regenerates the artifact, the instrumentation, and the documentation. CI regenerates everything and fails on changed, missing, or unexpected files.
-
-Consumers fetch the artifact from Prometheus Git history at a commit SHA or a release tag. Coverage grows as packages migrate, so an omitted metric may belong to an unmigrated package or sit outside our ownership scope, and absence from a partial registry is not proof of removal.
-
 ### Instrumentation code generation
 
-Weaver generates `client_golang` code. It is a template engine over the resolved schema rather than a binding to the OTel metrics SDK. `weaver registry generate` renders Jinja2 templates we write, and ours emit `prometheus.NewHistogram`, `prometheus.NewCounterVec`, and the other constructors Prometheus already calls by hand. No OTel SDK enters the binary, and `/metrics` stays byte-identical.
+`weaver registry generate` renders Jinja2 templates we write, and ours emit `prometheus.NewHistogram`, `prometheus.NewCounterVec`, and the other `client_golang` constructors Prometheus already calls by hand.
 
 For the `prometheus_tsdb_compaction_duration_seconds` entry above, generation writes `tsdb/internal/semconv/metrics.gen.go`:
 
@@ -164,7 +154,7 @@ func NewPrometheusTsdbCompactionDurationSeconds() prometheus.Histogram {
 }
 ```
 
-`Help` comes from `brief` and the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, for the reasons under Contract testing.
+`Help` comes from `brief`, the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, for the reasons under Contract testing.
 
 The `tsdb` package drops its hand-written `prometheus.NewHistogram(...)` block and calls the constructor instead:
 
@@ -181,31 +171,17 @@ func (m PrometheusTargetIntervalLengthSeconds) With(
 ) prometheus.Observer { ... }
 ```
 
-Unlabelled metrics get a plain constructor and `const_labels` become constructor parameters. For `GaugeFunc`, the value comes from a closure at scrape time, so the registry marks it `only_opts: true`, Weaver emits only an `Opts()` accessor, and the closure stays hand-written. Custom collectors use generated descriptor factories while keeping their collection-time metric creation hand-written.
+Unlabelled metrics get a plain constructor, and `const_labels` become constructor parameters. Callback gauges and custom collectors keep their hand-written collection, so generation gives them only an `Opts()` accessor or a descriptor factory.
 
-Package code imports these types from `<package>/internal/semconv`. The generated API shape is not settled; we fix it while migrating the first package.
-
-The same run emits the package `README.md`, covering name, type, unit, label semantics, stability, and examples for every metric.
+The generated API shape is not settled; we fix it while writing the POC on the first package.
 
 ### Contract testing
 
-A Go test compares what the code declares against the registry, plus collection fixtures for what descriptors cannot expose. No running Prometheus, nothing installed.
+Everything else here treats the registry as the truth: documentation is generated from it, renames are reviewed against it, and downstream projects check their references against it. What Prometheus produces has to match it.
 
-For registered checked collectors, `Collector.Describe()` yields a descriptor for every declared metric, sample or no sample. The test reads descriptors from a Go registry populated through production construction and registration paths, then compares them to the semantic convention registry. This needs read-only accessors on `prometheus.Desc`, which today exposes only `Err()` and `String()`. Additive, no new dependencies.
+Generation covers the definitions, not the wiring. Connecting a generated collector into the right code path stays a human action, and dropping that wire removes a metric without changing the registry, which breaks a downstream consumer silently.
 
-`Desc` must also store and expose metric type, populated by typed constructors. This distinguishes counter, gauge, summary, and histogram, catching a gauge-to-counter change even in a vector with no children. Classic, native, and mixed histograms all report `HISTOGRAM`, so descriptor comparison cannot distinguish those representations or validate their bucket configuration. `prometheus.NewDesc` continues to report `UNTYPED`; the custom collectors using it need the supplemental type checks below.
-
-Units need care in the other direction. `prometheus.Opts` has a `Unit` field and no Prometheus metric sets it, so every descriptor reports an empty unit while the registry declares the real one. The first phase keeps the registry's unit as metadata and requires the descriptor's to stay empty, reporting any non-empty value as a difference. An attempt to populate `Opts.Unit` then becomes visible rather than silently unchecked, and no package waits on a repository-wide edit. That edit would change behaviour. `Opts.Unit` reaches the descriptor hash, `MetricFamily.Unit`, and `# UNIT` in OpenMetrics, and from there scrape and TSDB metadata, remote write, and `/api/v1/metadata`. Names are unaffected; the encoder only rewrites `_total` on counters.
-
-The comparison runs per package. Each migrated package builds its collectors in deterministic fixtures and compares the union of their descriptors against the registry entries whose `annotations.prometheus.package` names it. That value is a repository-relative package directory such as `tsdb`, `scrape`, or `tsdb/wlog`, so one annotation serves both the test and the `<package>/internal/semconv/` output path. Where collectors depend on configuration, table-driven fixtures cover the supported variants. A metric need not appear in every variant, but the union must equal what that package declares.
-
-Declarations beat scrapes, because a running instance emits much less than it declares. Configure no Alertmanager and the notifier's per-alertmanager metrics never appear. `Describe()` returns them anyway, with the const-versus-variable label split that a scrape drops.
-
-It also catches a metric nobody registered. Delete one collector from a `MustRegister` call and it compiles, `go vet` stays quiet, regeneration produces no diff, and the metric never exists at runtime. Generation cannot help, because the wiring is hand-written.
-
-Supplemental fixtures call `Registry.Gather()` directly and inspect its protobuf results, covering the two things descriptors cannot answer. For histograms, they record deterministic observations and check the gathered classic and native representations against `histogram_type`, so removing either from a declared mixed histogram fails. For the `NewDesc` sites in scrape metadata and file discovery, they check the emitted type against the registry, so a custom collector switching a gauge to a counter fails even though its descriptor is unchanged. These checks establish the representation; they do not validate every construction option, such as bucket limits or reset durations. Fixtures must populate every family needing a supplemental check at least once and fail on missing coverage.
-
-The test reads the committed `semconv/resolved.yaml`, so the Go reader never resolves authoring constructs. It does expand the integer indexes that `resolved/2.0` uses to reference its `attribute_catalog`. This catches drift before it ships; applying renames for deployed downstreams needs a versioned rename schema per release, described under Emitting a schema file.
+So we need a check that compares the binary against the registry and fails CI on a difference. It is the provider marking its own exam, weaker than consumers declaring what they use, but it catches that failure. How to build it is open, and the alternatives are below.
 
 ### Emitting a schema file
 
@@ -306,7 +282,7 @@ These metrics describe Prometheus' own implementation, not a convention for othe
 ## Action Plan
 
 * [ ] Get consensus on this proposal.
-* [ ] Add `Desc` metadata accessors and metric type storage to `client_golang`, populated by typed constructors while `NewDesc` remains untyped.
+* [ ] Settle how the contract check reads the binary, and add whatever descriptor metadata accessors `client_golang` needs for it.
 * [ ] Write the `semconv/` v2 registry by hand, package by package.
 * [ ] Move the registry to v2 and add the pinned `weaver registry package` target and its CI freshness check, before the first contract test.
 * [ ] Build in-process contract testing with descriptor inventory checks and supplemental collection fixtures for histogram representations and custom-collector types, one package at a time, and run it in CI.
