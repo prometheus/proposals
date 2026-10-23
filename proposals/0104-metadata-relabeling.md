@@ -19,7 +19,9 @@
   * [PROM-39: Metric Family Identity Extension: Type and Unit as Labels](./0039-metadata-labels.md)
   * [PROM-103: Recording Rule Metadata Storage and Deduction](https://github.com/prometheus/proposals/pull/103)
 
-> TL;DR: This document proposes allowing operators to inspect, rewrite, and drop metric metadata `type`, `unit`, and `help` across `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`. It unifies the two unsynchronized metadata paths in Prometheus so that relabeling `__type__`, `__unit__`, and a virtual `__help__` label updates both the `metadata.Metadata` record and the `type-and-unit-labels` series labels, while fixing metadata loss on metric renames and stale metadata retention on dropped series. It also evaluates the alternative of introducing dedicated `metadata_replace` and `metadata_drop` relabel actions.
+> TL;DR: This document proposes allowing operators to inspect, rewrite, and drop metric metadata `type`, `unit`, and `help` across `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`. It unifies the two unsynchronized metadata paths in Prometheus so that relabeling `__type__`, `__unit__`, and a virtual `__help__` label updates both the `metadata.Metadata` record and the `type-and-unit-labels` series labels, while fixing metadata loss on metric renames and stale metadata retention on dropped series. It also evaluates alternatives including a dedicated `target_metadata` field, dedicated `metadata_replace` and `metadata_drop` actions, and `__metadata_*__` virtual labels.
+>
+> NOTE: We are actively debating whether metadata writes in relabeling should use `target_label: __type__ | __unit__ | __help__` (as proposed in [How](#how)) or a dedicated `target_metadata: type | unit | help` field (see [Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions) and [Key differences between target metadata and target label](#key-differences-between-target-metadata-and-target-label)), so please let us know what you prefer.
 
 ## Why
 
@@ -79,31 +81,37 @@ Prometheus server maintainers, operators managing scrape, Remote Write, and OTLP
 
 We propose making metric metadata `type`, `unit`, and `help` first-class virtual schema labels `__type__`, `__unit__`, and `__help__` during relabeling. These labels are backed directly by `metadata.Metadata` in the relabel engine so that standard relabel actions `replace`, `keep`, `drop`, `keepequal`, `dropequal`, `lowercase`, `uppercase`, and `labeldrop` work uniformly across labels and metadata.
 
-We also detail and compare the main alternative design using `action: metadata_replace` and `action: metadata_drop` in [Alternatives](#1-dedicated-metadata-relabel-actions-metadatareplace-metadatadrop).
+Handling metadata via `target_label: __type__`, `__unit__`, and `__help__` is simple to implement and use:
+
+* It requires no new fields or actions on `relabel.Config`, keeping `source_labels` and `target_label` symmetric across all actions (`replace`, `lowercase`, `uppercase`, `keepequal`, `dropequal`, `labeldrop`).
+* Even outside `type-and-unit-labels`, Prometheus already uses `target_label: __*__` for durable non-label config: in target `relabel_configs`, `target_label: __address__`, `__metrics_path__`, `__scheme__`, `__scrape_interval__`, and `__scrape_timeout__` are never stored as TSDB labels, yet writing to them via `target_label` has durable effects on how the target is scraped. `model/relabel` did not add a `target_scrape_field:` key to `relabel.Config` for those; it used reserved `__*__` names (even though those specific control labels only exist in target `relabel_configs`, not `metric_relabel_configs` or `write_relabel_configs`).
+* In `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`, `__name__` is already mutated via `target_label: __name__`, and [PROM-39](./0039-metadata-labels.md) extended series identity with `__type__` and `__unit__` using the same `target_label` mechanism.
+* On ingestion (scrape exposition, Remote Write, OTLP), `metadata.Metadata` is the single source of truth. Source exposition and Remote Write should not carry `__type__` and `__unit__` as independent source labels; if they are present on the wire, metadata takes precedence as specified in [PROM-39](./0039-metadata-labels.md#prometheus-server-ingestion) (with fallback to incoming `__type__` and `__unit__` labels only when metadata fields are empty, such as Remote Write 1.0). The `--enable-feature=type-and-unit-labels` flag remains the switch that controls whether the post-relabel `meta.Type` and `meta.Unit` are materialized and preserved as `__type__` and `__unit__` labels on the stored series; when the flag is disabled, `__type__` and `__unit__` are stripped from series labels so wire or relabeled values never leak into TSDB as raw labels.
+
+We also detail and compare alternative relabeling designs in [Alternatives](#alternatives), notably a dedicated `target_metadata` field with standard actions ([Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions)), dedicated `metadata_replace` and `metadata_drop` actions ([Alternative 2](#2-dedicated-metadata-relabel-actions)), and `__metadata_type__`, `__metadata_unit__`, and `__metadata_help__` virtual labels ([Alternative 3](#3-explicit-metadata-prefixed-virtual-labels)).
 
 ### 1. Metadata representation during relabeling
 
-Every metric sample or series entering a relabel stage (`metric_relabel_configs` on scrape, `write_relabel_configs` on Remote Write, and `receive_relabel_configs` on Remote Write and OTLP receive) has both a label set `*labels.Builder` and a metadata struct `*metadata.Metadata`.
-
-During `relabel.ProcessBuilderWithMetadata(lb *labels.Builder, meta *metadata.Metadata, cfgs ...*Config)`:
+Every metric sample or series entering a metric relabel stage (`metric_relabel_configs` on scrape, `write_relabel_configs` on Remote Write, and `receive_relabel_configs` on Remote Write and OTLP receive) carries both its label set and its metadata (`type`, `unit`, `help`):
 
 1. Three reserved label names map to the metric's metadata fields:
-   * `__type__` (`model.MetricTypeLabel`) maps to `meta.Type`. Following [PROM-39](./0039-metadata-labels.md) and [`schema.Metadata`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/schema/labels.go#L82-L85), `model.MetricTypeUnknown` and `""` are equivalent. Reading `__type__` when `meta.Type == model.MetricTypeUnknown` yields `""`, and setting `__type__` to `""` or `"unknown"` sets `meta.Type = model.MetricTypeUnknown` and removes `__type__` from `lb`.
-   * `__unit__` (`model.MetricUnitLabel`) maps to `meta.Unit`.
-   * `__help__` (`model.MetricHelpLabel`) maps to `meta.Help`.
-2. When `cfg.SourceLabels` or `cfg.TargetLabel` in `keepequal` and `dropequal` references `__type__`, `__unit__`, or `__help__`, the relabeler reads the value directly from `meta`.
+   * `__type__` maps to `type`. Following [PROM-39](./0039-metadata-labels.md), `unknown` and `""` are equivalent: reading `__type__` when the metric is untyped (`unknown`) yields `""`, and setting `__type__` to `""` or `"unknown"` sets the metadata type to `unknown` and omits `__type__` from the series labels.
+   * `__unit__` maps to `unit`.
+   * `__help__` maps to `help`.
+2. When `source_labels` (or `target_label` in `keepequal` and `dropequal`) references `__type__`, `__unit__`, or `__help__`, the relabeler reads the value from the metric's metadata.
 3. When `replace`, `lowercase`, `uppercase`, or `hashmod` writes to `__type__`, `__unit__`, or `__help__`, or when `labeldrop` matches `__type__`, `__unit__`, or `__help__`:
-   * Writing to `__help__` updates `meta.Help` directly. `__help__` is never inserted into `lb`, so it never becomes a series label in TSDB, never affects series hashes or identity, and never allocates space in `labels.Builder`.
-   * Writing to `__type__` validates and normalizes the type value as described in [Validation](#5-validation-of-type-and-unit-values), updates `meta.Type`, and updates `__type__` on `lb` when `type-and-unit-labels` is enabled.
-   * Writing to `__unit__` updates `meta.Unit`, and updates `__unit__` on `lb` when `type-and-unit-labels` is enabled.
-4. Because `__help__`, along with `__type__` and `__unit__` when `type-and-unit-labels` is disabled, lives in `meta` rather than `lb`, existing configs using `action: labelkeep` with `regex: __name__|job|instance` or `action: labelmap` will not delete `meta.Help`, `meta.Type`, or `meta.Unit`, nor copy `__help__` into user labels. When `type-and-unit-labels` is enabled, `ProcessBuilderWithMetadata` re-syncs `__type__` and `__unit__` from `meta` after the rule loop unless `labeldrop` explicitly matched `__type__` or `__unit__`.
+   * Writing to `__help__` updates the `help` metadata field directly. `__help__` is never added to the series label set in TSDB and never affects series identity.
+   * Writing to `__type__` validates and normalizes the type value as described in [Validation](#3-validation-of-type-and-unit-values), updates the `type` metadata field, and updates the `__type__` series label when `--enable-feature=type-and-unit-labels` is enabled.
+   * Writing to `__unit__` updates the `unit` metadata field, and updates the `__unit__` series label when `--enable-feature=type-and-unit-labels` is enabled.
+4. Because metadata lives separately from regular series labels during relabeling, existing configs using `action: labelkeep` with `regex: __name__|job|instance` or `action: labelmap` will not delete `help`, `type`, or `unit`, nor copy `__help__` into user labels.
+5. On scrape, metric family membership is evaluated before `metric_relabel_configs` so renaming `__name__` preserves the metric's metadata under the new name, and metadata is only recorded in the scrape metadata cache when at least one series of the family survives relabeling (fixing [prometheus#14013](https://github.com/prometheus/prometheus/issues/14013)).
 
 ```mermaid
 flowchart LR
-    A["Parser or Receiver\nInitial Labels + metadata.Metadata"] --> B["relabel.ProcessBuilderWithMetadata\n__name__, __type__, __unit__, __help__"]
+    A["Parser or Receiver\nInitial Labels + Metadata"] --> B["Relabeling\n__name__, __type__, __unit__, __help__"]
     B -- "keep == false" --> C["Drop series and metadata"]
-    B -- "keep == true" --> D["Validate and sync:\n1. meta.Type, meta.Unit, meta.Help\n2. Set __type__ and __unit__ on labels if type-and-unit-labels enabled\n3. __help__ never in labels"]
-    D --> E["AppenderV2, ScrapeCache, RW2"]
+    B -- "keep == true" --> D["Validate and sync:\n1. Metadata (type, unit, help)\n2. Set __type__ and __unit__ on labels if type-and-unit-labels enabled\n3. __help__ never in labels"]
+    D --> E["TSDB, ScrapeCache, RW2"]
 ```
 
 ### 2. Relabeling examples across use cases
@@ -208,122 +216,217 @@ metric_relabel_configs:
     replacement: ''
 ```
 
-### 3. Scrape loop, rename tracking, and `scrapeCache` changes
+### 3. Validation of `type` and `unit` values
 
-To make metadata relabeling work end-to-end in `scrape` and fix the existing bugs in [`scrape/scrape_append_v2.go`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/scrape/scrape_append_v2.go) and [`scrape/scrape.go`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/scrape/scrape.go):
+Allowing arbitrary regex replacements on `type` risks silent typos such as `replacement: guage`. We propose two layers of validation:
 
-1. Evaluate family membership before relabeling:
-   * In `scrapeLoopAppenderV2.append`, `lastMFName` and `lastMeta` come from the parser's `# TYPE`, `# HELP`, and `# UNIT` entries. Whether a scraped series belongs to `lastMFName` is a property of the exposition text, not the post-relabel metric name.
-   * Before calling `sampleMutator`, check `isSeriesPartOfFamily(preRelabelName, lastMFName, lastMeta.Type)`. If it matches, initialize the sample's `meta = lastMeta.Metadata` and record the series suffix relative to `lastMFName` (`""`, `"_bucket"`, `"_sum"`, or `"_count"`). If it does not match, such as an untyped metric following an earlier `# TYPE` block, initialize `meta = metadata.Metadata{Type: model.MetricTypeUnknown}` without zeroing `lastMeta` for subsequent series.
-2. Mutate labels and metadata together:
-   * Change `sampleMutator` to accept and return `(labels.Labels, metadata.Metadata)`.
-   * Inside `mutateSampleLabels`, run `relabel.ProcessBuilderWithMetadata(lb, &meta, rc...)`.
-   * After relabeling, if `enableTypeAndUnitLabels` is true, call `schema.Metadata{Name: lb.Get(model.MetricNameLabel), Type: meta.Type, Unit: meta.Unit}.SetToLabels(lb)` so the final label set and `meta` match. If `enableTypeAndUnitLabels` is false, ensure `__type__` and `__unit__` are not present on `lb`.
-3. Cache post-relabel metadata on `cacheEntry` and handle metadata changes across scrapes:
-   * Store the post-relabel `meta` and post-relabel `mfName` on `cacheEntry` (`ce`) in `scrapeCache`.
-   * Today, [`scrape/scrape_append_v2.go#L208-L218`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/scrape/scrape_append_v2.go#L208-L218) skips `p.Labels(&lset)` and `sl.sampleMutator(lset)` whenever `seriesCached == true`. However, `met` is only the raw series line `foo{a="b"}`, so if a target changes `# TYPE`, `# UNIT`, or `# HELP` on a later scrape (`lastMeta.lastIterChange == sl.cache.iter`), `seriesCached` remains true and `ce.lset` keeps stale `__type__` and `__unit__` labels.
-   * When `seriesCached == true` and `lastMeta != nil && lastMeta.lastIterChange == sl.cache.iter`, re-run `p.Labels(&lset)` and `sl.sampleMutator(lset, meta)` to refresh `ce.lset` and `ce.meta`. On all other cached scrapes, reuse `ce.lset` and `ce.meta` with zero relabeling overhead.
-4. Update `scrapeCache.metadata` post-relabel to fix [prometheus#14013](https://github.com/prometheus/prometheus/issues/14013):
-   * Instead of inserting into `sl.cache.metadata` immediately upon parsing `EntryType`, `EntryHelp`, or `EntryUnit` before knowing whether all series in the family will be dropped or renamed, hold `lastMFName` and `lastMeta` as parser state during the scrape loop and update `sl.cache.metadata[postRelabelMFName]` only when at least one series of that family survives `sampleMutator`.
-   * If all series of a metric family are dropped by `metric_relabel_configs`, its metadata is never marked seen in `sl.cache.metadata` and is evicted.
-   * If a metric is renamed, `sl.cache.metadata` records the post-relabel `meta` under the post-relabel metric family name.
-
-### 4. Precedence on Remote Write 2.0 and OTLP
-
-To ensure metadata edits round-trip across Remote Write 2.0 and OTLP:
-
-* On the Remote Write 2.0 sender in [`storage/remote/queue_manager.go#L1975-L2001`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/storage/remote/queue_manager.go#L1975-L2001), `write_relabel_configs` runs on each outgoing series with its `metadata.Metadata` constructed from `d.metadata` and `schema.NewMetadataFromLabels(d.seriesLabels)`. The post-relabel `meta` populates `pendingData[nPending].Metadata`, and if `enableTypeAndUnitLabels` is false on the sender, `__type__` and `__unit__` are stripped from `d.seriesLabels` before symbolizing labels.
-* On the Remote Write 2.0 receiver in [`storage/remote/write_handler.go#L322-L339`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/storage/remote/write_handler.go#L322-L339), incoming `ts.ToMetadata(req.Symbols)` and incoming `__type__` and `__unit__` labels form the initial `meta`. If `receive_relabel_configs` from [prometheus#19675](https://github.com/prometheus/prometheus/pull/19675) is configured, it runs `ProcessBuilderWithMetadata(lb, &meta, cfgs...)` before syncing `meta` to `ls` when `enableTypeAndUnitLabels` is enabled and passing `storage.AOptions{Metadata: meta}` to `app.Append`.
-* On OTLP ingestion in [`storage/remote/otlptranslator/prometheusremotewrite/helper.go#L165-L173`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/storage/remote/otlptranslator/prometheusremotewrite/helper.go#L165-L173) and [`metrics_to_prw.go#L241`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/storage/remote/otlptranslator/prometheusremotewrite/metrics_to_prw.go#L241), update `metrics_to_prw.go` to pass `UTF8Allowed: settings.AllowUTF8` to `UnitNamer` so `meta.Unit` and `__unit__` are normalized identically before `receive_relabel_configs` runs.
-
-### 5. Validation of `type` and `unit` values
-
-Allowing arbitrary regex replacements on `__type__` risks silent typos such as `replacement: guage`. We propose two layers of validation:
-
-1. Config-load validation in `relabel.Config.Validate()` at [`model/relabel/relabel.go#L120`](https://github.com/prometheus/prometheus/blob/10f69629039e0215d056eb4948f0bd0fd22f5c89/model/relabel/relabel.go#L120):
-   * When `c.TargetLabel == model.MetricTypeLabel` and `c.Action == Replace` and `!varInRegexTemplate(c.Replacement)`, `Validate()` checks that `c.Replacement` is either `""` or a valid lowercase `model.MetricType`: `counter`, `gauge`, `histogram`, `gaugehistogram`, `summary`, `info`, `stateset`, or `unknown`. A typo like `replacement: guage` fails `promtool check config` and config reload immediately.
+1. Config-load validation:
+   * When a `replace` rule targets `type` with a static `replacement` string (no `$1` regex expansion), config validation checks that `replacement` is either `""` or a valid lowercase metric type (`counter`, `gauge`, `histogram`, `gaugehistogram`, `summary`, `info`, `stateset`, or `unknown`). A typo like `replacement: guage` fails `promtool check config` and config reload immediately.
 2. Runtime validation during relabeling:
-   * If a dynamic replacement such as `$1` or `uppercase` produces an unrecognized `__type__` value at runtime, the relabeler normalizes `meta.Type` to `model.MetricTypeUnknown` and removes `__type__` rather than storing an invalid type string in TSDB or sending an invalid enum over Remote Write 2.0.
-   * For sample type compatibility, as noted in [PROM-103](https://github.com/prometheus/proposals/pull/103), TSDB and Remote Write 2.0 require the metadata type to match the physical sample value type (`s.H != nil`). In `scrape_append_v2.go`, if `isHistogram` is true, `meta.Type` can only be `histogram` or `gaugehistogram`; if `isHistogram` is false and a classic histogram suffix is not present, `histogram` and `gaugehistogram` are ignored.
+   * If a dynamic replacement such as `$1` or `uppercase` produces an unrecognized `type` value at runtime, the relabeler normalizes the type to `unknown` and omits `__type__` rather than storing an invalid type string in TSDB or sending an invalid enum over Remote Write 2.0.
+   * As noted in [PROM-103](https://github.com/prometheus/proposals/pull/103), TSDB and Remote Write 2.0 require the metadata type to remain compatible with the physical sample value type (for example, native histogram samples can only have type `histogram` or `gaugehistogram`).
 
 ## Alternatives
 
-### 1. Dedicated metadata relabel actions (`metadata_replace`, `metadata_drop`)
+### 1. Dedicated target metadata field with standard relabel actions
 
-Instead of targeting `__type__`, `__unit__`, and `__help__` with the standard `replace` and `labeldrop` actions, we could introduce dedicated metadata actions in `relabel.Config`, as suggested by [@roidelapluie](https://github.com/prometheus/prometheus/issues/19832#issuecomment-6214046553):
+As proposed by [@jan--f](https://github.com/prometheus/proposals/pull/104#discussion_r4357249380), instead of targeting `__type__`, `__unit__`, and `__help__` via `target_label`, we could add a dedicated `target_metadata` field to `relabel.Config` that accepts `type`, `unit`, or `help` and is mutually exclusive with `target_label`.
 
-* `action: metadata_replace` matches `source_labels` against `regex` and writes `replacement` into the metadata field specified by `target_label` or a new `target_metadata` field, which must be `type`, `unit`, or `help`.
-* `action: metadata_drop` clears the metadata field specified by `target_label` when `source_labels` matches `regex`.
-
-When trying to express all use cases from [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832) with `action: metadata_replace` and `action: metadata_drop`, the central question is whether `source_labels` can also read the metric's existing metadata via the reserved `__type__`, `__unit__`, and `__help__` names:
-
-* If `source_labels` cannot read metadata and only `action: metadata_replace` and `action: metadata_drop` can write to metadata from regular labels like `__name__`, then [Use case 2](#use-case-2-relabel-based-on-type-or-unit-and-preserve-metadata-across-renames) from [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832) is impossible. Operators cannot perform relabel actions based on `TYPE` or `UNIT`, such as appending `_total` to all `counter` metrics that lack the suffix or dropping `info` metrics. Conditional fixes in Use case 1a that only set `counter` when `__type__` is currently empty also become impossible, as does truncating `HELP` to 256 characters in Use case 3b because the existing `HELP` string cannot be matched in `source_labels`.
-* If `source_labels` can read `__type__`, `__unit__`, and `__help__`, then all use cases can be expressed, as shown below:
+Canonically, `__*__` labels in Prometheus (other than `__name__`) are temporary during relabeling and do not persist in TSDB unless `--enable-feature=type-and-unit-labels` is enabled. Because metric metadata is stored durably in TSDB and forwarded via Remote Write 2.0 even when `type-and-unit-labels` is disabled, targeting `__type__`, `__unit__`, or `__help__` via `target_label` can appear surprising. With `target_metadata`, the configuration states explicitly that the rule mutates the metric's metadata record, while reusing the existing relabel actions (`replace`, `lowercase`, `uppercase`, `hashmod`, `keepequal`, `dropequal`). Clearing a metadata field uses `action: replace` with `replacement: ''`, so no separate `metadata_drop` action is needed:
 
 ```yaml
 metric_relabel_configs:
   # Use case 1a: Set type=counter on untyped metrics ending in _total.
   - source_labels: [__name__, __type__]
     regex: 'myapp_.*_total;'
-    target_label: type
+    target_metadata: type
     replacement: counter
-    action: metadata_replace
 
   # Use case 1b: Derive unit from metric name suffix.
   - source_labels: [__name__, __unit__]
     regex: '.*_ms;'
-    target_label: unit
+    target_metadata: unit
     replacement: milliseconds
-    action: metadata_replace
 
   # Use case 1b (clear unit): Strip a misleading unit on a specific metric.
   - source_labels: [__name__]
     regex: 'broken_exporter_cache_hit_ratio'
-    target_label: unit
-    action: metadata_drop
-
-  # Use case 2: Append _total to all counters missing it.
-  # Because this mutates __name__ based on __type__, the action is standard "replace",
-  # which requires __type__ to be readable in source_labels.
-  - source_labels: [__name__, __type__]
-    regex: '(.*);counter'
-    target_label: __name__
-    replacement: '${1}_total'
-    action: replace
-  - source_labels: [__name__, __type__]
-    regex: '(.*_total)_total;counter'
-    target_label: __name__
-    replacement: '$1'
-    action: replace
+    target_metadata: unit
+    replacement: ''
 
   # Use case 3a: Drop HELP for a specific metric prefix.
   - source_labels: [__name__]
     regex: 'jvm_.*'
-    target_label: help
-    action: metadata_drop
+    target_metadata: help
+    replacement: ''
 
   # Use case 3b: Truncate HELP to 256 characters.
-  # Requires reading __help__ in source_labels to capture the first 256 characters.
   - source_labels: [__help__]
     regex: '(.{256}).+'
-    target_label: help
+    target_metadata: help
     replacement: '${1}...'
-    action: metadata_replace
 ```
 
-Comparing both approaches highlights the trade-offs:
+How `target_metadata` works with `--enable-feature=type-and-unit-labels` ([PROM-39](./0039-metadata-labels.md)):
 
-| Dimension                                               | Proposed: `__type__`, `__unit__`, `__help__` with standard actions                                                                    | Alternative 1: `action: metadata_replace`, `action: metadata_drop`                                                                                             |
-|---------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Relabeling based on metadata in Use case 2              | Supported directly via `[__type__, __unit__, __help__]` in `source_labels` with `replace`, `drop`, `keep`, etc.                       | Only works if `[__type__, __unit__, __help__]` are also exposed in `source_labels`; write-only `metadata_*` actions cannot express Use case 2 or Use case 3b   |
-| Compatibility with [PROM-39](./0039-metadata-labels.md) | Matches PROM-39 where `target_label: __type__` with `action: replace` is already specified and tested in `TestTypeUnitReLabel`        | Creates two overlapping ways to relabel type and unit when `type-and-unit-labels` is enabled: `action: replace` on `__type__` vs `action: metadata_replace`    |
-| Semantics of `metadata_drop`                            | Uses existing `replacement: ''` for conditional removal or `action: labeldrop` for unconditional removal                              | Ambiguous because existing `drop` uses `source_labels` and drops the series, while `labeldrop` forbids `source_labels` and matches label names against `regex` |
-| Other actions (`lowercase`, `keepequal`, `dropequal`)   | Work out of the box on `__unit__`, `__type__`, `__help__`                                                                             | Require either adding `metadata_lowercase`, `metadata_keepequal`, etc., or falling back to standard actions                                                    |
-| Config-time validation and `labels.Builder` isolation   | Achieved by validating `target_label: __type__` in `Validate()` and keeping `meta` separate from `lb` in `ProcessBuilderWithMetadata` | Achieved by checking `c.Action == MetadataReplace` in `Validate()`                                                                                             |
+* Because `type-and-unit-labels` is still experimental, we can forbid `target_label: __type__`, `target_label: __unit__`, and `target_label: __help__` at config validation time and require all metadata writes to use `target_metadata: type | unit | help`.
+* On ingestion (scrape exposition, Remote Write, OTLP), metadata takes precedence over any wire `__type__` or `__unit__` labels, and `metadata.Metadata` is the single source of truth entering relabeling.
+* During relabeling, `__type__`, `__unit__`, and `__help__` in `source_labels` read from `metadata.Metadata`, while all mutations to `type`, `unit`, and `help` go through `target_metadata` (updating `metadata.Metadata` immediately so subsequent rules reading `__type__`, `__unit__`, or `__help__` in `source_labels` see the updated value). Label-only actions (`labelkeep`, `labeldrop`, `labelmap`) only touch series labels and never strip metadata.
+* After relabeling, the `--enable-feature=type-and-unit-labels` flag controls whether the post-relabel `type` and `unit` are materialized and preserved as `__type__` and `__unit__` labels on the series.
 
-We prefer the standard actions with `__type__`, `__unit__`, and `__help__` because supporting Use case 2 (relabeling based on type or unit), conditional metadata fixes in Use cases 1a and 1b, and `HELP` truncation in Use case 3b already requires exposing the reserved `__type__`, `__unit__`, and `__help__` labels in `source_labels`, and [PROM-39](./0039-metadata-labels.md) already established `action: replace` on `__type__` and `__unit__`. Backing `__type__`, `__unit__`, and `__help__` with `*metadata.Metadata` in `ProcessBuilderWithMetadata` gives all the validation and performance benefits of `metadata_replace` without introducing duplicate actions.
+#### Key differences between target metadata and target label
 
-### 2. Separate family-level `metadata_relabel_configs` stage
+We are actively debating between `target_label: __type__ | __unit__ | __help__` ([How](#how)) and `target_metadata: type | unit | help` ([Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions)), so please let us know what you prefer. The decision comes down to two trade-offs:
+
+1. Precedent for `target_label: __*__` mutating durable non-label config vs contextualized `target_<context>` fields:
+   Even outside `type-and-unit-labels`, Prometheus already uses `target_label: __*__` for durable non-label config. In target `relabel_configs`, `target_label: __address__`, `__metrics_path__`, `__scheme__`, `__scrape_interval__`, and `__scrape_timeout__` are never stored as TSDB series labels, yet writing to them via `target_label` has durable effects on how the target is scraped. `model/relabel` did not add a contextualized `target_<context>` key to `relabel.Config` for those; it used reserved `__*__` names.
+
+   If Prometheus instead preferred contextualized target fields (`target_<context>`) whenever a relabel rule mutates non-series-label state (such as `target_metadata` for metric metadata), then `__address__`, `__metrics_path__`, and `__scrape_interval__` in target `relabel_configs` would have needed a separate field such as `target_scrape_options: address` or `target_scrape_options: metrics_path` rather than `target_label: __address__`:
+
+   ```yaml
+   # How Prometheus target relabel_configs works today (reserved __*__ in target_label):
+   relabel_configs:
+     - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+       regex: '([^;]+);(\d+)'
+       target_label: __address__
+       replacement: '$1:$2'
+     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+       regex: '(.+)'
+       target_label: __metrics_path__
+       replacement: '$1'
+
+   # What target relabel_configs would look like under a contextualized target_<context> design:
+   relabel_configs:
+     - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+       regex: '([^;]+);(\d+)'
+       target_scrape_options: address
+       replacement: '$1:$2'
+     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+       regex: '(.+)'
+       target_scrape_options: metrics_path
+       replacement: '$1'
+   ```
+
+   Using `target_label: __type__`, `__unit__`, and `__help__` follows the existing `target_label: __address__` and `__metrics_path__` convention across `model/relabel`, whereas `target_metadata` introduces the contextualized `target_<context>` pattern only for metric metadata.
+
+2. Read/write asymmetry and rule chaining:
+   Even with `target_metadata`, reading metadata in regex rules still requires `source_labels: [__name__, __type__]` or `source_labels: [__help__]` so fields can be concatenated in a defined order. Truncating help (Use case 3b) ends up reading `__help__` in `source_labels` and writing `help` in `target_metadata` in the same rule.
+
+   This asymmetry also affects multi-step relabel pipelines where an earlier rule fixes metadata (for example, setting `type` to `counter` on an untyped metric) and a subsequent rule reads `__type__` in `source_labels` (such as appending `_total` to all counters in Use case 2, or filtering series by type). With `target_label: __type__`, chaining works like any other relabel pipeline because the first rule writes `target_label: __type__` and the next rule reads `source_labels: [__name__, __type__]`. With `target_metadata`, the first rule writes `target_metadata: type` while the next rule must read `__type__` from `source_labels`, obscuring that the first rule's output feeds the second rule's input:
+
+   ```yaml
+   # Chaining rules with target_label: rule 1 writes __type__, rule 2 reads __type__.
+   metric_relabel_configs:
+     - source_labels: [__name__, __type__]
+       regex: 'legacy_requests;'
+       target_label: __type__
+       replacement: counter
+     - source_labels: [__name__, __type__]
+       regex: '(.*);counter'
+       target_label: __name__
+       replacement: '${1}_total'
+
+   # The same pipeline with target_metadata: rule 1 writes target_metadata: type,
+   # and rule 2 reads __type__ from source_labels.
+   metric_relabel_configs:
+     - source_labels: [__name__, __type__]
+       regex: 'legacy_requests;'
+       target_metadata: type
+       replacement: counter
+     - source_labels: [__name__, __type__]
+       regex: '(.*);counter'
+       target_label: __name__
+       replacement: '${1}_total'
+   ```
+
+   If we adopt `target_metadata`, there are three ways to mitigate this in rule chaining:
+
+   * Implicitly update the corresponding `__type__`, `__unit__`, or `__help__` label whenever `target_metadata` is written:
+
+     ```yaml
+     - source_labels: [__name__, __type__]
+       regex: 'legacy_requests;'
+       target_metadata: type # Also updates __type__ for subsequent rules and type-and-unit-labels.
+       replacement: counter
+     ```
+
+   * Allow setting `target_metadata` and `target_label` together when the rule author explicitly wants subsequent rules (or `type-and-unit-labels`) to depend on the new label value:
+
+     ```yaml
+     - source_labels: [__name__, __type__]
+       regex: 'legacy_requests;'
+       target_metadata: type
+       target_label: __type__ # Explicitly update __type__ so subsequent rules can depend on the new value.
+       replacement: counter
+     ```
+
+   * Or also introduce `source_metadata: [type | unit | help]` alongside `source_labels`, concatenated in a fixed order (`source_labels` followed by `source_metadata`, joined by `separator`) when both are specified on a rule:
+
+     ```yaml
+     metric_relabel_configs:
+       # Match __name__ from source_labels and type from source_metadata ("<__name__>;<type>").
+       - source_labels: [__name__]
+         source_metadata: [type]
+         regex: 'legacy_requests;'
+         target_metadata: type
+         replacement: counter
+
+       # Subsequent rule reads the updated type from source_metadata.
+       - source_labels: [__name__]
+         source_metadata: [type]
+         regex: '(.*);counter'
+         target_label: __name__
+         replacement: '${1}_total'
+
+       # Use case 3b: Truncate HELP using only source_metadata and target_metadata.
+       - source_metadata: [help]
+         regex: '(.{256}).+'
+         target_metadata: help
+         replacement: '${1}...'
+     ```
+
+     Adding `source_metadata` restores symmetry with `target_metadata`, at the cost of a second new field on `relabel.Config` and an implicit concatenation order when a rule combines `source_labels` and `source_metadata`. To avoid that implicit concatenation order, we would also need `regex_metadata` (or similar per-source matching fields), making this a bit of a rabbit hole.
+
+### 2. Dedicated metadata relabel actions
+
+Instead of targeting `__type__`, `__unit__`, and `__help__` with the standard `replace` and `labeldrop` actions (or using `target_metadata` with standard actions), we could introduce dedicated metadata actions (`metadata_replace`, `metadata_drop`) in `relabel.Config`, as suggested by [@roidelapluie](https://github.com/prometheus/prometheus/issues/19832#issuecomment-6214046553):
+
+* `action: metadata_replace` matches `source_labels` against `regex` and writes `replacement` into the metadata field specified by `target_label` or `target_metadata`, which must be `type`, `unit`, or `help`.
+* `action: metadata_drop` clears the metadata field specified by `target_label` when `source_labels` matches `regex`.
+
+When trying to express all use cases from [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832) with `action: metadata_replace` and `action: metadata_drop`, `source_labels` must still read the metric's existing metadata via the reserved `__type__`, `__unit__`, and `__help__` names (otherwise [Use case 2](#use-case-2-relabel-based-on-type-or-unit-and-preserve-metadata-across-renames), conditional fixes in Use case 1a, and `HELP` truncation in Use case 3b cannot be expressed). Compared to [Alternative 1 (`target_metadata`)](#1-dedicated-target-metadata-field-with-standard-relabel-actions) and the main proposal, introducing dedicated `metadata_*` actions has several drawbacks:
+
+* Existing actions such as `lowercase`, `uppercase`, `keepequal`, and `dropequal` do not work on metadata without adding `metadata_lowercase`, `metadata_keepequal`, etc.
+* `action: metadata_drop` has ambiguous configuration semantics because existing `drop` uses `source_labels` and drops the series, whereas `labeldrop` forbids `source_labels` and matches label names against `regex`. With `target_label` or `target_metadata`, clearing a field uses standard `action: replace` with `replacement: ''`.
+
+### 3. Explicit metadata-prefixed virtual labels
+
+Another option is to keep standard `source_labels`, `target_label`, and standard relabel actions, but name the virtual metadata labels `__metadata_type__`, `__metadata_unit__`, and `__metadata_help__` (or use `__metadata_help__` alongside `__type__` and `__unit__`).
+
+In target relabeling (`relabel_configs`), Prometheus already uses reserved `__*__` control labels such as `__address__`, `__metrics_path__`, `__scheme__`, `__scrape_interval__`, and `__scrape_timeout__` (even though those specific control labels only apply to target `relabel_configs`, not `metric_relabel_configs` or `write_relabel_configs`). Mutating those labels via `target_label` has durable side effects on how the target is scraped without storing literal `__address__` or `__metrics_path__` labels in TSDB. Using the `__metadata_*__` prefix brings that same convention into metric, write, and receive relabeling:
+
+```yaml
+metric_relabel_configs:
+  # Use case 1a: Set type=counter on untyped metrics ending in _total.
+  - source_labels: [__name__, __metadata_type__]
+    regex: 'myapp_.*_total;'
+    target_label: __metadata_type__
+    replacement: counter
+
+  # Use case 3a: Drop HELP for a specific metric prefix.
+  - source_labels: [__name__]
+    regex: 'jvm_.*'
+    target_label: __metadata_help__
+    replacement: ''
+```
+
+Trade-offs of `__metadata_*__` virtual labels:
+
+* The `__metadata_*__` prefix makes it obvious that these labels read and mutate the metric's metadata record (just as `__address__` and `__metrics_path__` mutate target configuration) rather than acting as ordinary temporary labels.
+* It keeps `source_labels` and `target_label` symmetric and requires no new fields or actions on `relabel.Config`.
+* However, [PROM-39](./0039-metadata-labels.md) already standardized `__type__` and `__unit__` as the reserved label names when `type-and-unit-labels` is enabled. Introducing `__metadata_type__` and `__metadata_unit__` creates two sets of reserved names for type and unit (`__type__` vs `__metadata_type__`, and `__unit__` vs `__metadata_unit__`) that must be kept in sync during relabeling. Using the prefix only for `__metadata_help__` avoids duplicating `__type__` and `__unit__`, at the cost of inconsistent naming across the three metadata fields (`__type__`, `__unit__`, `__metadata_help__`).
+
+### 4. Separate family-level metadata relabel stage
 
 We could add a separate `metadata_relabel_configs` section to `scrape_config` that runs once per metric family per scrape over a virtual label set `{__name__, __type__, __unit__, __help__}` before `metric_relabel_configs`.
 
@@ -334,7 +437,7 @@ We did not choose this as the primary mechanism because:
 * Remote Write and OTLP ingestion operate on streams of series rather than text-format metric families.
 * Caching the post-relabel `metadata.Metadata` on `cacheEntry` in `scrapeCache` already avoids per-scrape relabeling cost after the first scrape of a series.
 
-### 3. Declarative `metric_metadata_overrides` or OpenTelemetry Telemetry Policies
+### 5. Declarative metric metadata overrides or OpenTelemetry Telemetry Policies
 
 Instead of extending `relabel_configs`, we could adopt a declarative policy format where metric metadata fields (`name`, `type`, `unit`, `description`/`help`) are addressed explicitly. This could be a Prometheus-specific `metric_metadata_overrides` block, or OpenTelemetry's [OTEP #4738 Telemetry Policy](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/4738-telemetry-policy.md) format (see example transformation policies in [`1.45.0_to_grpc-42.42.0.yaml`](https://github.com/lmolkova/semantic-conventions/blob/fda9cb2294a0801f80ef63f18e93186e7fea4d09/transformations/grpc/1.45.0_to_grpc-42.42.0.yaml) and [`transformations/README.md`](https://github.com/lmolkova/semantic-conventions/blob/fda9cb2294a0801f80ef63f18e93186e7fea4d09/transformations/README.md)):
 
@@ -369,11 +472,11 @@ We did not choose this as a replacement for `relabel_configs` in this proposal b
 * Introducing Telemetry Policies in Prometheus requires a second configuration surface alongside `metric_relabel_configs` and `write_relabel_configs`.
 * Making `metadata.Metadata` mutable in `relabel` does not preclude supporting Telemetry Policies later; static `metric` policies in a future Telemetry Policy integration can compile down to the same metadata mutation primitives.
 
-### 4. OTTL-style transformation language
+### 6. OTTL-style transformation language
 
 Adopting an expression language similar to the OpenTelemetry Collector's `transform` processor across scrape, OTLP, and Remote Write would cover metadata manipulation and arbitrary sample transformations. However, designing, parsing, and maintaining a new transformation DSL in Prometheus has a much larger scope than needed to fix metric metadata, whereas `relabel_configs` is already present at every ingestion and egress point.
 
-### 5. Do nothing and rely on external collectors
+### 7. Do nothing and rely on external collectors
 
 Requiring users to deploy an OpenTelemetry Collector or proxy exporter in front of Prometheus just to set `# TYPE`, fix a unit, or drop a bloated `HELP` string adds operational overhead and does not work for pure Prometheus scrape deployments. Even if Prometheus did not add new metadata manipulation features, we would still need to resolve the existing split-brain between `TestTypeUnitReLabel`, `docs/feature_flags.md`, `scrape_append_v2.go`, and Remote Write 2.0.
 
@@ -384,7 +487,7 @@ Requiring users to deploy an OpenTelemetry Collector or proxy exporter in front 
 
 ## Action Plan
 
-* [ ] Add `model.MetricHelpLabel` (`"__help__"`) and `relabel.ProcessBuilderWithMetadata(lb *labels.Builder, meta *metadata.Metadata, cfgs ...*Config)` in `model/relabel`, including config-time validation for static `__type__` replacements.
-* [ ] Update `scrape` (`scrape_append_v2.go`, `scrape.go`, and `scrapeCache`) to check `isSeriesPartOfFamily` on the pre-relabel name, pass `*metadata.Metadata` through `mutateSampleLabels`, cache post-relabel metadata on `cacheEntry`, and only populate `scrapeCache.metadata` for surviving series ([prometheus#14013](https://github.com/prometheus/prometheus/issues/14013), [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832)).
-* [ ] Update Remote Write 2.0 sender (`queue_manager.go`), Remote Write 2.0 receiver (`write_handler.go`), OTLP converter (`metrics_to_prw.go`), and `receive_relabel_configs` ([prometheus#19675](https://github.com/prometheus/prometheus/pull/19675)) to use `ProcessBuilderWithMetadata` and consistent metadata precedence.
-* [ ] Update `docs/configuration/configuration.md` and `docs/feature_flags.md` to document `__type__`, `__unit__`, and `__help__` relabeling semantics.
+* [ ] Add metadata-aware relabeling support in `model/relabel`, including config-time validation for static `type` replacements.
+* [ ] Update `scrape` so metric metadata is relabeled alongside series labels, preserved across metric renames, and only recorded in the scrape metadata cache when series survive relabeling ([prometheus#14013](https://github.com/prometheus/prometheus/issues/14013), [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832)).
+* [ ] Update Remote Write 2.0 sender, Remote Write 2.0 receiver, OTLP ingestion, and `receive_relabel_configs` ([prometheus#19675](https://github.com/prometheus/prometheus/pull/19675)) to relabel metadata and apply consistent metadata precedence.
+* [ ] Update `docs/configuration/configuration.md` and `docs/feature_flags.md` to document metadata relabeling semantics.
