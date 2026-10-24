@@ -181,11 +181,11 @@ sample contributes nothing, because there is no previous value. This matches wha
 
 Example with `drop_labels: [pod]`, `flush_interval: 15s`, scrapes at `:05`, `:20`, `:35`:
 
-| t   | `x{pod="a"}` | `x{pod="b"}`   | increments in window  | `x:materialized` written   |
-|-----|--------------|----------------|-----------------------|-------------------|
-| :05 | 10           | 100            | (first samples)       |                   |
-| :20 | 15           | 103            | [15s,30s): 5 + 3      | 8 at t=30s        |
-| :35 | 20           | 2 (reset)      | [30s,45s): 5 + 2      | 15 at t=45s       |
+| t   | `x{pod="a"}` | `x{pod="b"}` | increments in window | `x:materialized` written |
+|-----|--------------|--------------|----------------------|--------------------------|
+| :05 | 10           | 100          | (first samples)      |                          |
+| :20 | 15           | 103          | [15s,30s): 5 + 3     | 8 at t=30s               |
+| :35 | 20           | 2 (reset)    | [30s,45s): 5 + 2     | 15 at t=45s              |
 
 Each step of `x:materialized` (8, then 7) is the sum of the source increments in that window,
 including across `pod="b"`'s reset, where summing the raw values would have dropped from 118 to 22.
@@ -342,8 +342,8 @@ Benchmarks cover the append path and the flusher.
    apply to, but only covers scraped input, not remote write or OTLP. It also lets two
    scrape configs define conflicting rules for the same output series, since the
    accumulator is shared across targets.
-6. Use PromQL instead of action types in the configuration. We could validate the query to fail if it includes operations 
-   that cannot be executed at scrape time. However, the closest to `incr_without` would be `sum without (label) (counter)` without `rate`, 
+6. Use PromQL instead of action types in the configuration. We could validate the query to fail if it includes operations
+   that cannot be executed at scrape time. However, the closest to `incr_without` would be `sum without (label) (counter)` without `rate`,
    which returns incorrect values and doesn't account for restarts.
 
 ## Action Plan
