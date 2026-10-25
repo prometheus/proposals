@@ -28,7 +28,7 @@ That shared foundation is an opportunity but will get harder with time. Today th
 
 A third repository shares that foundation, if less directly. The [docs repo](https://github.com/prometheus/docs) that serves as the source for [prometheus.io](https://prometheus.io/) is a Next.js site built on Mantine (v8 as of this writing) and React 19. Its stake here is narrower and mostly one-directional: it is a documentation and marketing site, so it has little use for badges, filter controls, or data tables, and little to offer in the other direction beyond small utilities like a theme switcher.
 
-Design tokens are the exception, and there the docs site is not a bystander but the current source of truth: its `src/theme.ts` is the only one of the three codebases that defines the Prometheus brand palette as code — an orange `prometheusColor` tuple set as `primaryColor` — while Prometheus's UI ships Mantine's default blue and Alertmanager's theme is an empty stub. Anyone walking from prometheus.io into the Prometheus UI and then into Alertmanager's crosses three different visual treatments of the same project. Sharing tokens with the docs site is what fixes that, and it is cheap: tokens can be consumed without the component layer. Prometheus and Alertmanager remain the primary beneficiaries of this proposal; the docs site is a secondary one that comes close to free.
+Design tokens are the exception, and there the docs site is not a bystander but the current source of truth: its `src/theme.ts` is the only one of the three codebases that defines the Prometheus brand palette as code — an orange `prometheusColor` tuple set as `primaryColor` — while Prometheus's UI ships Mantine's default blue and Alertmanager's theme is an empty stub. Anyone walking from prometheus.io into the Prometheus UI and then into Alertmanager's crosses three different visual treatments of the same project. Sharing tokens with the docs site is what fixes that, and it is cheap: tokens can be consumed without the component layer. A shared palette does not mean every surface uses the same primary color. A marketing site can lean on the brand orange, while monitoring UIs are better served by calmer neutrals and blues, where warm colors are reserved for states that need attention. What matters is that these choices are made once, deliberately, in a theme the project owns, rather than inherited from Mantine's defaults. Prometheus and Alertmanager remain the primary beneficiaries of this proposal; the docs site is a secondary one that comes close to free.
 
 This is not a hypothetical concern. Alertmanager's UI was seeded from Prometheus's, and the copies are still visibly copies:
 
@@ -45,22 +45,7 @@ The current solution is copy-paste, and it is already failing in ways that will 
 
 * **Fixes do not propagate.** A bug fixed in one repository's `ErrorBoundary` stays fixed only there. Nobody is notified that a copy exists elsewhere.
 * **The copies drift on contact.** Alertmanager's copies were edited on arrival to remove an icon dependency. Each such edit makes the next sync harder and makes it less obvious the files were ever the same.
-* **No shared visual language.** Components can be copied; design tokens cannot be copied usefully, because there is nothing to copy them from. Prometheus's theme is defined inline in `App.tsx` and sets no brand color, so the UI is Mantine-default blue. The docs site is the only one of the three with both a Prometheus-colored theme and a working color scheme toggle, and nothing connects it to the other two. The two UIs will look meaningfully different even where their components match, and neither looks like prometheus.io.
-* **The toolchains are diverging with nothing pulling them back.** Both UIs are on Mantine 9 and React 19, but almost nothing else agrees:
-
-  |                                    | Alertmanager `ui/mantine-ui` | Prometheus `web/ui`                                          | Docs `prometheus/docs`          |
-  |------------------------------------|------------------------------|--------------------------------------------------------------|---------------------------------|
-  | Mantine / React                    | 9 / 19                       | 9 / 19                                                       | 8 / 19                          |
-  | Package manager                    | npm, no workspace            | pnpm workspaces                                              | npm, no workspace               |
-  | Lint / format                      | Biome                        | ESLint 9 + Prettier                                          | ESLint 9 (`eslint-config-next`) |
-  | Bundler / TypeScript / test runner | Vite 8 / 7 / Vitest 4        | Vite 6 / 5.9 / Vitest 3                                      | Next 16 / 5 / none              |
-  | Theme                              | `src/theme.ts`, empty stub   | inline `createTheme` in `App.tsx`                            | `src/theme.ts`, brand palette   |
-  | Dark mode                          | not implemented              | fully implemented                                            | fully implemented               |
-  | Supply-chain `.npmrc`              | none                         | `allow-git=none`, `ignore-scripts=true`, `min-release-age=3` | none                            |
-
-  The docs column is context, not a convergence target — it is a statically exported Next.js site rather than a Vite SPA, and its tooling should match Next's conventions. Its Mantine 8 pin is an upgrade for the docs repo to make before it adopts the token layer, not a constraint on the library.
-
-* **Contributors cannot move between the two.** Someone who has learned the Prometheus UI has to relearn the tooling, lint rules, and test setup to fix the same bug in Alertmanager.
+* **No shared visual language.** Components can be copied; design tokens cannot be copied usefully, because there is nothing to copy them from. Prometheus's theme is defined inline in `App.tsx` and sets no color choices of its own, so the UI is Mantine-default blue by inheritance rather than by decision. The docs site is the only one of the three with both a deliberate theme and a working color scheme toggle, and nothing connects it to the other two. The two UIs will look meaningfully different even where their components match, and neither shares a visual language with prometheus.io.
 
 ## Goals
 
@@ -85,6 +70,8 @@ The current solution is copy-paste, and it is already failing in ways that will 
 * **A replacement** for `@prometheus-io/codemirror-promql` or `@prometheus-io/lezer-promql`.
 * **A general-purpose design system** for projects outside the Prometheus ecosystem.
 * **A Mantine fork.** The library extends Mantine; it does not wrap or replace it.
+* **Unifying the consumers' build tooling.** The library has its own internal tooling (see [Library tooling](#library-tooling)), but it does not ask Prometheus, Alertmanager, or the docs site to change their package manager, linter, bundler, or Node version. Whether the UIs should converge on common tooling is a separate discussion, and one that may fit better alongside existing mechanisms like `Makefile.common` and `promu`.
+* **A blocker for consumers.** No consumer has to wait on the library to ship a change. See [Adoption and extension](#adoption-and-extension).
 
 ## How
 
@@ -99,6 +86,32 @@ The repository is created by pull request to [`prometheus/org-infra`](https://gi
 ### Versioning
 
 The library uses **independent semantic versioning**, starting at `0.x` while the API is unstable. This is the single most important property of the design, and the main reason for a separate repository rather than a package inside Prometheus's existing UI workspace. See [Alternatives](#alternatives).
+
+Consumers are not in lockstep with the library or with each other. Each one upgrades when it chooses, and nothing requires Prometheus and Alertmanager to be on the same version of the library or to release together.
+
+### Adoption and extension
+
+Adoption is not all or nothing, and the library is never on a consumer's critical path:
+
+* **Opt-in per component.** A consumer imports the components it wants and keeps its own code for everything else. There is no migration that has to happen at once.
+* **Extend without forking.** Components accept Mantine's usual props, `classNames`, and `styles`, and respond to the theme's `components` overrides, so a consumer can adjust a shared component locally. Wrapping a shared component, or copying it into the consumer as a short-term local version, are both acceptable escape hatches.
+* **Local first, upstream later.** A project that needs a new component, or a change it cannot wait for, builds it in its own repository and upstreams it once it has proven out. Alertmanager's UI rewrite, for example, should never stall waiting for a library release.
+* **Tokens without components.** The [token layer](#design-tokens) can be adopted on its own.
+
+### Consumers
+
+The library has to work with each consumer as it is today. These are constraints on the library, not targets for the consumers to converge on:
+
+|                       | Alertmanager `ui/mantine-ui` | Prometheus `web/ui`                                          | Docs `prometheus/docs`        |
+|-----------------------|------------------------------|--------------------------------------------------------------|-------------------------------|
+| Mantine / React       | 9 / 19                       | 9 / 19                                                       | 8 / 19                        |
+| Package manager       | npm, no workspace            | pnpm workspaces                                              | npm, no workspace             |
+| TypeScript            | 7                            | 5.9                                                          | 5                             |
+| Theme                 | `src/theme.ts`, empty stub   | inline `createTheme` in `App.tsx`                            | `src/theme.ts`, brand palette |
+| Dark mode             | not implemented              | fully implemented                                            | fully implemented             |
+| Supply-chain `.npmrc` | none                         | `allow-git=none`, `ignore-scripts=true`, `min-release-age=3` | none                          |
+
+The docs site is a statically exported Next.js site rather than a Vite SPA, so it is also the only consumer that renders the package on the server. Its Mantine 8 pin is an upgrade for the docs repo to make before it adopts the token layer, not a constraint on the library.
 
 ### Packaging
 
@@ -116,15 +129,13 @@ Tokens are seeded from the [Prometheus Design System](https://github.com/AndrejK
 
 Adopting the token layer is how the Prometheus brand palette stops being a local detail of the docs repository.
 
-### Toolchain alignment
+### Library tooling
 
-Aligning the two UIs' toolchains is a **goal of this proposal, not a precondition for it**. The docs site is not part of that alignment — a Next.js site should follow Next's conventions — and consumes the library as a published package like any other dependency. Because the library ships compiled output and type declarations behind peer dependencies, npm-based Alertmanager and pnpm-based Prometheus can both consume it today without either changing anything.
-
-Convergence is still worth pursuing, for contributor mobility, for a working local development loop, and to make shared lint and TypeScript configuration possible. We propose the library itself use **pnpm** (matching the larger consumer, and because pnpm's `file:` protocol resolves peer dependencies from the consuming project correctly, which `pnpm link` does not) and **Biome** (already proven in Alertmanager, and a single tool in place of ESLint, Prettier, and stylelint). Consumers converge over time.
+The library chooses its own internal tooling: **pnpm** (because pnpm's `file:` protocol resolves peer dependencies from the consuming project correctly, which `pnpm link` does not), **Biome** for linting and formatting, and the Vite and Vitest setup that comes with the Mantine extension template. These choices stay inside the library's repository. It is a UI library, not a build tool: it ships compiled output, type declarations, and a stylesheet behind peer dependencies, so npm-based Alertmanager, pnpm-based Prometheus, and the Next.js docs site all consume it as an ordinary npm package without changing anything about how they build.
 
 ### TypeScript version skew
 
-Alertmanager is on TypeScript 7 and Prometheus on 5.9, with the docs site also on 5.x. The library emits conservative declaration files and tests against **both** ends of that range in CI, so that supporting the older consumer is a checked property rather than an assumption. The minimum supported TypeScript version is documented and treated as part of the public API.
+Alertmanager is on TypeScript 7 and Prometheus on 5.9, with the docs site also on 5.x (see [Consumers](#consumers)). The library emits conservative declaration files and tests against **both** ends of that range in CI, so that supporting the older consumer is a checked property rather than an assumption. The minimum supported TypeScript version is documented and treated as part of the public API.
 
 ### Local development loop
 
@@ -137,6 +148,11 @@ Requiring two pull requests to land a change is the main cost of a separate repo
 ### Releasing
 
 Releases are tag-triggered and publish with `pnpm publish --access public`, using **npm trusted publishing via OIDC** — the same mechanism Prometheus's `publish_ui_release` job already uses, requiring `id-token: write` and no long-lived npm token in repository secrets.
+
+There is no fixed release schedule. Because CI does the work, a release costs a tag, so the library releases on demand and often, typically as soon as a merged change is needed by a consumer. Frequent releases are what keep the two-step "change the library, then update the consumer" flow short.
+
+Security fixes are released as a patch as soon as they land. The exposure window for a vulnerability in the library is then the time for each consumer to pick up the patch and ship its own release, not that plus a library release cycle. Prometheus's `min-release-age=3` adds a known three-day delay before a new version can be installed there. Renovate or Dependabot in each consumer picks up new versions automatically.
+
 
 ### Testing and verification
 
@@ -163,6 +179,16 @@ A shared component has to serve both the interactive, removable case and the tho
 * Whether Alertmanager adopts Prometheus's `.npmrc` supply-chain posture. It has none today.
 * Whether the docs site adopts the token layer, and when it upgrades to Mantine 9.
 * Whether the repository stays a single package or grows into a small workspace (for example splitting tokens from components) as the token layer matures.
+* Whether query and visualization components belong in the library after all. They are a non-goal today because they are tightly coupled to Prometheus's data model, but that may be worth revisiting if Alertmanager gains the ability to query Prometheus.
+
+### Risks and downsides
+
+A shared library is not free, and some of the costs are the mirror image of its benefits:
+
+* **Shared dependencies mean shared exposure.** A vulnerability in the library, or in one of its dependencies, affects every consumer at once. Frequent [releases](#releasing) and prompt security patches keep the window short, but the blast radius is larger than for a single copied file.
+* **Less freedom to diverge locally.** A copy can be edited freely, for example to drop a dependency. A shared component has to keep working for every consumer. The [escape hatches](#adoption-and-extension) of wrapping, overriding, or keeping a local version remain open, but taking them gives up some of the benefit.
+* **Two pull requests per shared change.** Changing a shared component means a library PR, a release, and a consumer PR. See [Local development loop](#local-development-loop).
+* **Another repository to maintain.** The library needs reviewers, CI, and releases. With few active UI contributors today, that burden is real, which is why [maintenance](#maintenance) is shared across the consuming projects.
 
 ## Alternatives
 
@@ -221,4 +247,3 @@ Would remove cross-repository friction entirely. Rejected as disproportionate: b
 * [ ] Reconcile `LabelPill` and `LabelBadges`; release `0.2.0`.
 * [ ] Add the token layer and `createPrometheusTheme()`; adopt in Alertmanager, implementing dark mode.
 * [ ] Offer the tokens-only export to `prometheus/docs`, seeded from its existing brand palette.
-* [ ] Align toolchains between the two UIs.
