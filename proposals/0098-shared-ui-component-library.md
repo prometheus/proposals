@@ -153,7 +153,6 @@ There is no fixed release schedule. Because CI does the work, a release costs a 
 
 Security fixes are released as a patch as soon as they land. The exposure window for a vulnerability in the library is then the time for each consumer to pick up the patch and ship its own release, not that plus a library release cycle. Prometheus's `min-release-age=3` adds a known three-day delay before a new version can be installed there. Renovate or Dependabot in each consumer picks up new versions automatically.
 
-
 ### Testing and verification
 
 * Storybook for component development and visual review, giving the UX WG something concrete to review against.
@@ -188,7 +187,7 @@ A shared library is not free, and some of the costs are the mirror image of its 
 * **Shared dependencies mean shared exposure.** A vulnerability in the library, or in one of its dependencies, affects every consumer at once. Frequent [releases](#releasing) and prompt security patches keep the window short, but the blast radius is larger than for a single copied file.
 * **Less freedom to diverge locally.** A copy can be edited freely, for example to drop a dependency. A shared component has to keep working for every consumer. The [escape hatches](#adoption-and-extension) of wrapping, overriding, or keeping a local version remain open, but taking them gives up some of the benefit.
 * **Two pull requests per shared change.** Changing a shared component means a library PR, a release, and a consumer PR. See [Local development loop](#local-development-loop).
-* **Another repository to maintain.** The library needs reviewers, CI, and releases. With few active UI contributors today, that burden is real, which is why [maintenance](#maintenance) is shared across the consuming projects.
+* **Another repository to maintain.** The library needs reviewers, CI, and releases. With few active UI contributors today, that burden is real.
 
 ## Alternatives
 
