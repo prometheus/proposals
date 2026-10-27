@@ -123,7 +123,8 @@ flowchart LR
 
 ```yaml
 metric_relabel_configs:
-  # Set type=counter on untyped (__type__ == "") metrics ending in _total.
+  # Infer type=counter on legacy untyped (__type__ == "") metrics that follow
+  # the _total naming convention, so PromQL and storage can rely on type metadata.
   - source_labels: [__name__, __type__]
     regex: 'myapp_.*_total;'
     target_label: __type__
@@ -181,7 +182,8 @@ receive_relabel_configs:
 
 ```yaml
 metric_relabel_configs:
-  # Ensure all counter metrics end with _total in two RE2 steps to avoid _total_total.
+  # When migrating to legacy naming conventions, append _total to counter metrics
+  # in two RE2 steps to avoid _total_total.
   - source_labels: [__name__, __type__]
     regex: '(.*);counter'
     target_label: __name__
