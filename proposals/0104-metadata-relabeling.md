@@ -17,6 +17,10 @@
 
 * **Other docs or links:**
   * [PROM-39: Metric Family Identity Extension: Type and Unit as Labels](./0039-metadata-labels.md)
+  * [PROM-78: Native metadata](https://github.com/prometheus/proposals/pull/78)
+  * [PROM-94: Unquoted UTF-8 names](./0094-unquoted-utf8-names.md)
+  * [PROM-97: PromQL Metadata querying / promotion](https://github.com/prometheus/proposals/pull/97)
+  * [PROM-99: Native Metadata support in PromQL](https://github.com/prometheus/proposals/pull/99)
   * [PROM-103: Recording Rule Metadata Storage and Deduction](https://github.com/prometheus/proposals/pull/103)
 
 > TL;DR: This document proposes allowing operators to inspect, rewrite, and drop metric metadata `type`, `unit`, and `help` across `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`. It unifies the two unsynchronized metadata paths in Prometheus so that relabeling `__type__`, `__unit__`, and a virtual `__help__` label updates both the `metadata.Metadata` record and the `type-and-unit-labels` series labels, while fixing metadata loss on metric renames and stale metadata retention on dropped series. It also evaluates alternatives including a dedicated `target_metadata` field, dedicated `metadata_replace` and `metadata_drop` actions, and `__metadata_*__` virtual labels.
@@ -63,7 +67,7 @@ Inspecting the codebase reveals several bugs and inconsistencies between these t
 
 Goals and use cases for the solution as proposed in [How](#how):
 
-* Allow operators to inspect, set, rewrite, and clear `type`, `unit`, and `help` metadata in `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs` from [prometheus#19675](https://github.com/prometheus/prometheus/pull/19675).
+* Allow operators to inspect, set, rewrite, and clear `type`, `unit`, and `help` metadata in `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs` from [prometheus#19675](https://github.com/prometheus/prometheus/pull/19675), with a design that extends to arbitrary key-value native metadata ([PROM-78](https://github.com/prometheus/proposals/pull/78), [PROM-97](https://github.com/prometheus/proposals/pull/97), [PROM-99](https://github.com/prometheus/proposals/pull/99)).
 * Keep `metadata.Metadata` records and `__type__` and `__unit__` series labels synchronized across scrape, TSDB storage, WAL metadata records, `/api/v1/metadata`, Remote Write 2.0, and OTLP ingestion.
 * Work consistently whether `--enable-feature=type-and-unit-labels` is enabled or disabled.
 * Preserve a metric's metadata when its `__name__` is renamed during relabeling, and exclude metadata from `scrapeCache` when all series of a metric family are dropped as described in [prometheus#14013](https://github.com/prometheus/prometheus/issues/14013).
@@ -233,6 +237,53 @@ To keep `relabel.Process` focused on string key-value transformations while stil
    * During relabeling, `relabel.Process` treats `__type__`, `__unit__`, and `__help__` as ordinary string values.
    * When constructing `metadata.Metadata` and syncing series labels after relabeling, the ingestion, receiver, or storage layer (`scrape`, Remote Write 2.0, OTLP, and `AppenderV2`) validates the final `type` value. If a dynamic replacement such as `$1` or `uppercase` produced an unrecognized `type` string, that layer normalizes the type to `unknown` and omits `__type__` from series labels rather than storing an invalid type in TSDB or sending an unrepresentable enum over Remote Write 2.0, and checks compatibility with the physical sample value type.
 
+### 4. Extending to arbitrary key-value native metadata
+
+Today, Prometheus `metadata.Metadata` and TSDB per-series metadata in [prometheus#19563](https://github.com/prometheus/prometheus/pull/19563) only carry the three fixed metric descriptor fields `type`, `unit`, and `help`. However, [PROM-78](https://github.com/prometheus/proposals/pull/78), [PROM-97](https://github.com/prometheus/proposals/pull/97), and [PROM-99](https://github.com/prometheus/proposals/pull/99) propose extending native metadata to arbitrary key-value pairs, often scoped by namespace (such as OpenTelemetry `resource.*` and `scope.*` attributes, or Service Discovery `target.*` metadata).
+
+While the built-in metric descriptor fields map to `__type__`, `__unit__`, and `__help__`, arbitrary native metadata keys cannot be exposed as bare names in `source_labels` and `target_label` without colliding with series labels, nor as arbitrary `__<key>__` names without colliding with internal Prometheus labels (`__name__`, `__address__`, `__meta_*`, `__tmp_*`). Under the virtual-label model, arbitrary key-value metadata maps to a reserved prefix namespace such as `__metadata_<key>__` (or `~<key>` if aligned with the PromQL metadata selector syntax in [PROM-99](https://github.com/prometheus/proposals/pull/99); with [PROM-94](./0094-unquoted-utf8-names.md), dotted keys such as `__metadata_resource.service.name__` do not require quoting):
+
+```yaml
+relabel_configs:
+  # Store a single Kubernetes SD label as target native metadata.
+  - source_labels: [__meta_kubernetes_namespace]
+    target_label: __metadata_target.k8s.namespace__
+
+  # Bulk-map all Kubernetes pod labels into target native metadata using labelmap.
+  - action: labelmap
+    regex: '__meta_kubernetes_pod_label_(.+)'
+    replacement: '__metadata_target.k8s.pod.label.$1__'
+
+receive_relabel_configs:
+  # Rewrite an arbitrary native metadata value on OTLP or Remote Write receive.
+  - source_labels: [__metadata_resource.deployment.environment__]
+    regex: 'prod-(.+)'
+    target_label: __metadata_resource.deployment.environment__
+    replacement: 'production'
+
+  # Promote a native metadata key into a series-identifying label.
+  - source_labels: [__metadata_resource.service.name__]
+    target_label: service_name
+
+  # Demote a high-cardinality series label into native metadata and drop the label.
+  - source_labels: [container_id]
+    target_label: __metadata_resource.container.id__
+  - action: labeldrop
+    regex: 'container_id'
+
+  # Bulk-drop noisy native metadata keys by regex.
+  - action: labeldrop
+    regex: '__metadata_resource\.process\..*__'
+```
+
+Under this extension:
+
+* `__type__`, `__unit__`, and `__help__` remain reserved names for the metric's `type`, `unit`, and `help` (or act as short aliases for `__metadata_type__`, `__metadata_unit__`, and `__metadata_help__`; see [Alternative 3](#3-explicit-metadata-prefixed-virtual-labels)).
+* `action: labelkeep` only filters series labels, so existing `labelkeep` rules (such as `regex: __name__|job|instance`) never strip native metadata.
+* `action: labeldrop` and `action: labelmap` can match and transform arbitrary metadata keys whenever `regex` matches the `__metadata_*__` prefix.
+
+See [Key differences between target metadata and target label](#key-differences-between-target-metadata-and-target-label) for how arbitrary key-value metadata looks under [Alternative 1 (`target_metadata`)](#1-dedicated-target-metadata-field-with-standard-relabel-actions).
+
 ## Alternatives
 
 ### 1. Dedicated target metadata field with standard relabel actions
@@ -283,7 +334,7 @@ How `target_metadata` works with `--enable-feature=type-and-unit-labels` ([PROM-
 
 #### Key differences between target metadata and target label
 
-We are actively debating between `target_label: __type__ | __unit__ | __help__` ([How](#how)) and `target_metadata: type | unit | help` ([Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions)), so please let us know what you prefer. The decision comes down to two trade-offs:
+We are actively debating between `target_label: __type__ | __unit__ | __help__` ([How](#how)) and `target_metadata: type | unit | help` ([Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions)), so please let us know what you prefer. The decision comes down to the following trade-offs:
 
 1. Precedent for `target_label: __*__` mutating durable non-label config vs contextualized `target_<context>` fields:
    Even outside `type-and-unit-labels`, Prometheus already uses `target_label: __*__` for durable non-label config. In target `relabel_configs`, `target_label: __address__`, `__metrics_path__`, `__scheme__`, `__scrape_interval__`, and `__scrape_timeout__` are never stored as TSDB series labels, yet writing to them via `target_label` has durable effects on how the target is scraped. `model/relabel` did not add a contextualized `target_<context>` key to `relabel.Config` for those; it used reserved `__*__` names.
@@ -393,6 +444,31 @@ We are actively debating between `target_label: __type__ | __unit__ | __help__` 
      ```
 
      Adding `source_metadata` restores symmetry with `target_metadata`, at the cost of a second new field on `relabel.Config` and an implicit concatenation order when a rule combines `source_labels` and `source_metadata`. To avoid that implicit concatenation order, we would also need `regex_metadata` (or similar per-source matching fields), making this a bit of a rabbit hole.
+
+3. Arbitrary key-value native metadata ([PROM-78](https://github.com/prometheus/proposals/pull/78)):
+   When native metadata expands beyond `type`, `unit`, and `help` to arbitrary key-value pairs (such as OpenTelemetry `resource.*` attributes or Service Discovery `target.*` metadata), `source_metadata` and `target_metadata` can accept any metadata key name directly without a `__metadata_...__` wrapper:
+
+   ```yaml
+   relabel_configs:
+     # Store a single Kubernetes SD label as target native metadata.
+     - source_labels: [__meta_kubernetes_namespace]
+       target_metadata: target.k8s.namespace
+
+   receive_relabel_configs:
+     # Rewrite an arbitrary native metadata value.
+     - source_metadata: [resource.deployment.environment]
+       regex: 'prod-(.+)'
+       target_metadata: resource.deployment.environment
+       replacement: 'production'
+
+     # Promote a native metadata key into a series label.
+     - source_metadata: [resource.service.name]
+       target_label: service_name
+   ```
+
+   Separating `source_metadata` and `target_metadata` keeps arbitrary metadata keys in their own namespace so they never collide with label names, and makes single-key promotion (`source_metadata` to `target_label`) and demotion (`source_labels` to `target_metadata`) self-explanatory.
+
+   However, because `target_metadata` only specifies a single static key name, bulk regex operations across metadata keys (such as mapping all `__meta_kubernetes_pod_label_(.+)` labels into `target.k8s.pod.label.$1` metadata, or dropping all `resource.process.*` metadata keys by regex) cannot use existing `labelmap`, `labeldrop`, or `labelkeep`. Supporting bulk key operations under `target_metadata` would require adding parallel `metadatamap`, `metadatadrop`, and `metadatakeep` actions (or a key-level target selector), whereas the prefixed virtual-label approach in [Extending to arbitrary key-value native metadata](#4-extending-to-arbitrary-key-value-native-metadata) reuses `labelmap` and `labeldrop` directly.
 
 ### 2. Dedicated metadata relabel actions
 
