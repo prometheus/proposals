@@ -223,13 +223,15 @@ metric_relabel_configs:
 
 ### 3. Validation of `type` and `unit` values
 
-Allowing arbitrary regex replacements on `type` risks silent typos such as `replacement: guage`. We propose two layers of validation:
+Unlike `unit` and `help`, which are free-form UTF-8 strings, `type` affects how series are encoded, stored, and queried: Remote Write 2.0 serializes `Metadata.MetricType` as a fixed protobuf enum that cannot represent arbitrary strings, `AppenderV2` and TSDB require the metadata type to remain compatible with the physical sample value encoding (for example, native histogram samples can only have type `histogram` or `gaugehistogram`, as noted in [PROM-103](https://github.com/prometheus/proposals/pull/103)), and PromQL uses `type` for counter/gauge annotations.
+
+To keep `relabel.Process` focused on string key-value transformations while still catching typos early, validation is split across two layers:
 
 1. Config-load validation:
-   * When a `replace` rule targets `type` with a static `replacement` string (no `$1` regex expansion), config validation checks that `replacement` is either `""` or a valid lowercase metric type (`counter`, `gauge`, `histogram`, `gaugehistogram`, `summary`, `info`, `stateset`, or `unknown`). A typo like `replacement: guage` fails `promtool check config` and config reload immediately.
-2. Runtime validation during relabeling:
-   * If a dynamic replacement such as `$1` or `uppercase` produces an unrecognized `type` value at runtime, the relabeler normalizes the type to `unknown` and omits `__type__` rather than storing an invalid type string in TSDB or sending an invalid enum over Remote Write 2.0.
-   * As noted in [PROM-103](https://github.com/prometheus/proposals/pull/103), TSDB and Remote Write 2.0 require the metadata type to remain compatible with the physical sample value type (for example, native histogram samples can only have type `histogram` or `gaugehistogram`).
+   * When a `replace` rule targets `type` with a static `replacement` string (no `$1` regex expansion), config validation checks `replacement` against `""` and the known `model.MetricType` constants in `prometheus/common/model` (`counter`, `gauge`, `histogram`, `gaugehistogram`, `summary`, `info`, `stateset`, or `unknown`). A typo like `replacement: guage` fails `promtool check config` and config reload immediately.
+2. Runtime validation at the metadata and storage boundary:
+   * During relabeling, `relabel.Process` treats `__type__`, `__unit__`, and `__help__` as ordinary string values.
+   * When constructing `metadata.Metadata` and syncing series labels after relabeling, the ingestion, receiver, or storage layer (`scrape`, Remote Write 2.0, OTLP, and `AppenderV2`) validates the final `type` value. If a dynamic replacement such as `$1` or `uppercase` produced an unrecognized `type` string, that layer normalizes the type to `unknown` and omits `__type__` from series labels rather than storing an invalid type in TSDB or sending an unrepresentable enum over Remote Write 2.0, and checks compatibility with the physical sample value type.
 
 ## Alternatives
 
