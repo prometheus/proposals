@@ -399,7 +399,7 @@ We are actively debating between `target_label: __type__ | __unit__ | __help__` 
 
    If we adopt `target_metadata`, there are three ways to mitigate this in rule chaining:
 
-   * Implicitly update the corresponding `__type__`, `__unit__`, or `__help__` label whenever `target_metadata` is written:
+   * Implicitly update the corresponding `__type__`, `__unit__`, or `__help__` label whenever `target_metadata` is written (which requires forbidding `target_label: __type__ | __unit__ | __help__` so a rule using `__type__` as a temporary label cannot be silently overwritten by a later `target_metadata: type` rule, whereas only populating `__type__` initially before relabeling would break subsequent rules that filter on `__type__`):
 
      ```yaml
      - source_labels: [__name__, __type__]
@@ -443,7 +443,7 @@ We are actively debating between `target_label: __type__ | __unit__ | __help__` 
          replacement: '${1}...'
      ```
 
-     Adding `source_metadata` restores symmetry with `target_metadata`, at the cost of a second new field on `relabel.Config` and an implicit concatenation order when a rule combines `source_labels` and `source_metadata`. To avoid that implicit concatenation order, we would also need `regex_metadata` (or similar per-source matching fields), making this a bit of a rabbit hole.
+     Adding `source_metadata` restores symmetry with `target_metadata`, at the cost of a second new field on `relabel.Config` and an implicit concatenation order when a rule combines `source_labels` and `source_metadata`. Forbidding `source_labels` and `source_metadata` in the same rule would avoid that concatenation order without needing `regex_metadata` and `replacement_metadata`, but then a single rule could not match both a label and metadata together (such as matching `__name__` and an empty `type` in Use case 1a, or renaming `__name__` when `type` is `counter` in Use case 2) without copying metadata into a temporary label in a preceding rule.
 
 3. Arbitrary key-value native metadata ([PROM-78](https://github.com/prometheus/proposals/pull/78)):
    When native metadata expands beyond `type`, `unit`, and `help` to arbitrary key-value pairs (such as OpenTelemetry `resource.*` attributes or Service Discovery `target.*` metadata), `source_metadata` and `target_metadata` can accept any metadata key name directly without a `__metadata_...__` wrapper:
