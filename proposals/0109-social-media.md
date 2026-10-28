@@ -64,7 +64,7 @@ We will publish to up to five channels from a single workflow:
 We want the accounts to read like an engineering project run by practitioners, not a corporate marketing feed. Good candidates for posts fall into four buckets:
 
 * **Release highlights that show the feature, not just a version number.** When Prometheus, Alertmanager, `client_golang`, or a major exporter ships a notable release, post a short explanation of a specific problem it solves, paired with a PromQL snippet, benchmark chart, or UI screenshot.
-* **Blog posts and deep dives.** When a blog post merges under `blog/posts/` in [prometheus/docs](https://github.com/prometheus/docs), a GitHub Action in `prometheus/docs` can automatically open a ready-to-review PR in `prometheus/social` with the post title, summary, and link.
+* **Blog posts and deep dives.** When a blog post merges under `blog/posts/` in [prometheus/docs](https://github.com/prometheus/docs), the author or sponsoring maintainer opens a manual follow-up PR in `prometheus/social` with the post summary and link, guided by the blog post checklist in `prometheus/docs`.
 * **Cool stories from the community.** Users do clever things with Prometheus every week. We should amplify un-gated technical write-ups on how teams debugged a nasty production outage with Prometheus, scaled TSDB or remote write, built an exporter for unusual hardware, or completed an LFX or GSoC mentorship project.
 * **Project events and calls for input.** Dev Summit agendas and recaps, PromCon CFP dates and talk recordings, security advisories, and user surveys.
 
