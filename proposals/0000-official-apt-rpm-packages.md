@@ -7,6 +7,7 @@
 
 * **Related Issues and PRs:**
   * https://github.com/prometheus/promu/issues/93
+  * Whether to move Prometheus from promu to goreleaser is a separate, undecided question: [Announcing our intention to move to goreleaser](https://groups.google.com/g/prometheus-developers/c/Akx0WcSqQqM/m/EZOjvvhyAQAJ) (prometheus-developers, June 2021, retracted the next day pending discussion)
 
 * **Other docs or links:**
   * [Debian package tracker for prometheus](https://tracker.debian.org/pkg/prometheus)
@@ -70,7 +71,7 @@ Each component builds its own .deb and .rpm with nfpm in its release job and att
 
 **Packaging in component repos.** Component-specific packaging files, such as the systemd unit and default flags, live in the component repo next to its other packaging settings, starting with node_exporter. A shared reusable workflow builds the packages and attaches them to the release. Shared defaults cover the common parts, so a component adds only what differs and opts in with a one-line setting. Opt-in is by convention: a release that contains .deb and .rpm assets is included, so no central registry is needed. Whether this is a promu step (nfpm is a Go library) or a shared workflow is an open question.
 
-**Independent of the release tool.** The publishing side only requires that a release has .deb and .rpm assets next to its tarballs and checksums. It does not care how they were created. A component on promu can build them with nfpm in a promu step or a shared workflow, and a component on goreleaser can use goreleaser's built-in nfpm support. Both release processes are supported, so this proposal is orthogonal to the open question of migrating Prometheus to goreleaser: it neither depends on that migration nor blocks it, and a component can change release tools later without touching the repositories. The asset naming and metadata conventions that the publishing job relies on are the contract, and they are documented as part of the shared defaults.
+**Independent of the release tool.** The publishing side only requires that a release has .deb and .rpm assets next to its tarballs and checksums. It does not care how they were created. A component on promu can build them with nfpm in a promu step or a shared workflow, and a component on goreleaser can use goreleaser's built-in nfpm support. Both release processes are supported, so this proposal is orthogonal to the open question of [migrating Prometheus to goreleaser](https://groups.google.com/g/prometheus-developers/c/Akx0WcSqQqM/m/EZOjvvhyAQAJ): it neither depends on that migration nor blocks it, and a component can change release tools later without touching the repositories. The asset naming and metadata conventions that the publishing job relies on are the contract, and they are documented as part of the shared defaults.
 
 **Publishing repo.** A dispatch event carries component and version. The job downloads the release assets, verifies the sha256 checksums, regenerates metadata with `apt-ftparchive` and `createrepo_c`, signs it, and publishes the index. It is idempotent, keyed on component and version, and reads each asset once to compute sizes and hashes. aptly is not used because it keeps a local database, which fits stateless CI poorly. A pilot home under `prometheus-community` is suggested.
 
