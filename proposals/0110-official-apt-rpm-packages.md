@@ -6,6 +6,7 @@
 * **Implementation Status:** Not implemented
 
 * **Related Issues and PRs:**
+  * https://github.com/prometheus/proposals/pull/110
   * https://github.com/prometheus/promu/issues/93
   * Whether to move Prometheus from promu to goreleaser is a separate, undecided question: [Announcing our intention to move to goreleaser](https://groups.google.com/g/prometheus-developers/c/Akx0WcSqQqM/m/EZOjvvhyAQAJ) (prometheus-developers, June 2021, retracted the next day pending discussion)
 
