@@ -53,7 +53,7 @@ Prometheus users, contributors, mentees, and maintainers who want to share or fo
 
 We will publish to up to five channels from a single workflow:
 
-* **LinkedIn.** Create an official "Prometheus" project page, coordinated with CNCF for trademark and admin continuity, with multiple Steering Committee members as page admins.
+* **LinkedIn, [`prometheus-monitoring`](https://www.linkedin.com/company/prometheus-monitoring).** Operate the official [Prometheus Monitoring LinkedIn page](https://www.linkedin.com/company/prometheus-monitoring), coordinated with CNCF for trademark and admin continuity, with multiple Steering Committee members as page admins.
 * **X, `@PrometheusIO`.** Bring the existing account back into regular use and restore its link on [src/app/community/community.md](https://github.com/prometheus/docs/blob/main/src/app/community/community.md).
 * **Bluesky, `@prometheus.io`.** Keep the DNS-verified handle active as a first-class channel.
 * **Mastodon, `@Prometheus@chaos.social`.** Keep the existing fediverse account active alongside Bluesky, X, and LinkedIn.
