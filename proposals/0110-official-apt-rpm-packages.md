@@ -99,14 +99,14 @@ Use one dedicated repo-signing key with tightly scoped Actions access, several h
 
 The platform choice is the least settled part of this proposal. The comparison below uses the same requirements for every option, and the alternatives follow in detail. My current view is the proposed design first, with Cloudflare R2 as the planned fallback if the proof of concept shows that the redirect or RPM signing does not work.
 
-| Requirement | Static index + GitHub redirect (proposed) | Cloudflare R2 + static serving | OBS | packagecloud | Cloudsmith | Release assets only |
-|---|---|---|---|---|---|---|
-| Signed apt and dnf repos | Yes; RPM signing open | Yes; central signing | Yes; OBS signs (not verified) | Signing listed for Enterprise plan; open-source plan not verified | Signing features listed | No repo |
-| Component-owned packaging | Yes, nfpm with shared defaults | Yes | Specs and artifacts pushed | Yes, push by CLI or API | Yes, push by CLI or API | Yes |
-| Automatic publication | Dispatch plus reconcile | Same | Release tooling pushes | CI push | CI push | Release upload only |
-| Bandwidth cost | Index only; GitHub serves binaries | Zero egress; storage beyond 10 GB-month is billed | OBS host, or own bucket | Free for Open Source program by request; limits not published | Free tier, at least 200GB delivery | GitHub |
-| Shared key custody | Project runs it | Project runs it | OBS-managed key | Not verified | Not verified | None |
-| Operational load | Workflow plus redirect | Workflow plus bucket and custom domain | Low after setup; learning curve | Low | Low | Lowest |
+| Requirement               | Static index + GitHub redirect (proposed) | Cloudflare R2 + static serving                    | OBS                             | packagecloud                                                      | Cloudsmith                         | Release assets only |
+|---------------------------|-------------------------------------------|---------------------------------------------------|---------------------------------|-------------------------------------------------------------------|------------------------------------|---------------------|
+| Signed apt and dnf repos  | Yes; RPM signing open                     | Yes; central signing                              | Yes; OBS signs (not verified)   | Signing listed for Enterprise plan; open-source plan not verified | Signing features listed            | No repo             |
+| Component-owned packaging | Yes, nfpm with shared defaults            | Yes                                               | Specs and artifacts pushed      | Yes, push by CLI or API                                           | Yes, push by CLI or API            | Yes                 |
+| Automatic publication     | Dispatch plus reconcile                   | Same                                              | Release tooling pushes          | CI push                                                           | CI push                            | Release upload only |
+| Bandwidth cost            | Index only; GitHub serves binaries        | Zero egress; storage beyond 10 GB-month is billed | OBS host, or own bucket         | Free for Open Source program by request; limits not published     | Free tier, at least 200GB delivery | GitHub              |
+| Shared key custody        | Project runs it                           | Project runs it                                   | OBS-managed key                 | Not verified                                                      | Not verified                       | None                |
+| Operational load          | Workflow plus redirect                    | Workflow plus bucket and custom domain            | Low after setup; learning curve | Low                                                               | Low                                | Lowest              |
 
 ### How we test and verify
 
