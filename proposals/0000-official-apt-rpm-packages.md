@@ -100,10 +100,10 @@ The platform choice is the least settled part of this proposal. The comparison b
 
 | Requirement | Static index + GitHub redirect (proposed) | Cloudflare R2 + static serving | OBS | packagecloud | Cloudsmith | Release assets only |
 |---|---|---|---|---|---|---|
-| Signed apt and dnf repos | Yes; RPM signing open | Yes; central signing | Yes; OBS signs (not verified) | Signing features listed (not verified in detail) | Signing features listed | No repo |
+| Signed apt and dnf repos | Yes; RPM signing open | Yes; central signing | Yes; OBS signs (not verified) | Signing listed for Enterprise plan; open-source plan not verified | Signing features listed | No repo |
 | Component-owned packaging | Yes, nfpm with shared defaults | Yes | Specs and artifacts pushed | Yes, push by CLI or API | Yes, push by CLI or API | Yes |
 | Automatic publication | Dispatch plus reconcile | Same | Release tooling pushes | CI push | CI push | Release upload only |
-| Bandwidth cost | Index only; GitHub serves binaries | Zero egress; storage beyond 10 GB-month is billed | OBS host, or own bucket | Open-source plan by request; terms unverified | Free tier, at least 200GB delivery | GitHub |
+| Bandwidth cost | Index only; GitHub serves binaries | Zero egress; storage beyond 10 GB-month is billed | OBS host, or own bucket | Free for Open Source program by request; limits not published | Free tier, at least 200GB delivery | GitHub |
 | Shared key custody | Project runs it | Project runs it | OBS-managed key | Not verified | Not verified | None |
 | Operational load | Workflow plus redirect | Workflow plus bucket and custom domain | Low after setup; learning curve | Low | Low | Lowest |
 
@@ -134,7 +134,7 @@ Adoption is opt-in, so no user or repo is migrated without choosing to be.
 * Do apt and dnf both follow the redirect chain to GitHub's asset host? The proof of concept settles this.
 * Does the Cloudflare plan in use allow the redirect rule or Worker this design needs, within its limits?
 * How much storage would a full R2 copy of all releases need, and does it fit the free tier or require sponsorship? Not estimated yet.
-* Is the packagecloud open-source plan available to Prometheus on terms that suit the project? I have not confirmed the terms with the vendor.
+* Would packagecloud grant Prometheus its Free for Open Source program on terms that suit the project (limits, signing, key custody)? The 2021 announcement states none of these, so they need confirming with the vendor.
 * Are the exporter repos' CI configurations shared (for example through a CircleCI orb), so the dispatch step needs adding in one place only? This is from memory and unverified.
 
 ## Alternatives
@@ -170,7 +170,7 @@ Kubernetes builds and publishes its packages through OBS: its release tooling pu
 
 ### 3. packagecloud
 
-A hosted apt and rpm repository service. The existing third-party Prometheus repositories already publish there, so some users have it configured. The author expects Prometheus to qualify for packagecloud's free open-source plan, but I could not confirm the plan's terms from the vendor: third-party listings show differing free-plan figures, and open-source plans appear to be available by request.
+A hosted apt and rpm repository service. The existing third-party Prometheus repositories already publish there, so some users have it configured. packagecloud runs a [Free for Open Source program](https://blog.packagecloud.io/packagecloud-loves-oss/) (announced November 2021): open-source organizations and individuals can host packages for free, and the examples it gives are DEB and RPM repositories. To get it, a project starts the 14-day trial and then contacts packagecloud to request the program. The announcement states no eligibility criteria, storage or bandwidth limits, or conditions such as attribution, and it lists GPG signatures only among the Enterprise plan's features, so whether signing is included is unconfirmed. The author expects Prometheus to qualify, but approval is not guaranteed and current terms need to be confirmed with the vendor.
 
 * **Pros**
   * No infrastructure to run, with a CDN and signing features included.
@@ -178,8 +178,8 @@ A hosted apt and rpm repository service. The existing third-party Prometheus rep
   * Familiar to users of the current third-party repos.
 * **Cons**
   * A vendor dependency for the project-wide install path. Moving later means changing every user's repo config.
-  * Plan limits, such as storage and bandwidth, and the approval process are not confirmed.
-  * Key custody under the hosted signing model is not verified.
+  * The program is granted on request, with no published limits, so quota against Prometheus demand and the terms today are unknown. The announcement is from 2021.
+  * Signing availability on the open-source plan and key custody under the hosted model are not verified.
 
 ### 4. Cloudsmith
 
