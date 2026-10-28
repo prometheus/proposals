@@ -68,7 +68,7 @@ We want the accounts to read like an engineering project run by practitioners, n
 * **Cool stories from the community.** Users do clever things with Prometheus every week. We should amplify un-gated technical write-ups on how teams debugged a nasty production outage with Prometheus, scaled TSDB or remote write, built an exporter for unusual hardware, or completed an LFX or GSoC mentorship project.
 * **Project events and calls for input.** Dev Summit agendas and recaps, PromCon CFP dates and talk recordings, security advisories, and user surveys.
 
-To keep quality high and prevent vendor spam, every PR must pass three editorial rules before a social maintainer merges it:
+The `@prometheus/social-maintainers` team owns and can evolve the editorial guidelines in `prometheus/social/README.md`. To keep quality high and prevent vendor spam from day one, we will seed `prometheus/social` with three initial rules:
 
 1. **Technical substance over promotion.** Posts about external blog articles or case studies must link to free, un-gated technical content. Product pitches, vendor landing pages, and press releases will be rejected.
 2. **Verify claims and numbers.** If a post quotes a benchmark such as 30% less memory with uncached IO, a maintainer familiar with that area must verify the claim, just like a code or blog review.
@@ -210,7 +210,8 @@ Why this architecture fits Prometheus well:
 
 1. **Account ownership.** Master credentials including login passwords, 2FA recovery codes, LinkedIn Page Super Admin roles, and the CNCF Buffer login will be stored in the CNCF and Prometheus Steering Committee shared password vault so the project is never locked out when an individual changes roles.
 2. **Social maintainers in `prometheus/social/MAINTAINERS.md`.**
-   * Seed `prometheus/social/MAINTAINERS.md` with initial volunteers from the Steering Committee and `docs-maintainers`.
+   * Start `prometheus/social/MAINTAINERS.md` with the Prometheus Steering Committee, and expand the team from there as contributors and maintainers step up to help.
+   * `@prometheus/social-maintainers` have the authority to establish, refine, and enforce the repository's editorial rules and posting cadence.
    * New social maintainers can be nominated using the standard maintainer nomination process in [prometheus/governance ROLES.md](https://github.com/prometheus/governance/blob/main/ROLES.md) based on their editorial judgment and consistency in reviewing or drafting announcements and community stories.
    * Branch protection on `main` in `prometheus/social` requires at least 1 approving review from `social-maintainers` and passing CI checks before merge.
 3. **Contributor ladder credit.** Authoring and reviewing social announcements and community story spotlights in `prometheus/social` counts as a qualifying non-code contribution under "Promote the project in public" toward Prometheus Organization Membership in [prometheus/governance ROLES.md](https://github.com/prometheus/governance/blob/main/ROLES.md).
