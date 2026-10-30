@@ -23,9 +23,9 @@
   * [PROM-99: Native Metadata support in PromQL](https://github.com/prometheus/proposals/pull/99)
   * [PROM-103: Recording Rule Metadata Storage and Deduction](https://github.com/prometheus/proposals/pull/103)
 
-> TL;DR: This document proposes allowing operators to inspect, rewrite, and drop metric metadata `type`, `unit`, and `help` across `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`. It unifies the two unsynchronized metadata paths in Prometheus so that relabeling `__type__`, `__unit__`, and a virtual `__help__` label updates both the `metadata.Metadata` record and the `type-and-unit-labels` series labels, while fixing metadata loss on metric renames and stale metadata retention on dropped series. It also evaluates alternatives including a dedicated `target_metadata` field, dedicated `metadata_replace` and `metadata_drop` actions, and `__metadata_*__` virtual labels.
+> TL;DR: This document proposes allowing operators to inspect, rewrite, and drop metric metadata `type`, `unit`, and `help` across `metric_relabel_configs`, `write_relabel_configs`, and `receive_relabel_configs`, initially gated behind an experimental `--enable-feature=metadata-relabeling` flag. It unifies the two unsynchronized metadata paths in Prometheus so that relabeling `__type__`, `__unit__`, and a virtual `__help__` label updates both the `metadata.Metadata` record and the `type-and-unit-labels` series labels, while fixing metadata loss on metric renames and stale metadata retention on dropped series. It also evaluates alternatives including a dedicated `target_metadata` field, dedicated `metadata_replace` and `metadata_drop` actions, and `__metadata_*__` virtual labels.
 >
-> NOTE: We are actively debating whether metadata writes in relabeling should use `target_label: __type__ | __unit__ | __help__` (as proposed in [How](#how)) or a dedicated `target_metadata: type | unit | help` field (see [Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions) and [Key differences between target metadata and target label](#key-differences-between-target-metadata-and-target-label)), so please let us know what you prefer.
+> NOTE: Following community feedback, we will start with `target_label: __type__ | __unit__ | __help__` behind `--enable-feature=metadata-relabeling` (as proposed in [How](#how)), while continuing to evaluate whether future Prometheus versions should move toward a structured `target:` or `target_metadata` configuration (see [Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions) and [Key differences between target metadata and target label](#key-differences-between-target-metadata-and-target-label)).
 
 ## Why
 
@@ -85,7 +85,7 @@ Prometheus server maintainers, operators managing scrape, Remote Write, and OTLP
 
 ## How
 
-We propose making metric metadata `type`, `unit`, and `help` first-class virtual schema labels `__type__`, `__unit__`, and `__help__` during relabeling. These labels are backed directly by `metadata.Metadata` in the relabel engine so that standard relabel actions `replace`, `keep`, `drop`, `keepequal`, `dropequal`, `lowercase`, `uppercase`, and `labeldrop` work uniformly across labels and metadata.
+We propose making metric metadata `type`, `unit`, and `help` first-class virtual schema labels `__type__`, `__unit__`, and `__help__` during relabeling, initially gated behind an experimental `--enable-feature=metadata-relabeling` feature flag (while bugfixes for preserving metadata across `__name__` renames and excluding dropped families from `scrapeCache` in [prometheus#14013](https://github.com/prometheus/prometheus/issues/14013) apply unconditionally). Starting behind `--enable-feature=metadata-relabeling` lets users opt in and lets us gather operational feedback and explore alternative configuration shapes (such as [Alternative 1](#1-dedicated-target-metadata-field-with-standard-relabel-actions)) before stabilizing. These labels are backed directly by `metadata.Metadata` in the relabel engine so that standard relabel actions `replace`, `keep`, `drop`, `keepequal`, `dropequal`, `lowercase`, `uppercase`, and `labeldrop` work uniformly across labels and metadata.
 
 Handling metadata via `target_label: __type__`, `__unit__`, and `__help__` is simple to implement and use:
 
@@ -572,7 +572,7 @@ Requiring users to deploy an OpenTelemetry Collector or proxy exporter in front 
 
 ## Action Plan
 
-* [ ] Add metadata-aware relabeling support in `model/relabel`, including config-time validation for static `type` replacements.
+* [ ] Add metadata-aware relabeling support in `model/relabel` behind `--enable-feature=metadata-relabeling`, including config-time validation for static `type` replacements.
 * [ ] Update `scrape` so metric metadata is relabeled alongside series labels, preserved across metric renames, and only recorded in the scrape metadata cache when series survive relabeling ([prometheus#14013](https://github.com/prometheus/prometheus/issues/14013), [prometheus#19832](https://github.com/prometheus/prometheus/issues/19832)).
 * [ ] Update Remote Write 2.0 sender, Remote Write 2.0 receiver, OTLP ingestion, and `receive_relabel_configs` ([prometheus#19675](https://github.com/prometheus/prometheus/pull/19675)) to relabel metadata and apply consistent metadata precedence.
 * [ ] Update `docs/configuration/configuration.md` and `docs/feature_flags.md` to document metadata relabeling semantics.
