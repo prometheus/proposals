@@ -245,11 +245,12 @@ While the built-in metric descriptor fields map to `__type__`, `__unit__`, and `
 
 ```yaml
 relabel_configs:
-  # Store a single Kubernetes SD label as target native metadata.
+  # While common Service Discovery target metadata capture will likely have a
+  # dedicated scrape_config option, relabel_configs allows custom selective rules:
   - source_labels: [__meta_kubernetes_namespace]
     target_label: __metadata_target.k8s.namespace__
 
-  # Bulk-map all Kubernetes pod labels into target native metadata using labelmap.
+  # Or bulk-mapping a subset of SD labels into target native metadata using labelmap:
   - action: labelmap
     regex: '__meta_kubernetes_pod_label_(.+)'
     replacement: '__metadata_target.k8s.pod.label.$1__'
