@@ -18,16 +18,16 @@
   * [Prometheus docs: recording rules best practices](https://prometheus.io/docs/practices/rules/)
   * [VictoriaMetrics stream aggregation](https://docs.victoriametrics.com/victoriametrics/stream-aggregation/) (`total`/`increase` outputs with `without`, and [aggregation windows](https://docs.victoriametrics.com/victoriametrics/stream-aggregation/#aggregation-windows), the closest prior art)
   * [M3 mapping and rollup rules](https://m3db.io/docs/operational_guide/mapping_rollup/)
-  * [Grafana Cloud Adaptive Metrics](https://grafana.com/docs/grafana-cloud/adaptive-telemetry/adaptive-metrics/) (commercial, same idea applied at ingestion)
+  * [Grafana Cloud Adaptive Metrics](https://grafana.com/docs/grafana-cloud/adaptive-telemetry/adaptive-metrics/) (similar idea applied at ingestion)
   * OpenTelemetry Collector [metricstransform](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/metricstransformprocessor) and [interval](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/intervalprocessor) processors
 
 > TL;DR: Let Prometheus sum counter increments across series while they are
 > ingested, removing configured labels (for example `pod`), and write the result
 > on a fixed interval as an ordinary counter series. `rate()` over the
-> aggregated series matches `sum without (pod) (rate(...))` over the raw series
-> (with the differences listed in [Differences from querying the raw series](#differences-from-querying-the-raw-series)).
+> aggregated series matches `sum without (pod) (rate(...))` over the source
+> (with the differences listed in [Differences from querying the source series](#differences-from-querying-the-raw-series)).
 > The change touches configuration, the TSDB Head
-> append path, and per-series retention of the metric type. Raw series are kept,
+> append path, and per-series retention of the metric type. Source series are kept,
 > so this reduces query cost, not storage or ingested cardinality, and nothing on
 > the query path changes.
 
@@ -43,13 +43,13 @@ Currently, users use recording rules to aggregate these series and lower cardina
 
 2. They load redundant data in every evaluation, even when only the latest sample is necessary to calculate it incrementally.
 
-3. One rule evaluation is single-threaded. The PromQL engine evaluates a query on one goroutine and doesn't split it up internally, even for operations that could be split, like `sum`.
+3. One rule evaluation is single-threaded. The PromQL engine evaluates a query on one goroutine and doesn't split it up internally, even for operations that could be, like `sum`.
 
-Instead of using recording rules, these operations could be performed at scrape time. Counters can't be added up, but a counter's increase between consecutive samples *can*, and the TSDB `Head` already knows this increase at commit time because it holds the previous value of every series in `memSeries.lastValue`.
+Instead of using recording rules, the sum could be done concurrently at scrape time without `rate`, aggregating the counter's increments between consecutive samples to account for restarts at ingestion. The TSDB `Head` already knows this increment at commit time because it hold the previous value of every series in `memSeries.lastValue`.
 
-This proposal accumulates those increases, and aggregates them at scrape-time into new counters grouped by label set, so that `rate()` over the output gives the same answer as the rate-then-sum query above.
+This proposal accumulates those increases, and aggregates them at scrape-time into new counters grouped by label set, so that `rate()` over the output gives the same result as rate-then-sum over the source series.
 
-The benefit is on the query side: queries read one
+The main benefit is on the query side: queries read one
 series per output label set instead of every source series. Raw series are still
 ingested and stored, so storage grows slightly (by the aggregated series) rather than
 shrinking. This differs from the cardinality reduction in PROM-67, which comes from
@@ -57,7 +57,7 @@ dropping the inputs after aggregating them.
 
 Glossary:
 
-* Source series: a raw series that matches an aggregation rule.
+* Source series: an existing pre-aggregation series that matches an aggregation rule.
 * Aggregated series: the output series, which has the source's labels minus the removed ones.
 * Window: an epoch-aligned interval of `flush_interval` length. Increments are
   attributed to the window their sample timestamp falls in.
@@ -95,8 +95,8 @@ dominate query and recording-rule cost.
 * Rewriting queries to use aggregated series automatically. Users query the
   aggregated series by name. Query substitution can be done
   cheaply, but it is left for a follow-up.
-* Dropping the raw series. Aggregation happens after samples are committed, so dropping
-  the raw series before commit would also remove them from aggregation.
+* Dropping the source series. Aggregation happens after samples are committed, so dropping
+  them before commit would also remove them from aggregation.
   * This may be possible later if aggregation can include uncommitted samples, but that
     needs more investigation.
 * Gauges, native histograms, and any operation other than summing increments.
@@ -281,20 +281,20 @@ The `AggregationHead` lives in memory only. On restart, increments that were com
 but not yet emitted are lost, which is at most one window plus the grace period. The aggregated counter itself restarts
 from zero, which `rate()` treats as an ordinary counter reset.
 
-### Differences from querying the raw series
+### Differences from querying the source series
 
 `rate()` over an aggregated series matches `sum without (...) (rate(...))` over its
 source series, except for:
 
 * Lag: a window is written only after it closes, so the newest output sample trails
-  the raw series by up to `flush_interval + bucket_grace_period`.
+  the source series by up to `flush_interval + bucket_grace_period`.
 * Resolution: there is one output sample per `flush_interval`, so a range has to
   cover at least two windows for `rate()` to return a value, regardless of the scrape
   interval.
-* Extrapolation: `rate()` extrapolates each raw series to the range boundaries
+* Extrapolation: `rate()` extrapolates each source series to the range boundaries
   individually. Over the aggregated series it extrapolates the sum once, so series that
   start or end inside the range contribute slightly differently.
-* First samples: like `rate()` on the raw series, the increase before a series'
+* First samples: like `rate()` on the source series, the increase before a series'
   first sample is not counted.
 * Skipped samples: out-of-order samples, and samples of series whose type is not
   yet known (for example after a restart without metadata WAL records), are not counted.
@@ -314,7 +314,7 @@ If the aggregation rules are not in the global config, the applied rules are log
 
 Unit tests cover config validation, increment and reset handling, window attribution with
 late and evicted increments, failed commits, and staleness. A property test checks that
-`increase()` over aggregated series equals `sum(increase())` over the raw series.
+`increase()` over aggregated series equals `sum(increase())` over the source series.
 Benchmarks cover the append path and the flusher.
 
 ### Open questions
