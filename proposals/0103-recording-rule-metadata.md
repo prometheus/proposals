@@ -199,13 +199,22 @@ We could only write metadata when a user explicitly configures `type`, `unit`, o
 
 We did not choose this as the sole mechanism because existing deployments have thousands of recording rules defined in mixins and community rule packs. Without automatic deduction, all existing recording rules would continue to emit `unknown` / unspecified types to Remote Write 2.0, OTLP receivers, and `/api/v1/metadata` until every rule file is manually edited.
 
-### 2. Nested `metadata:` block in YAML vs flat fields
+### 2. Default all unconfigured recording rules to `gauge`
+
+Instead of inspecting evaluated samples and preserved schema metadata at runtime, Prometheus could set `type = gauge` whenever the rule YAML omits `type`, as discussed in [prometheus#17864](https://github.com/prometheus/prometheus/pull/17864). Every unconfigured rule would get a static default at load time without runtime sample checks or metadata lookups.
+
+We did not choose this because:
+
+* Recording rules can return native histograms. Marking a native histogram series as `gauge` instead of `histogram` or `gaugehistogram` is invalid in OpenMetrics, Remote Write 2.0, and OTLP, so typed receivers reject or misinterpret the samples.
+* Recording rules that only filter or relabel an existing metric, such as `http_requests_total{env="prod"}` or `label_replace(http_requests_total, ...)`, keep the input metric's semantics. Overwriting them to `gauge` drops their preserved `type` and `unit`, which misleads `/api/v1/metadata` consumers and breaks type-aware PromQL checks such as warning when `rate()` targets a non-counter.
+
+### 3. Nested `metadata:` block in YAML vs flat fields
 
 [prometheus#17864](https://github.com/prometheus/prometheus/pull/17864) proposed nesting `type`, `help`, and `unit` under a `metadata:` key in YAML, whereas [prometheus#19555](https://github.com/prometheus/prometheus/pull/19555) proposed top-level fields on the rule object.
 
 Top-level `help`, `type`, and `unit` fields on the recording rule are flatter, match the existing `labels` and `annotations` style in `rulefmt`, and map 1:1 to `metadata.Metadata`. However, a nested `metadata:` block is also viable if maintainers prefer grouping metadata fields together.
 
-### 3. Static AST-based type and unit inference
+### 4. Static AST-based type and unit inference
 
 Instead of (or in addition to) runtime sample inspection, the rule manager could walk the PromQL AST (`parser.Expr`) to infer types and units (for example, inferring `counter` for `sum(my_counter_total)` or inferring `seconds` for `histogram_quantile(0.9, rate(http_request_duration_seconds_bucket[5m]))`).
 
