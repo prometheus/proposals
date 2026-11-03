@@ -16,7 +16,7 @@
 * **Other docs or links:**
   * [PROM-39: Metric Family Identity Extension: Type and Unit as Labels](./0039-metadata-labels.md)
 
-> TL;DR: This document proposes storing metric metadata (`type`, `unit`, `help`) for series produced by recording rules. It introduces runtime deduction algorithm (behind a feature flag or configuration option) that infers metadata from evaluated samples and preserved schema labels, paired with optional `type`, `unit`, and `help` fields in recording rule YAML definitions to override or enrich the deduced metadata.
+> TL;DR: This document proposes storing metric metadata (`type`, `unit`, `help`) for series produced by recording rules. It introduces runtime deduction algorithm (behind a feature flag or configuration option) that infers metadata from evaluated samples and preserved schema labels, paired with optional `type`, `unit`, and `help` fields in recording rule YAML definitions to enrich the metadata or override deduced values when compatible with the runtime sample encoding.
 
 ## Why
 
@@ -40,7 +40,7 @@ Goals and use cases for the solution as proposed in [How](#how):
 
 * Store metric metadata (`type`, `unit`, `help`) for all recording rule series so that WAL metadata records, Remote Write 2.0, `type-and-unit-labels`, and `/api/v1/metadata` (via [prometheus#19563](https://github.com/prometheus/prometheus/pull/19563)) receive consistent metadata.
 * Provide a runtime metadata deduction mechanism that works out of the box for existing recording rules without requiring YAML changes.
-* Allow users to optionally specify `type`, `unit`, and `help` in recording rule YAML files to document rules and override automatic deduction when needed.
+* Allow users to optionally specify `type`, `unit`, and `help` in recording rule YAML files to document rules and override deduced `unit` or sample-compatible `type` values when needed.
 
 ### Audience
 
@@ -49,7 +49,7 @@ Prometheus server maintainers, PromQL maintainers, rule authors, and maintainers
 ## Non-Goals
 
 * Full static type and unit inference across arbitrary PromQL AST expressions (for example, deriving that dividing `bytes` by `seconds` yields `bytes_per_second`, or querying TSDB metadata during rule file parsing).
-* Attaching resource or target metadata to recording rules (covered separately in proposals such as [PROM-99](https://github.com/prometheus/proposals/pull/99)).
+* Attaching or propagating arbitrary key-value native metadata, such as OpenTelemetry resource attributes or target metadata, on recording rules. Native metadata storage and PromQL querying in general are explored separately in [PROM-78](https://github.com/prometheus/proposals/pull/78) and [PROM-99](https://github.com/prometheus/proposals/pull/99).
 
 ## How
 
@@ -77,8 +77,8 @@ For each sample `s` returned by a recording rule query:
    * When `type-and-unit-labels` is enabled, preserved `__type__` and `__unit__` labels are already present on `s` whenever `__name__ != ""`.
    * When `type-and-unit-labels` is disabled and `__name__ != ""`, look up the preserved `__name__` in the storage metadata store ([prometheus#19563](https://github.com/prometheus/prometheus/pull/19563)) to obtain its `type` and `unit` (or fall back to naming convention suffixes such as `_total` if no metadata entry is found).
 2. Determine `type`:
-   1. If the rule YAML explicitly specifies `type`, use the configured `type`.
-   2. Else if a preserved `type` is present and not `unknown`, use the preserved `type`.
+   1. If the rule YAML specifies a `type` compatible with the sample encoding of `s`, meaning `histogram` or `gaugehistogram` for native histograms and any non-histogram type for float samples, use the configured `type`.
+   2. Else if a preserved `type` is present, not `unknown`, and compatible with the sample encoding of `s`, use the preserved `type`.
    3. Else if `s` is a native histogram:
       * If `CounterResetHint == GaugeType`, set `type = gaugehistogram`.
       * Otherwise, set `type = histogram`.
@@ -97,11 +97,11 @@ For each sample `s` returned by a recording rule query:
 
 ```mermaid
 flowchart TD
-    A["Evaluated sample s from PromQL query"] --> B{"Rule YAML defines type?"}
+    A["Evaluated sample s from PromQL query"] --> B{"Compatible YAML type configured?"}
     B -- Yes --> C["Use YAML type"]
     B -- No --> D{"Did __name__ survive eval (DropName == false)?"}
     D -- Yes --> E["Use __type__ label or lookup orig __name__ metadata"]
-    E --> F{"Found preserved type?"}
+    E --> F{"Found compatible preserved type?"}
     F -- Yes --> G["Use preserved type"]
     F -- No --> H{"Is s a native histogram?"}
     D -- No --> H
@@ -185,7 +185,7 @@ When `type-and-unit-labels` is enabled, setting `__name__`, `__type__`, and `__u
 
 #### Conflict between explicit YAML `type` and runtime sample type
 
-Because PromQL vector expressions can evaluate to either float samples or native histogram samples depending on the data in TSDB, `promtool check rules` cannot always verify at parse time whether an expression returns a float or a native histogram. If a user configures `type: gauge` or `type: counter` in YAML, but the expression evaluates at runtime to a native histogram, or configures `type: histogram` on a rule that evaluates to a float, the runtime type deduced from the sample takes precedence (or fails the rule evaluation with an error) so that Prometheus never writes a float sample with `histogram` metadata or a native histogram sample with `gauge` metadata.
+Because PromQL vector expressions can evaluate to either float samples or native histogram samples depending on the data in TSDB, `promtool check rules` cannot always verify at parse time whether an expression returns a float or a native histogram. YAML `type` overrides apply within the evaluated sample's encoding, such as overriding a float rule from `gauge` to `counter` or `info`, or overriding a native histogram rule between `histogram` and `gaugehistogram`. If a user configures a float type such as `gauge` or `counter` on a rule that evaluates to a native histogram, or configures `histogram` on a rule that evaluates to a float, Prometheus does not fail rule evaluation. Instead, it falls back to runtime sample deduction and surfaces a warning via logs, metrics, or rule evaluation annotations. That keeps sample evaluation running while preventing invalid combinations such as float samples with `histogram` metadata or native histograms with `gauge` metadata.
 
 #### `/api/v1/rules` vs `/api/v1/metadata`
 
@@ -199,7 +199,16 @@ We could only write metadata when a user explicitly configures `type`, `unit`, o
 
 We did not choose this as the sole mechanism because existing deployments have thousands of recording rules defined in mixins and community rule packs. Without automatic deduction, all existing recording rules would continue to emit `unknown` / unspecified types to Remote Write 2.0, OTLP receivers, and `/api/v1/metadata` until every rule file is manually edited.
 
-### 2. Default all unconfigured recording rules to `gauge`
+### 2. Only support automatic runtime deduction without YAML overrides
+
+We could ship runtime metadata deduction first without adding `help`, `type`, or `unit` fields to recording rule YAML, and only introduce YAML overrides later if runtime deduction proves insufficient.
+
+We include optional YAML metadata alongside runtime deduction because:
+
+* Runtime deduction cannot invent `help` descriptions or deduce `unit` values for computed expressions where `__name__` is dropped, such as `rate()`, ratios, or `histogram_quantile()`. Without YAML fields, recorded metrics remain undocumented and unitless in `/api/v1/metadata`, UIs, and Remote Write 2.0.
+* Runtime deduction defaults computed float samples to `gauge`, which leaves known cases that already need manual `type` overrides until PromQL has full type awareness: static `info` or `stateset` rules built with `vector(1)` and constant `labels:`, summed delta counters such as `sum(some_delta_counter)`, and niche aggregations that group by `__name__` such as `count by (__name__) (http_requests_total)` when `type-and-unit-labels` is disabled.
+
+### 3. Default all unconfigured recording rules to `gauge`
 
 Instead of inspecting evaluated samples and preserved schema metadata at runtime, Prometheus could set `type = gauge` whenever the rule YAML omits `type`, as discussed in [prometheus#17864](https://github.com/prometheus/prometheus/pull/17864). Every unconfigured rule would get a static default at load time without runtime sample checks or metadata lookups.
 
@@ -208,13 +217,36 @@ We did not choose this because:
 * Recording rules can return native histograms. Marking a native histogram series as `gauge` instead of `histogram` or `gaugehistogram` is invalid in OpenMetrics, Remote Write 2.0, and OTLP, so typed receivers reject or misinterpret the samples.
 * Recording rules that only filter or relabel an existing metric, such as `http_requests_total{env="prod"}` or `label_replace(http_requests_total, ...)`, keep the input metric's semantics. Overwriting them to `gauge` drops their preserved `type` and `unit`, which misleads `/api/v1/metadata` consumers and breaks type-aware PromQL checks such as warning when `rate()` targets a non-counter.
 
-### 3. Nested `metadata:` block in YAML vs flat fields
+### 4. Nested `metadata:` block in YAML vs flat fields
 
 [prometheus#17864](https://github.com/prometheus/prometheus/pull/17864) proposed nesting `type`, `help`, and `unit` under a `metadata:` key in YAML, whereas [prometheus#19555](https://github.com/prometheus/prometheus/pull/19555) proposed top-level fields on the rule object.
 
 Top-level `help`, `type`, and `unit` fields on the recording rule are flatter, match the existing `labels` and `annotations` style in `rulefmt`, and map 1:1 to `metadata.Metadata`. However, a nested `metadata:` block is also viable if maintainers prefer grouping metadata fields together.
 
-### 4. Static AST-based type and unit inference
+### 5. Configure metadata via reserved labels in `labels:`
+
+Given that [PROM-104](./0104-metadata-relabeling.md) exposes `__type__`, `__unit__`, and `__help__` as virtual label names in `relabel_configs`, recording rules could configure metadata inside the existing `labels:` map instead of adding dedicated YAML fields:
+
+```yaml
+groups:
+  - name: example
+    rules:
+      - record: job:http_requests:rate5m
+        expr: sum by (job) (rate(http_requests_total[5m]))
+        labels:
+          __type__: gauge
+          __unit__: requests_per_second
+          __help__: "Per-job HTTP request rate over 5 minutes."
+          baz: bar
+```
+
+We prefer dedicated metadata fields on recording rules because:
+
+* `rulefmt` already separates metric identity in `record:`, where `__name__` is rejected inside `labels:`, and human-readable text in `annotations:` from series-identifying `labels:`. `__help__` is never stored as a series label even with `type-and-unit-labels` enabled. [PROM-104](./0104-metadata-relabeling.md) uses virtual `__*__` names only because `source_labels` and `target_label` are the existing pipeline interface of `relabel_configs`, whereas a recording rule declares static metadata for a single metric family.
+* `labels:` is shared with `RuleGroup.Labels` and alerting rules, and `/api/v1/rules` exposes `labels` directly as extra series labels. Extracting `__type__`, `__unit__`, and `__help__` out of `labels:` only on recording rules makes group inheritance and `/api/v1/rules` semantics inconsistent.
+* Existing `rulefmt` versions only reject `__name__` in `labels:`. Loading a rule file with `__help__` under `labels:` into an older Prometheus, Thanos, or Mimir ruler passes validation and writes a literal `__help__` label into TSDB, whereas dedicated YAML fields fail fast on unknown-field validation.
+
+### 6. Static AST-based type and unit inference
 
 Instead of (or in addition to) runtime sample inspection, the rule manager could walk the PromQL AST (`parser.Expr`) to infer types and units (for example, inferring `counter` for `sum(my_counter_total)` or inferring `seconds` for `histogram_quantile(0.9, rate(http_request_duration_seconds_bucket[5m]))`).
 
