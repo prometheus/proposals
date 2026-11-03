@@ -14,7 +14,6 @@
   * https://github.com/prometheus/prometheus/issues/17109
 
 * **Other docs or links:**
-  * [Rate then sum, never sum then rate](https://www.robustperception.io/rate-then-sum-never-sum-then-rate/) (why aggregating raw counters is wrong, and what this proposal does instead)
   * [Prometheus docs: recording rules best practices](https://prometheus.io/docs/practices/rules/)
   * [VictoriaMetrics stream aggregation](https://docs.victoriametrics.com/victoriametrics/stream-aggregation/) (`total`/`increase` outputs with `without`, and [aggregation windows](https://docs.victoriametrics.com/victoriametrics/stream-aggregation/#aggregation-windows), the closest prior art)
   * [M3 mapping and rollup rules](https://m3db.io/docs/operational_guide/mapping_rollup/)
@@ -25,7 +24,7 @@
 > ingested, removing configured labels (for example `pod`), and write the result
 > on a fixed interval as an ordinary counter series. `rate()` over the
 > aggregated series matches `sum without (pod) (rate(...))` over the source
-> (with the differences listed in [Differences from querying the source series](#differences-from-querying-the-raw-series)).
+> (with the differences listed in [Differences from querying the source series](#differences-from-querying-the-source-series)).
 > The change touches configuration, the TSDB Head
 > append path, and per-series retention of the metric type. Source series are kept,
 > so this reduces query cost, not storage or ingested cardinality, and nothing on
@@ -47,48 +46,49 @@ Currently, users use recording rules to aggregate these series and lower cardina
 
 Instead of using recording rules, the sum could be done concurrently at scrape time without `rate`, aggregating the counter's increments between consecutive samples to account for restarts at ingestion. The TSDB `Head` already knows this increment at commit time because it hold the previous value of every series in `memSeries.lastValue`.
 
-This proposal accumulates those increases, and aggregates them at scrape-time into new counters grouped by label set, so that `rate()` over the output gives the same result as rate-then-sum over the source series.
+This proposal accumulates those increases, and aggregates them into new counters grouped by label set, so that `rate()` over the output gives the same result as rate-then-sum over the source series.
 
 The main benefit is on the query side: queries read one
-series per output label set instead of every source series. Raw series are still
-ingested and stored, so storage grows slightly (by the aggregated series) rather than
+series per output label set instead of every source series. The source series are still
+ingested and stored, so storage grows by the aggregated series rather than
 shrinking. This differs from the cardinality reduction in PROM-67, which comes from
 dropping the inputs after aggregating them.
 
+On the processing side, these aggregation are multi-threaded and use less memory than the recording rules they replace.
+
 Glossary:
 
+* Aggregation rule: a scrape-time aggregation configured from a subset of source series. See [Configuration](#configuration).
 * Source series: an existing pre-aggregation series that matches an aggregation rule.
-* Aggregated series: the output series, which has the source's labels minus the removed ones.
-* Window: an epoch-aligned interval of `flush_interval` length. Increments are
+* Aggregated series: the output series, which has a subset of the source's labels.
+* Window: an epoch-aligned interval of fixed length. An aggregated counter's increments are
   attributed to the window their sample timestamp falls in.
 
 ### Pitfalls of the current solution
 
-* Recording rules. See the three downsides above.
+* Recording rules. See the three points above.
 * `labeldrop` in `metric_relabel_configs` doesn't aggregate. Series that differ
   only in the dropped label collide and are rejected as duplicates.
 * PROM-67 scrape-time rules evaluate over one scrape of one target, and exclude
-  `rate()`/`increase()`. That can't produce an aggregate across pods or any other label added post-scrape.
+  `rate()`/`increase()`. That can't produce an aggregate across pods or any other label sourced from multiple targets.
 * External stream aggregators (vmagent, the OTel Collector) work, but add a
   component and a network hop in front of every Prometheus, and the aggregates
   exist only downstream of it.
 
 ## Goals
 
-* Create correct aggregated counters across counter resets, series churn, and late scrapes.
+* Create aggregated counters that account for resets, series churn, and late scrapes.
 * Output is an ordinary counter series: `rate()`, `increase()`, remote write,
   compaction, WAL, and federation work unchanged.
-* Opt-in. When disabled, the append path is unchanged. When enabled, a sample of a
-  source series costs a generation check and an add.
-* Make it easy to expand to more aggregation action types over any metric type.
+* Opt-in. When disabled, the append path is unchanged.
+* Make it easy to expand to more aggregation action types and metric types.
   * The only action for now is `incr_without` (sum counter increments with labels
-    removed), but the rule format should allow other parallelizable operations (min,
+    removed), but the rule format should allow for other parallelizable operations (min,
     max, sum, etc.) later.
 
 ### Audience
 
-Operators of large Prometheus servers where high-cardinality counters
-dominate query and recording-rule cost.
+Operators of Prometheus servers where high-cardinality counters dominate query and recording-rule cost.
 
 ## Non-Goals
 
@@ -98,9 +98,8 @@ dominate query and recording-rule cost.
 * Dropping the source series. Aggregation happens after samples are committed, so dropping
   them before commit would also remove them from aggregation.
   * This may be possible later if aggregation can include uncommitted samples, but that
-    needs more investigation.
+    needs more thought.
 * Gauges, native histograms, and any operation other than summing increments.
-* Persisting in-flight aggregation state across restarts.
 
 ## How
 
@@ -109,13 +108,13 @@ scrape / remote write / OTLP
           │
           ▼
   Head appender Commit()
-    ├─ commit metadata (type)     ◄── prerequisite
-    ├─ commit float samples ──► increment = v - prev (or v on reset)
+    ├─ commit metadata (type)   ◄── prerequisite
+    ├─ commit float samples ──► aggregateSeries: increment = v - prev (or v on reset)
     │                                  │
     │                                  ▼
-    │                         accumulator: output series → per-window sums
+    │                 aggregatedHead: output series → per-window sums
     │                                  │
-    │               flusher, every flush_interval + grace
+    │                 aggregationFlusher: flushes every flush_interval + grace
     │                                  │
     └───────────► Head appender ◄──────┘  (WAL, blocks, remote write as usual)
 ```
@@ -165,11 +164,11 @@ rate(http_requests_total:materialized[5m])
 
 An **aggregation rule** has a relabel-style selector (`source_labels`, `separator`,
 `regex`), a list of labels to remove (`drop_labels`), an action, and a name suffix.
-The only action is `incr_without`: sum the increments of every matching series, with
+The only action for now is `incr_without`, which sums the increments of every matching series, with
 `drop_labels` removed. A series is aggregated by the first rule that matches it.
 
 The aggregated series has the source's labels minus `drop_labels`, the metric
-name plus `suffix`, and a label identifying the action: `__aggregation_action_type`.
+name plus `suffix`, and an internal label identifying the action: `__aggregation_action_type`.
 Its value is a counter whose increase over each window equals the sum of source
 increments whose samples fall in that window. One sample is written per window,
 stamped at the window's end.
@@ -198,10 +197,12 @@ aggregated again by the same rule (see Open questions for other rules).
 
 ### Configuration
 
+Aggregations are configured outside the global config, in a new file, using the flag `--aggregation.config-file`.
+
 ```yaml
-flush_interval: 15s        # window width and output sample interval
-stale_timeout: 5m          # retire an output series after this long without input
-bucket_grace_period: 1s    # wait after a window closes before emitting it
+flush_interval: <global.scrape_interval> # window width and output sample interval
+stale_timeout: 5m                        # retire an aggregated series after this long without input
+bucket_grace_period: 1s                  # wait after a window closes before emitting it
 aggregations:
   - source_labels: [__name__]
     regex: http_requests_total|grpc_server_handled_total
@@ -210,20 +211,19 @@ aggregations:
     suffix: ":materialized"   # default
 ```
 
-There are pros of having the configuration live in a separate file (`--aggregation.config-file`) and be reloaded together with the main configuration. A separate file follows how rule
+There are pros of having the configuration live in a separate file and be reloaded together with the main configuration. A separate file follows how rule
 files work and keeps a potentially long list out of `prometheus.yml`. A top-level
-block in the global config is a reasonable alternative (see Open questions).
+block in the global config is a reasonable alternative (see [Open questions](#open-questions)).
 
-Validation rejects an empty `drop_labels` list, suffixes that are suffixes of each other
-(which would make it ambiguous which rule an output series came from), generated names that are invalid under the
+Validation at start time and after a config reload rejects an empty `drop_labels` list, suffixes that are suffixes of each other
+(which would make it ambiguous which rule an aggregated series came from), generated names that are invalid under the
 configured name validation scheme, and a `bucket_grace_period` of `flush_interval` or more.
 A grace period of 10% of the interval or more is accepted with a warning, because
 the newest output sample then trails far enough behind that `rate()` stops
 extrapolating to the end of the range.
 
 Everything except `flush_interval` is reloadable. The interval defines the window
-grid that pending state is stored on, so a change is rejected on reload
-and requires a restart.
+grid that pending state is stored on, so a change is rejected and requires a restart.
 
 ### Feature flag
 
@@ -234,50 +234,56 @@ is set, and the commit path is unchanged.
 ### Prerequisite: keep the metric type per series
 
 The Head currently keeps metadata only with `--enable-feature=metadata-wal-records`.
+
 This proposal keeps the type (one byte in `memSeries`) unconditionally if the `ingestion-aggregation` feature is enabled. Help, unit, and
 the metadata WAL records stay behind the existing flag. Metadata is also committed before
 samples in the same batch, so the first samples of a new series are aggregated with its type
 already known. After a restart without metadata WAL records, the type is unknown
 until the next scrape reports it, and aggregation for those series resumes from that scrape.
 
-This is useful on its own and overlaps with
-[#19563](https://github.com/prometheus/prometheus/pull/19563). If that PR lands, this
+This requirement overlaps with [#19563](https://github.com/prometheus/prometheus/pull/19563). If that PR is merged, this
 proposal would read the type from it instead.
 
 ### Accumulating increments
 
-The hook sits in the Head's in-order float commit path, where the series lock is
-held and the previous value is already stored. It sees every append,
+The hook sits in the Head's commit path for [in-order float](https://github.com/prometheus/prometheus/blob/v3.15.1/tsdb/head_append.go#L1373) samples, where the series
+[lock is held](https://github.com/prometheus/prometheus/blob/v3.15.1/tsdb/head_append.go#L1379) and the previous value is [already stored](https://github.com/prometheus/prometheus/blob/v3.15.1/tsdb/head_append.go#L1913) in `memSeries`. It sees every append,
 so it doesn't matter if it comes from a scrape, remote write, OTLP, or rule evaluation. Out-of-order samples are
 not aggregated, since their increment relative to neighbouring samples isn't known at
 commit time. WAL replay doesn't use this path, so nothing is counted twice.
 
-Since appends are in the busiest path in Prometheus (scraping), this has to make `memSeries` cache the output series it feeds, tagged with a generation number of the aggregation rule set, so after the first sample the hot path is a generation check and an
-add. A reload bumps the generation, and series re-resolve lazily on their next sample.
+However, since appends are the busiest path in Prometheus, aggregation rule conditions cannot be evaluated every single time a new
+sample is committed. Each source `memSeries` has to cache the aggregated series it feeds, tagged with a generation number from the first matching aggregation rule set.
+After the first sample loads the cache, following commits become just a generation check and an append.
 
-Output series live in a map sharded by label hash (`AggregationHead`). Each keeps a small ring of
-per-window partial sums, so a sample is credited to the window of its own timestamp
-rather than to whenever the flusher runs. Increments for windows that have already been
-emitted, or have been evicted from the ring during a flush stall, go to an overflow
-value that is added to the next emitted window. In other words, totals are not lost, but degradation can move them following windows.
+In case of a config change, the reload bumps the generation, and series re-resolve
+lazily on their next sample.
+
+After the source samples are committed, their increments are aggregated in a new `aggregatedHead`, stored as a map in the `Head` sharded by label hash. There, each aggregated series keeps a small ring of
+per-window partial sums, so an incoming sample is credited to the window of its own timestamp
+rather than to whenever the flusher runs.
+
+The accumulated window values are periodically flushed and committed to the TSDB as ordinary counter samples. Increments for windows that have already been emitted, or have been evicted
+from the ring during a flush stall, go to an overflow value that is added to the next emitted window. This guarantees that increments are never lost, but degradation can move the accumulated totals to following windows.
 
 ### Flushing
 
-A flusher goroutine runs on the epoch-aligned window grid, offset by
-`bucket_grace_period`, so that scrape commits which land slightly late still count in their own
+A flusher goroutine runs on the epoch-aligned window grid every `flush_interval`, offset by
+`bucket_grace_period`, so that scrape commits that land slightly late still count in their own
 window. Each run emits every window that has closed since the last run, writing
-`previous value + window sum` at the window's end timestamp through a normal Head
+`previous value + window sum` at the window's end timestamp through a normal `Head`
 appender, in batches. Output samples go to the WAL, blocks, and remote write
 like any other sample.
 
-Emission is two-phase: pending sums are only cleared after the batch commits, so a
-failed commit is retried on the next run. An output series that receives no input for
-`stale_timeout` gets a stale marker and is removed, unless it still holds unemitted
-increments.
+On every flush, an emission process is used to release the series partial sum that the flush reported but left in place until the commit succeeded.
+
+- The pending sums are cleared after **each** successful batch commit.
+  - Since commits can fail after a flush, the increments are kept pending in the window until they are committed. This way, a failed commit is retried on the next run.
+- After **all** the commits succeed, aggregated series that haven't received new increments since `stale_timeout` get a stale marker in the TSDB and are removed from the `aggregatedHead`, unless they still hold unemitted increments.
 
 ### Restarts
 
-The `AggregationHead` lives in memory only. On restart, increments that were committed
+The `aggregatedHead` lives in memory only. On restart, increments that were committed
 but not yet emitted are lost, which is at most one window plus the grace period. The aggregated counter itself restarts
 from zero, which `rate()` treats as an ordinary counter reset.
 
@@ -313,9 +319,8 @@ If the aggregation rules are not in the global config, the applied rules are log
 ### Testing
 
 Unit tests cover config validation, increment and reset handling, window attribution with
-late and evicted increments, failed commits, and staleness. A property test checks that
-`increase()` over aggregated series equals `sum(increase())` over the source series.
-Benchmarks cover the append path and the flusher.
+late and evicted increments, failed commits, and staleness.
+Benchmarks cover the TSDB append path with aggregation rules and the flusher.
 
 ### Open questions
 
@@ -326,31 +331,29 @@ Benchmarks cover the append path and the flusher.
   be excluded from all rules?
 * Should non-scrape appends (remote write, OTLP, rules) be aggregated as well?
 * Is an extension to make HA replicas produce similar/deduplicable aggregated counters worth including in this same proposal?
+* When flushing, the increments could be committed using the newly supported delta temporality, instead of adding them up to be cumulative.
 
 ## Alternatives
 
 1. Recording rules. Their cost follows raw cardinality on every evaluation, which
    is the problem being solved. They also cannot aggregate counters without hardcoding a rate interval.
 2. Aggregate in the scrape loop (PROM-67 style). The scrape loop only sees one
-   target, and aggregating across targets needs shared state keyed by output series,
-   which is what `AggregationHead` is. `AggregationHead` also sees remote-write and OTLP input.
+   target.
 3. Infer counters from the metric name. This is cheaper, but produced wrong aggregates in
    production for gauges named like counters.
-4. External stream aggregator. It works today, but requires an extra component and
-   leaves Prometheus-only users without the feature. They also produce non-deduplicable counters, so cannot be used with HA.
-5. Configure rules per `scrape_config`. This keeps rules next to the targets they
+4. Configure rules per `scrape_config`. This keeps rules next to the targets they
    apply to, but only covers scraped input, not remote write or OTLP. It also lets two
-   scrape configs define conflicting rules for the same output series, since the
-   accumulator is shared across targets.
-6. Use PromQL instead of action types in the configuration. We could validate the query to fail if it includes operations
+   scrape configs define conflicting rules for the same output series, unless the
+   accumulator is separated across targets.
+5. Use PromQL instead of action types in the configuration. We could validate the query to fail if it includes operations
    that cannot be executed at scrape time. However, the closest to `incr_without` would be `sum without (label) (counter)` without `rate`,
-   which returns incorrect values and doesn't account for restarts.
+   which doesn't account for restarts as `incr_without` do.
 
 ## Action Plan
 
 * [ ] Keep the metric type per series independently of `metadata-wal-records`. Commit metadata before samples.
 * [ ] Configuration types, parsing, validation, and reload plumbing behind the feature flag.
-* [ ] `AggregationHead` and the commit-path hook, with benchmarks showing no regression when disabled.
+* [ ] `aggregatedHead` and the commit-path hook.
 * [ ] Flusher: aligned schedule, window emission, failure handling, and staleness.
 * [ ] Flusher metrics listed in Observability above.
 * [ ] Wiring in `cmd/prometheus`, and documentation in `docs/feature_flags.md` and the configuration docs.
