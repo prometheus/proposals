@@ -15,7 +15,7 @@
   * [Prometheus Community page](https://prometheus.io/community/)
   * [Prometheus Community Roles](https://github.com/prometheus/governance/blob/main/ROLES.md)
 
-> TL;DR: Operate the official Prometheus LinkedIn project page alongside `@prometheus.io` on Bluesky, `@Prometheus@chaos.social` on Mastodon, and `r/PrometheusMonitoring` on Reddit, and manage all social media posts, release announcements, and community stories via Git pull requests in a new public `prometheus/social` repository governed by a `@prometheus/social-maintainers` team. Merged PRs publish simultaneously to LinkedIn, Bluesky, and Mastodon via CNCF Buffer's GraphQL API, to `r/PrometheusMonitoring` via the Reddit OAuth2 API, and optionally to the `prometheus-announce@googlegroups.com` mailing list via SMTP for release and project announcements.
+> TL;DR: Operate the official Prometheus LinkedIn project page alongside `@prometheus.io` on Bluesky, `@Prometheus@chaos.social` on Mastodon, and `r/PrometheusMonitoring` on Reddit, and manage all social media posts, release announcements, and community stories via Git pull requests in a new public `prometheus/social` repository governed by a `@prometheus/social-maintainers` team. Merged PRs publish simultaneously to LinkedIn, Bluesky, and Mastodon via Buffer's free-tier GraphQL API, to `r/PrometheusMonitoring` via the Reddit OAuth2 API, and optionally to the `prometheus-announce@googlegroups.com` mailing list via SMTP for release and project announcements.
 
 ## Why
 
@@ -27,7 +27,7 @@ Our social media presence has not kept up. Right now, most of that work happens 
 
 1. **No LinkedIn presence.** Prometheus does not have an official LinkedIn project page. LinkedIn is now one of the main places where SREs, platform engineers, and end-user companies share production postmortems, architecture write-ups, PromCon talks, and release announcements. Peer CNCF projects such as Kubernetes and OpenTelemetry reach a large practitioner audience there.
 2. **Underused Bluesky and Mastodon accounts.** In February 2025, we swapped the `@PrometheusIO` X link on [prometheus.io/community](https://prometheus.io/community/) for `@prometheus.io` on Bluesky in [prometheus/docs@fe36703](https://github.com/prometheus/docs/commit/fe36703) and added `@Prometheus@chaos.social` on Mastodon in [prometheus/docs#2586](https://github.com/prometheus/docs/pull/2586). However, without a shared publishing workflow, both accounts rarely post.
-3. **A manual bottleneck.** Posting to any official account currently requires someone with raw credentials or CNCF Buffer access to log in and copy text across platforms. Release shepherds already email `prometheus-announce@googlegroups.com` manually according to `RELEASE.md`, but contributors cannot propose a social post or coordinated announcement the way they propose a doc fix or a blog post, so social announcements and community stories simply do not happen.
+3. **A manual bottleneck.** Posting to any official account currently requires someone with raw credentials to log in and copy text across platforms. Release shepherds already email `prometheus-announce@googlegroups.com` manually according to `RELEASE.md`, but contributors cannot propose a social post or coordinated announcement the way they propose a doc fix or a blog post, so social announcements and community stories simply do not happen.
 
 ## Goals
 
@@ -165,7 +165,7 @@ When a contributor opens or updates a PR touching `posts/*.yaml`, a GitHub Actio
 
 When a social maintainer merges a PR to `main`, the publishing workflow detects newly added files in `posts/*.yaml` via `git diff --diff-filter=A ${{ github.event.before }} ${{ github.sha }} -- posts/` and publishes them using a small Go CLI under `cmd/social-post/` in `prometheus/social`.
 
-For `linkedin`, `bluesky`, and `mastodon`, the CLI calls CNCF Buffer's GraphQL API via the `createPost` mutation once for each enabled platform `channelId`:
+For `linkedin`, `bluesky`, and `mastodon`, the CLI calls Buffer's GraphQL API (`https://api.buffer.com`) via the `createPost` mutation once for each enabled platform `channelId`:
 
 ```graphql
 mutation CreatePost($channelId: ChannelId!, $text: String!, $imageUrl: String!, $altText: String!) {
@@ -204,11 +204,12 @@ Why this architecture fits Prometheus well:
 
 * **Per-platform overrides work natively.** Each `createPost` call targets a single `channelId`, so the CLI sends `overrides.linkedin` to the LinkedIn channel ID, the concise `text` to the Bluesky and Mastodon channel IDs, `overrides.reddit` to `r/PrometheusMonitoring`, and `overrides.prometheus-announce` to `prometheus-announce@googlegroups.com` when enabled.
 * **Images and alt text work from Git.** As soon as the PR merges to `main`, any image committed under `assets/...` is publicly reachable at `https://raw.githubusercontent.com/prometheus/social/main/assets/...`. Passing that URL and `metadata.altText` to `createPost` attaches the image and accessibility description on LinkedIn, Bluesky, and Mastodon.
-* **Minimal secrets, zero OAuth token rotation in CI.** GitHub Actions stores one `BUFFER_ACCESS_TOKEN` secret plus the three Buffer channel IDs, `BUFFER_CHANNEL_LINKEDIN`, `BUFFER_CHANNEL_BLUESKY`, and `BUFFER_CHANNEL_MASTODON`, Reddit script credentials, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, and `REDDIT_PASSWORD`, and standard SMTP credentials, `ANNOUNCE_SMTP_HOST`, `ANNOUNCE_SMTP_USER`, and `ANNOUNCE_SMTP_PASSWORD`, for `prometheus-announce@googlegroups.com`. Buffer handles LinkedIn's 60-day OAuth token refreshes under CNCF's existing account.
+* **Minimal secrets, zero OAuth token rotation in CI.** GitHub Actions stores one `BUFFER_ACCESS_TOKEN` secret plus the three Buffer channel IDs, `BUFFER_CHANNEL_LINKEDIN`, `BUFFER_CHANNEL_BLUESKY`, and `BUFFER_CHANNEL_MASTODON`, Reddit script credentials, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, and `REDDIT_PASSWORD`, and standard SMTP credentials, `ANNOUNCE_SMTP_HOST`, `ANNOUNCE_SMTP_USER`, and `ANNOUNCE_SMTP_PASSWORD`, for `prometheus-announce@googlegroups.com`. Buffer handles LinkedIn's 60-day OAuth token refreshes under a dedicated Prometheus Buffer account.
+* **Zero cost on Buffer's Free plan, with clear sponsorship or upgrade paths.** CNCF confirmed that they do not provide a shared Buffer API account and recommended Buffer's Free plan (`$0/month`), which includes up to 3 connected channels (matching our exact three Buffer channels: LinkedIn, Bluesky, and Mastodon), 1 API key, and up to 3,000 API requests per 30 days (150 per 15 minutes, 600 per 24 hours). If we ever need more channels or higher limits in the future, we can seek sponsorship for a paid Buffer plan (Essentials is `$15/month` billed annually for 3 channels, or `$7.50/month` with Buffer's 50% nonprofit discount) or switch individual channels to direct native API calls.
 
 ### Governance, access, and contributor recognition
 
-1. **Account ownership.** Master credentials including login passwords, 2FA recovery codes, LinkedIn Page Super Admin roles, and the CNCF Buffer login will be stored in the CNCF and Prometheus Steering Committee shared password vault so the project is never locked out when an individual changes roles.
+1. **Account ownership.** Master credentials including login passwords, 2FA recovery codes, LinkedIn Page Super Admin roles, and the Prometheus Buffer account login will be stored in the CNCF and Prometheus Steering Committee shared password vault so the project is never locked out when an individual changes roles.
 2. **Social maintainers in `prometheus/social/MAINTAINERS.md`.**
    * Start `prometheus/social/MAINTAINERS.md` with the Prometheus Steering Committee, and expand the team from there as contributors and maintainers step up to help.
    * `@prometheus/social-maintainers` have the authority to establish, refine, and enforce the repository's editorial rules and posting cadence.
@@ -254,7 +255,7 @@ The initial draft of this proposal included reactivating the `@PrometheusIO` acc
 
 * [ ] Reach consensus on this proposal in `prometheus/proposals`.
 * [ ] Create the public `prometheus/social` repository with `MAINTAINERS.md` and the `social-maintainers` GitHub team.
-* [ ] Request creation of the official Prometheus LinkedIn page with CNCF, add Steering Committee admins, and connect LinkedIn, `@prometheus.io` on Bluesky, and `@Prometheus@chaos.social` on Mastodon to CNCF's Buffer account.
+* [ ] Coordinate the official Prometheus LinkedIn page with CNCF, add Steering Committee admins, create a dedicated Prometheus Buffer account on the Free plan, and connect LinkedIn, `@prometheus.io` on Bluesky, and `@Prometheus@chaos.social` on Mastodon.
 * [ ] Configure a Reddit script application for `r/PrometheusMonitoring` and a project sender account with `Can post` permissions on `prometheus-announce@googlegroups.com`, and store their credentials in the `social-production` GitHub Environment in `prometheus/social`.
 * [ ] Update [src/app/community/community.md](https://github.com/prometheus/docs/blob/main/src/app/community/community.md) in `prometheus/docs` to list LinkedIn, Bluesky, Mastodon, and Reddit.
 * [ ] Add `posts/`, `assets/`, `README.md`, the PR validation workflow, and the Buffer GraphQL + Reddit OAuth2 + SMTP publisher CLI to `prometheus/social`.
