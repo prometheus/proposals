@@ -290,8 +290,7 @@ For one repository at a time:
 2. Verify that every organization member's effective access is provided by the correct teams.
 3. Remove direct repository grants from organization members after replacement team access is verified.
 4. Remove duplicate grants from legacy teams only after verification.
-5. Remove each repository's MAINTAINERS.md after its Maintainers team has been populated and validated, except for the component-oriented repositories identified above.
-6. Retain separately scoped CI, bot, security, and service-account access.
-7. Rename or retire empty and superseded human-access teams.
-8. Record justified exceptions to the naming and permission model.
-9. Audit all 82 repositories against the acceptance criteria.
+5. Retain separately scoped CI, bot, security, and service-account access.
+6. Rename or retire empty and superseded human-access teams.
+7. Record justified exceptions to the naming and permission model.
+8. Audit all 82 repositories against the acceptance criteria.
