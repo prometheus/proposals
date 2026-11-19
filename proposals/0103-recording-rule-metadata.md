@@ -208,6 +208,8 @@ We include optional YAML metadata alongside runtime deduction because:
 * Runtime deduction cannot invent `help` descriptions or deduce `unit` values for computed expressions where `__name__` is dropped, such as `rate()`, ratios, or `histogram_quantile()`. Without YAML fields, recorded metrics remain undocumented and unitless in `/api/v1/metadata`, UIs, and Remote Write 2.0.
 * Runtime deduction defaults computed float samples to `gauge`, which leaves known cases that already need manual `type` overrides until PromQL has full type awareness: static `info` or `stateset` rules built with `vector(1)` and constant `labels:`, summed delta counters such as `sum(some_delta_counter)`, and niche aggregations that group by `__name__` such as `count by (__name__) (http_requests_total)` when `type-and-unit-labels` is disabled.
 
+Having YAML fields also gives us a fallback if runtime deduction misses too many edge cases to maintain in Prometheus. In that case, we can move deduction to a one-shot `promtool` command that writes YAML metadata for users to review or enrich with an LLM.
+
 ### 3. Default all unconfigured recording rules to `gauge`
 
 Instead of inspecting evaluated samples and preserved schema metadata at runtime, Prometheus could set `type = gauge` whenever the rule YAML omits `type`, as discussed in [prometheus#17864](https://github.com/prometheus/prometheus/pull/17864). Every unconfigured rule would get a static default at load time without runtime sample checks or metadata lookups.
