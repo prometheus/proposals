@@ -242,11 +242,13 @@ groups:
           baz: bar
 ```
 
-We prefer dedicated metadata fields on recording rules because:
+Using `labels:` would keep metadata configuration consistent with [PROM-104](./0104-metadata-relabeling.md) across Prometheus. We still prefer dedicated metadata fields on recording rules because:
 
 * `rulefmt` already separates metric identity in `record:`, where `__name__` is rejected inside `labels:`, and human-readable text in `annotations:` from series-identifying `labels:`. `__help__` is never stored as a series label even with `type-and-unit-labels` enabled. [PROM-104](./0104-metadata-relabeling.md) uses virtual `__*__` names only because `source_labels` and `target_label` are the existing pipeline interface of `relabel_configs`, whereas a recording rule declares static metadata for a single metric family.
 * `labels:` is shared with `RuleGroup.Labels` and alerting rules, and `/api/v1/rules` exposes `labels` directly as extra series labels. Extracting `__type__`, `__unit__`, and `__help__` out of `labels:` only on recording rules makes group inheritance and `/api/v1/rules` semantics inconsistent.
 * Existing `rulefmt` versions only reject `__name__` in `labels:`. Loading a rule file with `__help__` under `labels:` into an older Prometheus, Thanos, or Mimir ruler passes validation and writes a literal `__help__` label into TSDB, whereas dedicated YAML fields fail fast on unknown-field validation.
+
+If we gate recording rule metadata YAML fields behind a feature flag initially, they are not covered by stability guarantees under [Prometheus feature flags](https://prometheus.io/docs/prometheus/latest/feature_flags/), so we can still revisit this format before stabilizing.
 
 ### 6. Static AST-based type and unit inference
 
