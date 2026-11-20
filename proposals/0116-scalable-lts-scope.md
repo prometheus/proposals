@@ -58,7 +58,7 @@ Prometheus maintainers, Steering Committee members, Prometheus Members, and cont
 ## Non-Goals
 
 * Turning Go `prometheus/prometheus` into a distributed microservice system. Go Prometheus remains a single-node server and agent.
-* Deprecating, replacing, or taking over existing Thanos, Cortex, or Mimir projects. Those projects remain independent with their own governance and users.
+* Deprecating, replacing  Go `prometheus/prometheus` in any form. If we do this it will be a separate discussions.
 * Finalizing technical architecture choices such as Vortex versus Parquet, Kafka versus object-storage WAL, or Iceberg versus DuckLake. Those decisions belong in component design docs and prototypes inside the SIG.
 * Making unilateral trademark or CNCF project-boundary changes without coordinating with the Steering Committee, Thanos and Cortex maintainers, and CNCF.
 
