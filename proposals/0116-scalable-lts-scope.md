@@ -105,7 +105,9 @@ Accepting scalable LTS into Prometheus governance must not come at the expense o
 
 Go `prometheus/prometheus` keeps its current focus and release cadence. Nothing in this proposal forces existing Prometheus users to adopt Rust, columnar storage, or distributed components, and Go `prometheus/prometheus` will not take on clustering features.
 
-Thanos, Cortex, and Mimir continue running under their own projects and governance. For maintainers and heavy users of those systems, Prometheus becomes a shared neutral place to build the next-generation Rust and columnar components together instead of duplicating work across three Go repos or private forks. Because the new stack is modular, existing Thanos, Cortex, and Mimir deployments can adopt pieces incrementally, for example placing a Rust PromQL querier or columnar compactor alongside existing components.
+For Thanos, Cortex it's up to the maintainers. However, our proposal would be to officially deprecate them with a 1y runway for active maintenance OR longer if the distributed Prometheus takes more time in terms of feature parity. After that period the Thanos and Cortex CNCF organizations will be officially moved/closed to Prometheus. 
+
+For maintainers and heavy users of those systems, Prometheus becomes a shared neutral place to build the next-generation Rust and columnar components together instead of duplicating work across three Go repos or private forks. Because the new stack is modular it is also possible for existing Thanos, Cortex,  deployments to adopt pieces incrementally, for example placing a Rust PromQL querier or columnar compactor alongside existing components, so the migration process, for that 1y+ deprecation period can be adjusted.
 
 Operators get a single query engine, shared columnar storage formats, and one governance model from a single node up to a multi-cluster deployment, while small deployments keep running one binary.
 
