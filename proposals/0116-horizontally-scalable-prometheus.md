@@ -31,7 +31,7 @@ Because we are rebuilding the stack from scratch, as outlined in the [Thanos 2.0
 
 Historically, Prometheus maintainers resisted bringing Thanos or Cortex style requirements into Prometheus. That resistance made sense. Single-node Prometheus works so well because it is **an autonomous binary with local TSDB and zero external storage dependencies. You can trust it to fire alerts when everything else is broken**. Maintainers worried that distributed microservices and extreme-scale requirements would bloat the monolith and pull focus away from single-node users, especially since roughly 90% of maintainers work at companies that care more about multi-cluster distributed Prometheus than single-node servers.
 
-That risk is real and we should not wave it away. Four things have changed since that stance was formed:
+That risk is real and we should not wave it away. Prometheus is still a single-binary effort first, and if the interests of single-node Prometheus and horizontally scalable Prometheus ever conflict, single-node Prometheus comes first. At the same time, the past decade has shown how costly ecosystem fragmentation is across separate projects. Four things have changed since that original scope boundary was formed:
 
 1. We can protect monolith priority with structure instead of an informal scope ban. Refreshed Prometheus governance gives us explicit SIG charters in [PROM-115](https://github.com/prometheus/proposals/pull/115), per-repository maintainer teams in [PROM-95](https://github.com/prometheus/proposals/blob/main/proposals/0095-teams-and-org-permissions.md), and clear contributor roles in [ROLES.md](https://github.com/prometheus/governance/blob/main/ROLES.md). We can back those up with hard benchmark gates, clean crate boundaries, and dedicated monolith maintainers.
 2. The `github.com/prometheus` organization stopped being only the monolith server binary a long time ago. Today the organization maintains client SDKs in six languages, exporters, Alertmanager, `promtool`, `--agent` mode, [prometheus/prometheus-mcp](https://github.com/prometheus/prometheus-mcp), protocol specifications, and experimental Rust projects in [prometheus/scrape.rs](https://github.com/prometheus/scrape.rs) and [prometheus/prometheus.rs](https://github.com/prometheus/prometheus.rs).
@@ -94,7 +94,7 @@ flowchart TB
 
 ### Safeguarding monolith priority
 
-Accepting horizontally scalable Prometheus into the Prometheus organization must not come at the expense of single-node Prometheus users. We put four concrete guardrails in place from day one:
+Accepting horizontally scalable Prometheus into the Prometheus organization must not come at the expense of single-node Prometheus users. Whenever the interests of single-node Prometheus and horizontally scalable Prometheus conflict, single-node Prometheus comes first. We back that rule up with four concrete guardrails from day one:
 
 * Monolith remains the default UX. Running the binary without distributed flags starts a self-contained single-node server using local storage, zero external coordination services, and standard Prometheus configuration. Multi-tenancy, object storage, and distributed routing stay strictly opt-in.
 * Dependency direction is one-way. Core crates for scraping, PromQL, rule evaluation, and local storage cannot depend on distributed coordination, multi-tenant auth, or cloud object-store SDKs. Distributed layers depend downward on core crates, never the reverse.
