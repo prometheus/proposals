@@ -121,19 +121,25 @@ Bring horizontally scalable Prometheus into the Prometheus organization and the 
 
 This creates the cleanest boundary on binary size, CLI flags, release cadence, and issue trackers, with zero risk of distributed issues crowding the core Prometheus repository. The trade-off is that we must choose and build recognition around a new name, coordinate breaking crate changes across more repositories during early prototyping, and give up a single-binary path that transitions cleanly from monolith to microservices. If maintainers feel strongly that monolith and distributed modes should not share `prometheus/prometheus.rs`, this alternative is a direct fallback that still achieves the core goal of this proposal.
 
-### 2. Build under the Thanos organization as Thanos 2.0
+### 2. Shared library crates under Prometheus, distributed binaries in another org
+
+Combine Alternatives 1 and 3. Prometheus expands scope only to govern reusable library crates such as `scrape.rs`, `promql-rs`, and columnar storage alongside the single-node monolith binary in `prometheus/prometheus.rs`. A separate organization such as `thanos-io/thanos.rs` composes those crates into distributed binaries under shared cross-org governance.
+
+This keeps existing Prometheus and Thanos branding and SEO intact, keeps `prometheus/prometheus.rs` strictly single-binary, and lets operators adopt or contribute to shared Rust crates without committing to one distributed binary. The trade-off is that governance stays split across multiple CNCF organizations instead of simplifying the CNCF landscape under one umbrella. Running cross-org governance adds overhead, preserves historical Thanos and Cortex boundaries, and makes it harder for Cortex, Grafana Mimir, and Prometheus contributors to converge in one neutral home.
+
+### 3. Build under the Thanos organization as Thanos 2.0
 
 Keep horizontally scalable Prometheus out of the Prometheus organization and host the new Rust and columnar backend under `github.com/thanos-io`, which is already a CNCF Incubating project dedicated to horizontally scalable Prometheus.
 
 Reusing Thanos avoids expanding Prometheus scope and builds on an established brand. However, it makes unifying Cortex and Mimir contributors harder under one predecessor's name and governance. Thanos OSS maintenance has also slowed down, while Prometheus now has an active Steering Committee and the Prometheus.rs SIG already building shared Rust crates. Putting the distributed layer under `thanos-io` would split contributors working on `prometheus/scrape.rs`, `promql-rs`, and the distributed backend across two separate CNCF governance bodies.
 
-### 3. Create a new organization such as CorThanos or CorThaMir
+### 4. Create a new organization such as CorThanos or CorThaMir
 
 Start a fresh GitHub organization and pursue a new CNCF Sandbox project for the combined next-generation distributed system.
 
 A new organization starts with zero historical baggage from Prometheus, Thanos, Cortex, or Mimir. In practice, standing up new governance, security processes, CNCF onboarding, CI infrastructure, and brand trust takes months of non-engineering work and splits contributor credit away from Prometheus. Without strong institutional backing, a fresh org risks becoming a fourth fragmented project rather than uniting the existing three.
 
-### 4. Keep horizontally scalable Prometheus out of scope
+### 5. Keep horizontally scalable Prometheus out of scope
 
 Maintain the status quo: keep Prometheus strictly focused on single-node server, agent, and shared libraries, and leave horizontal scalability to downstream projects.
 
