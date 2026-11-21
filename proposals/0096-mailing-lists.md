@@ -50,5 +50,5 @@ be added to the automated infra-as-code repo.
 
 ## Alternatives
 
-We could esablish a new mailing list host. But this would make it more difficult to integrate with
+We could esablish a new mailing list host or use [CNCF lists](https://lists.cncf.io/groups). But this would make it more difficult to integrate with
 the calendar system.
