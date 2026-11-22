@@ -58,7 +58,8 @@ Prometheus maintainers, Steering Committee members, Prometheus Members, and cont
 ## Non-Goals
 
 * Turning Go `prometheus/prometheus` into a distributed microservice system. Go Prometheus remains a single-node server and agent.
-* Deprecating or replacing Go `prometheus/prometheus` in any form. If we do this it will be a separate discussion.
+* Deprecating Go `prometheus/prometheus` or deciding if and when a replacement happens. Any deprecation decision is out of scope here and belongs to `prometheus/prometheus` maintainers.
+* Providing Go FFI bindings so Go `prometheus/prometheus` can call the Rust crates directly. Contributors are free to experiment, but the SIG does not plan to build or maintain bindings.
 * Finalizing technical architecture choices such as Vortex versus Parquet, Kafka versus object-storage WAL, or Iceberg versus DuckLake. Those decisions belong in component design docs and prototypes inside the SIG.
 * Making unilateral trademark or CNCF project-boundary changes without coordinating with the Steering Committee, Thanos and Cortex maintainers, and CNCF.
 
@@ -100,6 +101,18 @@ Accepting horizontally scalable Prometheus into the Prometheus organization must
 * Dependency direction is one-way. Core crates for scraping, PromQL, rule evaluation, and local storage cannot depend on distributed coordination, multi-tenant auth, or cloud object-store SDKs. Distributed layers depend downward on core crates, never the reverse.
 * Continuous benchmark gates enforce monolith budgets. CI tracks single-node RSS, CPU, query latency, cold-start time, and binary size on realistic small and medium workloads alongside 100M-series tests. Changes that improve distributed components while regressing monolith footprint or startup simplicity do not merge.
 * Separate maintainership protects priorities. Monolith core and distributed components have distinct maintainer rosters or `CODEOWNERS` areas. Monolith maintainers hold approval authority over default behavior, single-node flags, and shared crate interfaces. At the organization level, the Steering Committee's 2-seat-per-employer limit in [GOVERNANCE.md](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md#limitations-on-company-representation) prevents any single vendor from capturing project direction.
+
+### Relationship with Go `prometheus/prometheus`
+
+Go `prometheus/prometheus` and `prometheus/prometheus.rs` will coexist as independent implementations under the Prometheus organization. Their relationship follows three rules:
+
+* Drop-in monolith goal, separate deprecation decision. The `prometheus/prometheus.rs` monolith aims to become a drop-in replacement for single-node Prometheus over time, matching core scraping, alerting, PromQL, configuration, and HTTP API behavior. Whether or when that leads to deprecating Go `prometheus/prometheus` is out of scope for this proposal and belongs to `prometheus/prometheus` maintainers.
+* No planned Go bindings for Rust crates. The SIG does not plan to expose the Rust crates to Go `prometheus/prometheus` via CGo or FFI due to the FFI boundary and build overhead. Nothing stops contributors from experimenting with bindings independently, but the SIG does not commit to maintaining them.
+* Shared API and protocol compatibility, independent internals. `prometheus/prometheus.rs` maintainers do not have to backport internal storage, indexing, or execution optimizations to Go `prometheus/prometheus`. User-facing contracts, however, must stay aligned across both implementations:
+  * Wire and ingestion protocols such as OpenMetrics 2 and Remote Write 2 continue to evolve through the shared [Prometheus specifications](https://prometheus.io/docs/specs/) process.
+  * Changes or additions to PromQL, the Prometheus HTTP API, or core configuration syntax go through `prometheus/proposals` with review from `prometheus/prometheus` maintainers rather than shipping in Rust alone.
+  * Shared conformance suites in [prometheus/compliance](https://github.com/prometheus/compliance) verify PromQL, OpenMetrics, and Remote Write compatibility across both implementations, and should expand where needed to cover HTTP API contracts.
+  * Experimental or Rust-only features without cross-implementation agreement stay behind explicit opt-in flags so default monolith behavior stays compatible with Go Prometheus.
 
 ### What this means for the ecosystem
 
