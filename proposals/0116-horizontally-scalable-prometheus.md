@@ -25,7 +25,7 @@
 
 ## Why
 
-The core (CNCF related) horizontally scalable Prometheus ecosystem has been split across three projects, Thanos, Cortex, and Mimir, for years. Each project maintained its own ingestion pipeline, object-storage integration, compactor, and query scaling layer on top of Go Prometheus TSDB. As cardinality and ingestion volume grew, the memory and CPU cost of the mutable TSDB head pushed companies like Cloudflare, Shopify, AWS, Red Hat, Grafana, and Dash0 toward internal Rust and columnar prototypes using Apache Arrow, Vortex, and Apache DataFusion. At the same time, upstream OSS maintenance on Go Cortex and Thanos projects slowed down.
+The core (CNCF related) horizontally scalable Prometheus ecosystem has been split across three projects, Thanos, Cortex, and Mimir, for years. Each project maintained its own ingestion pipeline, object-storage integration, compactor, and query scaling layer on top of Go Prometheus TSDB. As cardinality and ingestion volume grew, the memory and CPU cost of the mutable TSDB head pushed companies like Cloudflare, Shopify, AWS, Red Hat, Grafana, and Dash0 toward internal Rust and columnar prototypes using Apache Arrow, Vortex, and Apache DataFusion. At the same time, upstream maintenance on Thanos slowed sharply, Cortex runs on a small maintainer group across three companies, and Mimir ships fast as a single-vendor AGPL-3.0 project outside CNCF governance.
 
 Because we are rebuilding the stack from scratch, as outlined in the [Thanos 2.0](https://docs.google.com/document/d/1fn8JdEiHe0UBF4MPCVE41GHMtAkQ8n_3T8ovIadfX1A/edit) and [Prometheus.rs](https://docs.google.com/document/d/1NB5qyEthztPjp2in8AeDq_l8PoYxsAa1QhImanJDQHM/edit) drafts, we have a rare chance to reunite the community in one vendor-neutral home. On November 19, 2026, the [Prometheus.rs SIG](https://docs.google.com/document/d/1uZjrWeAfRaN6fIp4L7pd-lMqc650bClJeg7jGO3gerE/edit?tab=t.ok8vuqesxwve#heading=h.ht6fktvkrxsh) discussed where this combined effort should live. We compared reusing the Thanos organization, creating a brand-new organization such as CorThanos or CorThaMir, and bringing the scope under Prometheus itself. The group agreed that Prometheus, with its refreshed governance, elected Steering Committee, and new energy, is the best neutral home.
 
@@ -102,6 +102,32 @@ Accepting horizontally scalable Prometheus into the Prometheus organization must
 * Continuous benchmark gates enforce monolith budgets. CI tracks single-node RSS, CPU, query latency, cold-start time, and binary size on realistic small and medium workloads alongside 100M-series tests. Changes that improve distributed components while regressing monolith footprint or startup simplicity do not merge.
 * Separate maintainership protects priorities. Monolith core and distributed components have distinct maintainer rosters or `CODEOWNERS` areas. Monolith maintainers hold approval authority over default behavior, single-node flags, and shared crate interfaces. At the organization level, the Steering Committee's 2-seat-per-employer limit in [GOVERNANCE.md](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md#limitations-on-company-representation) prevents any single vendor from capturing project direction.
 
+### Long-term sustainability and quality
+
+During review on CNCF Slack, [@juliusv](https://github.com/juliusv) raised a hard question about long-term sustainability. Looking at Thanos, Cortex, and Mimir over the past five years shows a clear pattern: maintaining a full distributed metrics stack in neutral open source is much harder than maintaining a single-node server.
+
+| Project                 | License and governance      | 2021 PRs | 2022 PRs | 2023 PRs | 2024 PRs | 2025 PRs | 2026 YTD PRs | Open PRs / Issues |
+|:------------------------|:----------------------------|---------:|---------:|---------:|---------:|---------:|-------------:|------------------:|
+| `thanos-io/thanos`      | Apache-2.0, CNCF Incubating |      549 |      419 |      472 |      380 |      195 |          217 |         335 / 620 |
+| `cortexproject/cortex`  | Apache-2.0, CNCF Incubating |      530 |      270 |      376 |      513 |      441 |          416 |         114 / 170 |
+| `grafana/mimir`         | AGPL-3.0, Grafana Labs      |      470 |    2,005 |    2,100 |    2,376 |    2,676 |        2,553 |         307 / 694 |
+| `prometheus/prometheus` | Apache-2.0, CNCF Graduated  |      864 |      674 |      674 |    1,261 |    1,010 |        1,381 |         617 / 526 |
+
+*Merged PR counts and open backlogs queried from GitHub on November 23, 2026.*
+
+The numbers spell out the risk:
+
+* Thanos merged PR volume fell by more than half from 2021 to 2025, dropped to two minor releases in 2026 (`v0.41.0` and `v0.42.0`), and accumulated 335 open PRs and 620 open issues. Its own `MAINTAINERS.md` notes that maintainers work on it mostly in their free time.
+* Cortex recovered PR volume after the 2022 Mimir fork, but depends on just six maintainers across three employers: AWS, Apple, and KakaoEnterprise.
+* Mimir sustains over 2,500 merged PRs a year because one vendor funds it directly, under AGPL-3.0 outside CNCF neutral governance.
+
+Bringing horizontally scalable Prometheus into the Prometheus organization does not magically fix open-source economics. If we repeat the same structure, we risk the same decay, except now under the Prometheus brand. We address this risk in four concrete ways:
+
+* Pool fragmented engineering effort under one Apache-2.0 roof. Companies already funding metrics engineers across Thanos, Cortex, and internal Rust forks get one neutral codebase under the Prometheus Steering Committee's 2-seat-per-employer cap. Contributions count directly toward Prometheus Member and Maintainer status and CNCF DevStats, giving employers a stronger reason to fund upstream work than on smaller satellite projects.
+* Keep the core value in reusable crates so vendor incentives stay aligned. Thanos and Cortex struggled partly because operators had to adopt an entire microservices stack or fork it. When storage, scraping, PromQL, compaction, and rules live in well-scoped Apache-2.0 crates, cloud providers running custom internal control planes can still co-maintain those crates upstream instead of walking away into closed forks.
+* Gate graduation on real multi-company staffing and quality metrics. Distributed components start as `[EXPERIMENTAL]` and cannot graduate to stable until they pass conformance suites, meet operational benchmarks, and have active maintainers from at least two independent employers.
+* Enforce periodic health checks with an explicit demotion and archival path. The Prometheus.rs SIG and Steering Committee review distributed component health annually against active multi-company maintainership, security fix turnaround, release cadence, and benchmark stability. If a distributed component drops to single-employer maintainership or goes 6 to 12 months without active maintainers or timely security fixes, the project demotes it back to `[EXPERIMENTAL]` or archives it rather than letting an unmaintained system erode Prometheus quality. Single-node Prometheus ships unaffected either way.
+
 ### Relationship with Go `prometheus/prometheus`
 
 Go `prometheus/prometheus` and `prometheus/prometheus.rs` will coexist as independent implementations under the Prometheus organization. Their relationship follows three rules:
@@ -163,5 +189,5 @@ This avoids any scope change and preserves the simple historical boundary that P
 * [ ] Reach consensus on this proposal in `prometheus/proposals`, including agreement on single-repo modes in `prometheus/prometheus.rs` versus a separate repository under the Prometheus organization.
 * [ ] Hold a Steering Committee vote under [GOVERNANCE.md](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md#decision-process) to formally include horizontally scalable Prometheus in project scope.
 * [ ] Coordinate with Thanos and Cortex maintainers and the CNCF regarding project boundaries, messaging, and any naming implications.
-* [ ] Submit the Prometheus.rs SIG charter PR under `prometheus/governance/sigs/` once [PROM-115](https://github.com/prometheus/proposals/pull/115) is merged, documenting monolith-priority rules, repository scope, leads, and Steering Committee liaison.
+* [ ] Submit the Prometheus.rs SIG charter PR under `prometheus/governance/sigs/` once [PROM-115](https://github.com/prometheus/proposals/pull/115) is merged, documenting monolith-priority rules, graduation and annual health-review or archival criteria for distributed components, repository scope, leads, and Steering Committee liaison.
 * [ ] Configure repository teams, `MAINTAINERS.md` per [PROM-95](https://github.com/prometheus/proposals/blob/main/proposals/0095-teams-and-org-permissions.md), `CONTRIBUTING.md` documenting how newcomers join and contribute, crate dependency checks, and monolith benchmark gates before accepting distributed component code.
