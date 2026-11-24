@@ -8,14 +8,15 @@
 
 * **Related Issues and PRs:**
   * [WIP: Prometheus semconvs](https://github.com/prometheus/prometheus/pull/17868)
-  * [promql: Add versioned OTel semantic-conventions read](https://github.com/prometheus/prometheus/pull/18858): the query-time consumer for the schema files this registry would emit.
+  * [PROM-116: Horizontally scalable Prometheus in Prometheus Organization and Governance](https://github.com/prometheus/proposals/pull/116): brings the Rust effort under Prometheus governance, which is what makes one registry for both implementations worth doing now.
+  * [promql: Add versioned OTel semantic-conventions read](https://github.com/prometheus/prometheus/pull/18858): the query-time reader for the schema files a follow-on would emit.
 
 * **Other docs or links:**
   * [Dev Summit notes: internal telemetry consensus](https://docs.google.com/document/d/1uurQCi5iVufhYHGlBZ8mJMK_freDFKPG0iYBQqJ9fvA/edit?tab=t.0#bookmark=id.ojugisgspwvq)
   * [OTel Semantic Convention specification](https://opentelemetry.io/docs/specs/semconv/): YAML schemas describing telemetry, with tooling to generate code and docs from them.
   * [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver): the toolchain that resolves, validates, and renders those schemas.
 
-> TL;DR: Define the metrics Prometheus itself owns in one [OTel semantic convention registry](https://opentelemetry.io/docs/specs/semconv/). Generate the instrumentation code and the docs from it, check the code against it in CI, and publish it so downstream projects can check their own references.
+> TL;DR: Define the metrics Prometheus itself owns in one [OTel semantic convention registry](https://opentelemetry.io/docs/specs/semconv/). Generate the instrumentation code and the docs from it, in Go today and in Rust for [prometheus.rs](https://github.com/prometheus/prometheus.rs), and publish it so downstream projects can check their own references.
 
 ## Why
 
@@ -24,7 +25,7 @@ Prometheus' internal metrics are `client_golang` constructor calls scattered acr
 * Dashboard and alert authors reverse-engineer it from Go source or a live instance.
 * Nothing separates stable metrics from implementation details, so renames and semantic changes ship unannounced.
 * Documentation is hand-written, with nothing keeping it honest.
-* No test notices when a code change alters which metrics exist or what labels they carry.
+* A second implementation has nothing to generate from. Keeping [prometheus.rs](https://github.com/prometheus/prometheus.rs) in agreement with the Go server means reading Go source and copying names by hand.
 
 ### Pitfalls of the current solution
 
@@ -32,16 +33,16 @@ Help strings are inconsistent, some describing counter semantics and some the ev
 
 ## Goals
 
-* [Required] One machine-readable registry describes every Prometheus-owned metric, in the sense fixed under Scope. The Go code stops being a second source of truth.
+* [Required] One machine-readable registry describes every Prometheus-owned metric, in the sense fixed under Scope. Hand-written constructor calls stop being a second source of truth.
 * [Required] No hand-written metric descriptors. Instrumentation code comes from the registry.
 * [Required] Generated documentation, which therefore cannot drift.
 * [Required] Stability (`development`, `stable`) and structured deprecation as schema fields, so lifecycle changes are reviewable.
-* [Nice to have] A CI check that catches drift between the registry and the binary. How to run it is still open, see Contract testing for the approach this proposal leans towards and Alternatives for the ones it rejects.
-* [Nice to have] A base for multi-language generation and ecosystem tooling built on the same registry.
+* [Required] One registry both implementations generate from, so Go and Rust agree on the metrics they both emit.
+* [Nice to have] A base for ecosystem tooling built on the same registry.
 
 ### Audience
 
-Prometheus maintainers and contributors. Operators who build dashboards, alerts, and other artifacts on these metrics. Downstream projects that consume them, such as mixins.
+Prometheus maintainers and contributors, in both implementations. Operators who build dashboards, alerts, and other artifacts on these metrics. Downstream projects that consume them, such as mixins.
 
 ## Non-Goals
 
@@ -52,6 +53,9 @@ Prometheus maintainers and contributors. Operators who build dashboards, alerts,
 * Migrating exporters or other ecosystem projects.
 * Publishing the registry as upstream OTel semantic conventions.
 * Defining traces or logs. Traces are the follow-on; see Signal scope.
+* Writing the Rust templates or migrating `prometheus.rs`. This proposal gives that work a source to generate from.
+* Verifying in CI that a binary matches the registry. Generation covers the definitions, not the wiring, so dropping the line that registers a generated collector removes a metric without changing the registry. Catching that needs read-only accessors on `prometheus.Desc`, and it needs a decision on how the check reads the binary. That is its own proposal.
+* Emitting a per-release [OTel telemetry schema file](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/schemas/file_format_v1.1.0.md) so deployed dashboards survive a rename. The `renamed_to` field records the rename for review here. [prometheus#18858](https://github.com/prometheus/prometheus/pull/18858) adds the query-time reader and semconv generates such a file with `weaver registry diff`, so the follow-on is wiring, not a new capability.
 
 ## How
 
@@ -71,7 +75,7 @@ The descriptor half excludes `go_*`, `process_*`, and `promhttp_*`, whose metada
 
 ### The registry
 
-A v2 registry under `semconv/` is the authoring source for every metric in scope above, populated package by package during migration. It is a `manifest.yaml` naming the registry and its schema URL, plus one or more definition files. Start with a single definition file, which keeps name uniqueness and stability audits trivial, and split it per package if it gets unwieldy. Tests and consumers read `semconv/resolved.yaml`, the `file_format: resolved/2.0` artifact that `weaver registry package` publishes from them, never these files.
+A v2 registry under `semconv/` is the authoring source for every metric in scope above, populated package by package during migration. It is a `manifest.yaml` naming the registry and its schema URL, plus one or more definition files. Start with a single definition file, which keeps name uniqueness and stability audits trivial, and split it per package if it gets unwieldy. Generation and consumers read `semconv/resolved.yaml`, the `file_format: resolved/2.0` artifact that `weaver registry package` publishes from them, never these files.
 
 ```yaml
 file_format: definition/2
@@ -125,11 +129,11 @@ metrics:
         objectives: {0.01: 0.001, 0.5: 0.05, 0.99: 0.001}
 ```
 
-Go code, documentation, and the contract test all derive from this file. `annotations.prometheus` carries what OTel has no field for: the owning package, each attribute's Prometheus label name, the histogram variant and its bucket or objective configuration, callback gauges, and construction-time labels.
+Code and documentation derive from this file. `annotations.prometheus` carries what OTel has no field for: the owning package, each attribute's Prometheus label name, the histogram variant and its bucket or objective configuration, callback gauges, and construction-time labels.
 
 `brief` is the only description. Generation emits it as the `client_golang` `Help` string, so one sentence feeds the code, the docs, and `# HELP`. A second verbatim-help field would have held today's exposition byte-for-byte, at the cost of two sentences per metric and a policy to keep them together.
 
-OTel attribute keys are unique across the registry, while a Prometheus label name is only unique within one metric. Two metrics that both label something `type` therefore cannot share a key, and Weaver rejects the registry if they try. Each attribute takes a namespaced key instead, and `annotations.prometheus.label_name` carries the wire name that generation and the contract test need. Attribute keys follow `prometheus.<package>.<label>`, their group IDs `attr.<namespace>`.
+OTel attribute keys are unique across the registry, while a Prometheus label name is only unique within one metric. Two metrics that both label something `type` therefore cannot share a key, and Weaver rejects the registry if they try. Each attribute takes a namespaced key instead, and `annotations.prometheus.label_name` carries the wire name generation needs. Attribute keys follow `prometheus.<package>.<label>`, their group IDs `attr.<namespace>`.
 
 Generated output lands in `<package>/internal/semconv/` as `metrics.gen.go` and `README.md`, which keeps generated types out of the public API and marks their origin, per review feedback on the [proof-of-concept](https://github.com/prometheus/prometheus/pull/17868).
 
@@ -154,7 +158,7 @@ func NewPrometheusTsdbCompactionDurationSeconds() prometheus.Histogram {
 }
 ```
 
-`Help` comes from `brief`, the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, for the reasons under Contract testing.
+`Help` comes from `brief`, the bucket fields from the histogram annotations, where `histogram_type: mixed_histogram` selects both the classic and native sets. `unit: s` stays registry metadata and never reaches `Opts.Unit`, because setting that field changes what Prometheus exposes. It reaches the descriptor hash, `MetricFamily.Unit`, and `# UNIT` in OpenMetrics, and from there scrape and TSDB metadata, remote write, and `/api/v1/metadata`. Names are unaffected. Populating it is a separate decision.
 
 The `tsdb` package drops its hand-written `prometheus.NewHistogram(...)` block and calls the constructor instead:
 
@@ -175,25 +179,13 @@ Unlabelled metrics get a plain constructor, and `const_labels` become constructo
 
 The generated API shape is not settled; we fix it while writing the POC on the first package.
 
-### Contract testing
+### Go and Rust from one registry
 
-Everything else here treats the registry as the truth: documentation is generated from it, renames are reviewed against it, and downstream projects check their references against it. What Prometheus produces has to match it.
+Nothing in the registry is Go-specific. A metric entry carries the name, type, unit, attributes, stability, and the `annotations.prometheus` block, which all describe what goes on the wire. Go generation is one set of Jinja2 templates over `resolved.yaml`, and Rust generation is a second set over the same artifact.
 
-Generation covers the definitions, not the wiring. Connecting a generated collector into the right code path stays a human action, and dropping that wire removes a metric without changing the registry, which breaks a downstream consumer silently.
+That is what makes this worth doing now. `prometheus.rs` has to agree with the Go server on the name, type, labels, and unit of every metric both emit, or an operator's dashboard works against one binary and breaks against the other. Generate both from one file and the names match because they came from the same line. A divergence someone wants on purpose then shows up in review.
 
-So we need a check that compares the binary against the registry and fails CI on a difference. It is the provider marking its own exam, weaker than consumers declaring what they use, but it catches that failure. How to build it is open, and the alternatives are below.
-
-### Emitting a schema file
-
-Structured deprecation records a rename in the registry, which covers review and generation. It does nothing for a dashboard already deployed against the old name. Closing that requires an [OTel telemetry schema file](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/schemas/file_format_v1.1.0.md), a per-version document whose `rename_metrics` and `rename_attributes` sections record what a name used to be called.
-
-Prometheus is gaining the ability to read one. [prometheus#18858](https://github.com/prometheus/prometheus/pull/18858) adds `__semconv_url__` and `__schema_url__` matchers. Given a schema file, they run one query per historical name and merge the results under the version the query asked for. Point that at a schema file for our own internal metrics and an old dashboard query keeps resolving across the release that renamed the metric.
-
-So the schema file belongs beside `resolved.yaml` as a release artifact, and the `renamed_to` fields become its input instead of review-only metadata.
-
-semconv already does this and we can copy the mechanism. Its `make generate-schema-next` runs `weaver registry diff` against the previous release tag, renders the result through a Jinja template, and prepends the new section onto the previous file. The result is committed at `schemas/<version>` and published at `https://opentelemetry.io/schemas/<version>`. Their release workflow generates it and fails the release when it is missing.
-
-What we would add is the per-release wiring, not a new capability. [weaver#450](https://github.com/open-telemetry/weaver/issues/450) is worth reading first, since it explains why the v1.1 format cannot express a reversible transformation, which bounds what a consumer can do with the file.
+Which metrics the two share is theirs to settle per package as `prometheus.rs` grows. The registry holds each Prometheus-owned metric once, whichever binary emits it.
 
 ### Metric lifecycle and evolution
 
@@ -225,41 +217,21 @@ So "safe metric evolution across the ecosystem" means consumers detect drift the
 
 * **`.With()` allocations on hot paths**: `.With()` allocates a `prometheus.Labels` map per call, likely too much for per-scrape or per-sample metrics. Benchmark a typed `WithX(value string)` fast path first ([reviewer comment](https://github.com/prometheus/prometheus/pull/17868#discussion_r2736198866)).
 
-* **Validator module home**: keep optional registry parsing and validation tooling separate from the broadly used main module so its dependencies can evolve independently. The repository already has an [`exp` submodule](https://github.com/prometheus/client_golang/blob/main/exp/go.mod); a separate module there, a new repository under `prometheus`, or another home could host the validator. It needs only a reader for `resolved/2.0`, not the Weaver authoring schema resolver. Decide its home when implementing the first contract test.
-
-* **Template and policy hosting**: in this repository under `build/`, in `client_golang` for ecosystem reuse, or bundled into Weaver itself. [weaver#1145](https://github.com/open-telemetry/weaver/pull/1145) merged and expanded Weaver's default templates, so a `client_golang` template now has somewhere to go upstream, which would end the question. Decide before the migration is stable.
+* **Template and policy hosting**: in this repository under `build/`, in `client_golang` for ecosystem reuse, or bundled into Weaver itself. [weaver#1145](https://github.com/open-telemetry/weaver/pull/1145) merged and expanded Weaver's default templates, so a `client_golang` template now has somewhere to go upstream, which would end the question. The Rust templates face the same question and probably want the same answer. Decide before the migration is stable.
 
 ## Alternatives
 
-### Use Weaver `live-check` for contract testing
-
-Weaver is right for generation and wrong here, because [live-check ingests OTLP, or text and JSON samples from a file or stdin](https://github.com/open-telemetry/weaver/blob/main/crates/weaver_live_check/README.md#ingesters). None of those is a `/metrics` endpoint, and Prometheus does not push OTLP, so the only complete path runs three processes in CI:
-
-```mermaid
-flowchart LR
-    prom["Prometheus /metrics"] -- scrape --> col["OTel Collector"]
-    col -- OTLP --> lc["weaver live-check"]
-```
-
-The Collector is the real cost here. Live-check reads OTLP that the Collector translated, so a mistranslated metric fails the check as if the registry were wrong. Writing an adapter from Go fixtures to the JSON sample format removes the Collector, but then we maintain the Prometheus-to-OTel mapping ourselves and can get it wrong in the same way.
-
-Observed samples also never establish the full descriptor inventory, so the fixtures stay either way.
-
-We are not choosing it. Descriptor checks in Go test the contract itself.
-
-A live-check ingester that scrapes a Prometheus endpoint would remove both the Collector and the translation, but no issue requests one and we are not filing one. It becomes the remaining option only if review rejects both Go descriptor checks and a Collector in CI. That path means asking the Weaver maintainers and waiting on their answer, which puts our contract testing behind another project's roadmap.
-
 ### Hand-written definitions with linting only
 
-Keep the constructor calls and enforce naming, units, and histogram rules with `promlint`, which wires into any registry through `testutil.GatherAndLint`. A linter has no notion of which metrics are *supposed* to exist, so it misses a removal, a rename, or a new label, which are the changes that break consumers. It also cannot generate documentation or hold a lifecycle.
+Keep the constructor calls and enforce naming, units, and histogram rules with `promlint`, which wires into any registry through `testutil.GatherAndLint`. A linter checks the shape of whatever the code declares and has no notion of which metrics are *supposed* to exist. So it cannot generate code or documentation, it cannot hold a lifecycle, and it gives a second implementation nothing to read.
 
 ### Generate the registry from instrumentation code
 
 Invert the direction: emit the registry from the binary using the same `Desc` introspection and commit it as a golden file, the way Go tracks its own API in `api/go1.*.txt`. CI fails on a diff.
 
-This costs contributors almost nothing and gives regression safety on its own. It can also carry lifecycle and label semantics, as long as we attach that metadata in Go or a companion source. Introspection cannot recover it, and today's empty descriptor units do not even reveal the intended unit.
+This costs contributors almost nothing. It can also carry lifecycle and label semantics, as long as we attach that metadata in Go or a companion source. Introspection cannot recover it, and today's empty descriptor units do not even reveal the intended unit.
 
-That condition decides it. Code stays the authority, the metadata it cannot infer needs its own conventions and its own enforcement, and we maintain two sources anyway. Authoring the schema removes hand-written descriptors and keeps the contract in one place. This alternative stays available as a fallback.
+That condition decides it. Code stays the authority, the metadata it cannot infer needs its own conventions and its own enforcement, and we maintain two sources anyway. It also leaves `prometheus.rs` generating from the Go binary's output, which makes one implementation the definition of the other.
 
 ### A Prometheus-specific schema and generator
 
@@ -282,14 +254,14 @@ These metrics describe Prometheus' own implementation, not a convention for othe
 ## Action Plan
 
 * [ ] Get consensus on this proposal.
-* [ ] Settle how the contract check reads the binary, and add whatever descriptor metadata accessors `client_golang` needs for it.
 * [ ] Write the `semconv/` v2 registry by hand, package by package.
-* [ ] Move the registry to v2 and add the pinned `weaver registry package` target and its CI freshness check, before the first contract test.
-* [ ] Build in-process contract testing with descriptor inventory checks and supplemental collection fixtures for histogram representations and custom-collector types, one package at a time, and run it in CI.
+* [ ] Add the pinned `weaver registry package` target, its Rego policies, and a CI check that fails on a stale `resolved.yaml`.
 * [ ] Generate code and documentation for one small package through the same target, extend the freshness check to those outputs, and settle the generated API there.
 * [ ] Demonstrate reading the first package's artifact by commit SHA; release tags containing the file provide release-version lookup without gating further migration.
 * [ ] Benchmark `.With()` before touching hot paths.
 * [ ] Generate the rest, one pull request per package.
+* [ ] Follow-on: Rust templates over the same artifact, with `prometheus.rs` maintainers.
 * [ ] Follow-on: extend the registry to traces, reusing the same generation target and per-package layout.
+* [ ] Follow-on: a CI check that the binary matches the registry, in its own proposal.
+* [ ] Follow-on: a per-release schema file with `weaver registry diff`, following semconv's own pipeline.
 * [ ] Upstream a `client_golang` template into Weaver's defaults.
-* [ ] Generate a per-release schema file with `weaver registry diff`, following semconv's own pipeline.
