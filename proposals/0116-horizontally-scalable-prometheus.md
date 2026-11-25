@@ -96,12 +96,13 @@ flowchart TB
 
 ### Safeguarding monolith priority
 
-Accepting horizontally scalable Prometheus into the Prometheus organization must not come at the expense of single-node Prometheus users. Whenever the interests of single-node Prometheus and horizontally scalable Prometheus conflict, single-node Prometheus comes first. We back that rule up with four concrete guardrails from day one:
+Accepting horizontally scalable Prometheus into the Prometheus organization must not come at the expense of single-node Prometheus users. Whenever the interests of single-node Prometheus and horizontally scalable Prometheus conflict, single-node Prometheus comes first. We back that rule up with five concrete guardrails from day one:
 
 * Monolith remains the default UX. Running the binary without distributed flags starts a self-contained single-node server using local storage, zero external coordination services, and familiar Prometheus configuration. Multi-tenancy, object storage, and distributed routing stay strictly opt-in.
 * Dependency direction is one-way. Core crates for scraping, PromQL, rule evaluation, and local storage cannot depend on distributed coordination, multi-tenant auth, or cloud object-store SDKs. Distributed layers depend downward on core crates, never the reverse.
 * Continuous benchmark gates enforce monolith budgets. CI tracks single-node RSS, CPU, query latency, cold-start time, and binary size on realistic small and medium workloads alongside 100M-series tests. Changes that improve distributed components while regressing monolith footprint or startup simplicity do not merge.
 * Separate maintainership protects priorities. Monolith core and distributed components have distinct maintainer rosters or `CODEOWNERS` areas. Monolith maintainers hold approval authority over default behavior, single-node flags, and shared crate interfaces. At the organization level, the Steering Committee's 2-seat-per-employer limit in [GOVERNANCE.md](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md#limitations-on-company-representation) prevents any single vendor from capturing project direction.
+* Component interface and upgrade tests protect boundaries. Components must have regression tests and API contract tests across their shared interfaces. Distributed components must also ship with a documented rolling upgrade order, such as upgrading storage components before query components, backed by automated tests verifying that the supported order works.
 
 ### Long-term sustainability and quality
 
