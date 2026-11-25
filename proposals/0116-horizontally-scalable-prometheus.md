@@ -21,7 +21,7 @@
   * [Prometheus Governance](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md)
   * [Prometheus Community Roles](https://github.com/prometheus/governance/blob/main/ROLES.md)
 
-> TL;DR: Bring horizontally scalable, distributed Prometheus into the Prometheus organization alongside single-node Prometheus. Contributors from Prometheus, Thanos, Cortex, and (potentially) Mimir are rebuilding the next generation of metrics storage and querying from scratch in Rust on an Apache Arrow columnar stack. Rather than splitting that work across competing organizations or inventing a fourth project, we propose building it under the Prometheus umbrella, coordinated by the Prometheus.rs SIG, with explicit structural safeguards that keep single-node monolith Prometheus a first-class priority. Depending on maintainer feedback, this work can live directly in the new Rust Prometheus repository as composable modes or in a separate repository under the `prometheus` organization.
+> TL;DR: Build the next generation of Prometheus in Rust from modular, reusable crates that compose both a drop-in single-node Prometheus replacement and horizontally scalable, distributed components under the Prometheus organization. Contributors from Prometheus, Thanos, Cortex, and (potentially) Mimir are rebuilding metrics storage and querying on an Apache Arrow columnar stack. Rather than splitting that work across competing organizations or inventing a fourth project, we propose expanding Prometheus scope to include horizontally scalable components under the Prometheus.rs SIG, with structural safeguards that keep single-node Prometheus a first-class priority. Depending on maintainer feedback, this work can live directly in the new Rust Prometheus repository as modular components or in a separate repository under the `prometheus` organization.
 
 ## Why
 
@@ -46,11 +46,10 @@ That risk is real and we should not wave it away. Prometheus is still a single-b
 
 ## Goals
 
-* Officially bring horizontally scalable, distributed Prometheus into the scope of the Prometheus organization.
-* Give contributors from Prometheus, Thanos, Cortex, and Mimir one vendor-neutral home to build the next-generation Rust and columnar metrics stack together.
+* Build modular, reusable Rust crates that compose both a drop-in single-node Prometheus replacement and horizontally scalable, distributed components.
+* Officially bring horizontally scalable, distributed Prometheus into the scope of the Prometheus organization, giving contributors from Prometheus, Thanos, Cortex, and Mimir one vendor-neutral home.
+* Keep core Rust crates standalone, separately published, and usable on their own so teams running different backends can adopt pieces incrementally and contribute fixes back without adopting the full stack or rewriting Go Prometheus upfront.
 * Put concrete organizational and technical safeguards in place so single-node monolith Prometheus remains a first-class priority.
-* Keep core Rust crates standalone, separately published, and usable on their own so teams running different backends can reuse them and contribute fixes back without adopting the full Prometheus.rs stack.
-* Set a clear repository and SIG structure focused on reusable crates with clear boundaries so teams can adopt components incrementally without an upfront rewrite of Go Prometheus.
 
 ### Audience
 
