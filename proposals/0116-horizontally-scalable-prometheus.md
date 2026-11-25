@@ -149,9 +149,9 @@ Go `prometheus/prometheus` and `prometheus/prometheus.rs` will coexist as indepe
 
 Go `prometheus/prometheus` keeps its current focus and release cadence. Nothing in this proposal forces existing Prometheus users to adopt Rust, columnar storage, or distributed components, and Go `prometheus/prometheus` will not take on clustering features.
 
-For Thanos and Cortex, it is up to the maintainers. However, our proposal would be to officially deprecate them with a 1y runway for active maintenance or longer if distributed Prometheus takes more time to reach feature parity. After that period, the Thanos and Cortex CNCF organizations will be officially moved to Prometheus or closed.
+Thanos and Cortex remain independent CNCF projects, and their future is solely for their maintainers to decide. Their maintainers and communities are welcome to join and collaborate under Prometheus.
 
-For maintainers and heavy users of those systems, Prometheus becomes a shared neutral place to build the next-generation Rust and columnar components together instead of duplicating work across three Go repos or private forks. Because the new stack is modular, existing Thanos and Cortex deployments can adopt pieces incrementally, for example placing a Rust PromQL querier or columnar compactor alongside existing components, so the migration process for that 1y+ deprecation period can be adjusted.
+For maintainers and heavy users of those systems, Prometheus becomes a shared neutral place to build the next-generation Rust and columnar components together instead of duplicating work across three Go repos or private forks. Because the new stack is modular, existing Thanos and Cortex deployments can adopt pieces incrementally, for example placing a Rust PromQL querier or columnar compactor alongside existing components.
 
 Operators get a single query engine, shared columnar storage formats, and one governance model from a single node up to a multi-cluster deployment, while small deployments keep running one binary.
 
