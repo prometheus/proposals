@@ -49,6 +49,7 @@ That risk is real and we should not wave it away. Prometheus is still a single-b
 * Officially bring horizontally scalable, distributed Prometheus into the scope of the Prometheus organization.
 * Give contributors from Prometheus, Thanos, Cortex, and Mimir one vendor-neutral home to build the next-generation Rust and columnar metrics stack together.
 * Put concrete organizational and technical safeguards in place so single-node monolith Prometheus remains a first-class priority.
+* Keep core Rust crates standalone, separately published, and usable on their own so teams running different backends can reuse them and contribute fixes back without adopting the full Prometheus.rs stack.
 * Set a clear repository and SIG structure focused on reusable crates with clear boundaries so teams can adopt components incrementally without an upfront rewrite of Go Prometheus.
 
 ### Audience
@@ -76,7 +77,7 @@ Go `prometheus/prometheus` does not change its scope. New horizontally scalable 
 The work operates under existing Prometheus governance rules in [GOVERNANCE.md](https://github.com/prometheus/governance/blob/main/GOVERNANCE.md) and [ROLES.md](https://github.com/prometheus/governance/blob/main/ROLES.md):
 
 * Once [PROM-115](https://github.com/prometheus/proposals/pull/115) is accepted, the Prometheus.rs SIG submits a formal SIG charter under `prometheus/governance/sigs/` covering shared Rust crates, the Rust monolith effort, and distributed components, with at least two SIG leads and a Steering Committee liaison.
-* Reusable Rust crates with clear boundaries are the primary focus of the [prometheus/prometheus.rs](https://github.com/prometheus/prometheus.rs) monorepo, alongside existing crates like [prometheus/scrape.rs](https://github.com/prometheus/scrape.rs) and [prometheus-community/promql-rs](https://github.com/prometheus-community/promql-rs). Keeping crates small and well-scoped across areas like columnar storage and rule evaluation makes them easier for both humans and coding agents to maintain, and lets teams adopt individual components like a Rust querier or compactor before migrating an entire stack.
+* Reusable Rust crates with clear boundaries are the primary focus of the [prometheus/prometheus.rs](https://github.com/prometheus/prometheus.rs) monorepo, alongside existing crates like [prometheus/scrape.rs](https://github.com/prometheus/scrape.rs) and [prometheus-community/promql-rs](https://github.com/prometheus-community/promql-rs). Keeping crates small, separately published, and usable on their own across areas like columnar storage and rule evaluation makes them easier for both humans and coding agents to maintain. Teams running different backends can adopt a single crate and contribute bug fixes or tests back without running the rest of the stack.
 * Each repository follows [PROM-95](https://github.com/prometheus/proposals/blob/main/proposals/0095-teams-and-org-permissions.md) with its own `MAINTAINERS.md` and dedicated GitHub maintainer team.
 * New distributed components start clearly labeled as `[EXPERIMENTAL]` and graduate to stable status only after meeting conformance tests, operational benchmarks, and multi-company maintainership requirements.
 
