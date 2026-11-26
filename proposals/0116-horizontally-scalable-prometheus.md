@@ -49,7 +49,7 @@ That risk is real and we should not wave it away. Prometheus is still a single-b
 ## Goals
 
 * Build modular, reusable Rust crates that compose both a drop-in single-node Prometheus replacement and horizontally scalable, distributed components.
-* Officially bring horizontally scalable, distributed Prometheus into the scope of the Prometheus organization, giving contributors from Prometheus, Thanos, Cortex, and Mimir one vendor-neutral home.
+* Officially bring horizontally scalable, distributed Prometheus into the scope of the Prometheus organization, giving contributors from Prometheus, Thanos, Cortex, and (potentially) Mimir one vendor-neutral home.
 * Keep core Rust crates standalone, separately published, and usable on their own so teams running different backends can adopt pieces incrementally and contribute fixes back without adopting the full stack or rewriting Go Prometheus upfront.
 * Put concrete organizational and technical safeguards in place so single-node monolith Prometheus remains a first-class priority.
 
