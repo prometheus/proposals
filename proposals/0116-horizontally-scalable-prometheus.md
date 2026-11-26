@@ -88,14 +88,6 @@ For repository and binary placement, we ask maintainers to weigh in on two optio
 1. Preferred option: bring horizontally scalable Prometheus directly into the [prometheus/prometheus.rs](https://github.com/prometheus/prometheus.rs) monorepo. The workspace keeps core functionality in independent, reusable crates and composes them into modular components for single-node Prometheus and opt-in distributed roles such as ingester, querier, compactor, ruler, and catalog. Single-node Prometheus will not be `-role=all` running every distributed service in one process. The monolith instead composes components suited for a single node, which can use separate implementations from the distributed ones while sharing the same core crates. Maintainers decide how many variants to keep. Keeping everything in one monorepo avoids inventing a new brand name, keeps cross-crate changes coordinated during early prototyping, and lets users scale from a single binary to distributed components with one mental model.
 2. Fallback option, detailed in Alternative 1 below: host horizontally scalable Prometheus in a separate repository and binary under the Prometheus organization, incubating in `prometheus-community` first if preferred, while sharing the same Rust crates and SIG.
 
-```mermaid
-flowchart TB
-    SC["Prometheus Steering Committee\nGOVERNANCE.md, 2-seat employer cap"] --> SIG["Prometheus.rs SIG\nPROM-115 charter"]
-    SIG --> Crates["Shared Rust crates\nscrape.rs, promql-rs, columnar storage, rules"]
-    Crates --> Monolith["Monolith & Agent mode\nDedicated monolith maintainers\nStrict footprint & latency CI gates"]
-    Crates --> Dist["Horizontally scalable components\nIngester, querier, compactor, catalog\nDedicated distributed maintainers"]
-```
-
 ### Safeguarding monolith priority
 
 Accepting horizontally scalable Prometheus into the Prometheus organization must not come at the expense of single-node Prometheus users. Whenever the interests of single-node Prometheus and horizontally scalable Prometheus conflict, single-node Prometheus comes first. We back that rule up with five concrete guardrails from day one:
